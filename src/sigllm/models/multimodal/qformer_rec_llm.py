@@ -60,6 +60,11 @@ class QRecLLM(Rec2Base):
     }    
     
     PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
+    SOFT_TOKEN_PLACEHOLDERS = {
+        "<UserID>": "<SOFT_USER_EMB>",
+        "<ItemIDList>": "<SOFT_HISTORY_EMB>",
+        "<TargetItemID>": "<SOFT_TARGET_EMB>",
+    }
 
     def __init__(
         self,
@@ -161,6 +166,13 @@ class QRecLLM(Rec2Base):
             device_map="auto",
             torch_dtype=torch.float16
         )
+
+        added_token_count = self.llama_tokenizer.add_special_tokens(
+            {"additional_special_tokens": list(self.SOFT_TOKEN_PLACEHOLDERS.values())}
+        )
+        if added_token_count > 0:
+            self.llama_model.resize_token_embeddings(len(self.llama_tokenizer))
+            log_step("Added soft-token placeholders", f"count={added_token_count}")
         
         for name, param in self.llama_model.named_parameters():
             param.requires_grad = False
@@ -500,13 +512,16 @@ class QRecLLM(Rec2Base):
         batch_size = batch_data['UserID'].shape[0]
         bos = self.llama_tokenizer.bos_token if self.llama_tokenizer.bos_token else "<s>"
         
-        unk_token = self.llama_tokenizer.unk_token
-        unk_seq = " ".join([unk_token] * self.proj_token_num) 
+        user_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<UserID>"]
+        history_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<ItemIDList>"]
+        target_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<TargetItemID>"]
+        user_seq = " ".join([user_soft_token] * self.proj_token_num)
+        target_seq = " ".join([target_soft_token] * self.proj_token_num)
         
         prompt_template = bos + prompt_template 
-        prompt_template = prompt_template.replace("<UserID>", unk_seq)
-        prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
-        # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
+        prompt_template = prompt_template.replace("<UserID>", user_seq)
+        prompt_template = prompt_template.replace("<TargetItemID>", target_seq)
+        # prompt_template = prompt_template.replace("<DCNFeature>", user_seq)
 
         prompt_list = []
         for k in range(batch_size):
@@ -514,7 +529,7 @@ class QRecLLM(Rec2Base):
             
             if 'InteractedItemIDs_pad' in batch_data:
                 valid_items = (batch_data['InteractedItemIDs_pad'][k] != self.rec_encoder.padding_index).sum().item()
-                item_list_placeholder = " ".join([unk_seq] * valid_items)
+                item_list_placeholder = " ".join([history_soft_token] * (valid_items * self.proj_token_num))
                 current_prompt = current_prompt.replace('<ItemIDList>', item_list_placeholder)
 
             if "<ItemTitleList>" in current_prompt and 'InteractedItemTitles' in batch_data:
@@ -539,19 +554,37 @@ class QRecLLM(Rec2Base):
             add_special_tokens=False
         ).to(batch_data['UserID'].device)
 
-        unk_token_id = self.llama_tokenizer.unk_token_id
-        
         embed_layer = self.llama_model.get_input_embeddings()
         inputs_embeds = embed_layer(prompts_tokens.input_ids)
 
-        replaced_idx = torch.nonzero(prompts_tokens.input_ids == unk_token_id)
+        replace_token_ids = torch.tensor(
+            [
+                self.llama_tokenizer.convert_tokens_to_ids(user_soft_token),
+                self.llama_tokenizer.convert_tokens_to_ids(history_soft_token),
+                self.llama_tokenizer.convert_tokens_to_ids(target_soft_token),
+            ],
+            device=prompts_tokens.input_ids.device,
+        )
+        replaced_idx = torch.nonzero(torch.isin(prompts_tokens.input_ids, replace_token_ids))
         
         if "<UserID>" in prompt_ori and "<TargetItemID>" in prompt_ori and "<ItemIDList>" in prompt_ori:
+            if rec_embeds["merged_embs"] is None:
+                raise ValueError("merged_embs is None while prompt requires <ItemIDList> soft-token injection.")
+            if replaced_idx.shape[0] != rec_embeds["merged_embs"].shape[0]:
+                raise ValueError(
+                    "Soft-token placeholder count does not match merged embedding count: "
+                    f"replaced_positions={replaced_idx.shape[0]}, merged_embs={rec_embeds['merged_embs'].shape[0]}"
+                )
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
 
         elif "<UserID>" in prompt_ori and "<TargetItemID>" in prompt_ori and "<ItemIDList>" not in prompt_ori:
             emb_to_inject = torch.cat([rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1)
             emb_to_inject = emb_to_inject.reshape(-1, emb_to_inject.shape[-1])
+            if replaced_idx.shape[0] != emb_to_inject.shape[0]:
+                raise ValueError(
+                    "Soft-token placeholder count does not match injected embedding count: "
+                    f"replaced_positions={replaced_idx.shape[0]}, emb_to_inject={emb_to_inject.shape[0]}"
+                )
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = emb_to_inject.to(inputs_embeds.dtype)
 
         elif "<DCNFeature>" in prompt_ori:
