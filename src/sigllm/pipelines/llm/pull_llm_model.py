@@ -1,19 +1,20 @@
 import os
 import torch
-from transformers import LlamaTokenizer, LlamaForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
-def pull_model(model_path="openlm-research/open_llama_3b", save_dir="./ckpt/llm/base"):
+def pull_model(model_path="lmsys/vicuna-7b-v1.5", save_dir="./ckpt/llm/vicuna_7b"):
     """
-    Download and save the base LLaMA model and tokenizer.
+    Download and save the configured causal LM and tokenizer.
     """
     print(f"Pulling model from {model_path}...")
     
     # Initialize tokenizer
-    tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     
     # Initialize model
-    model = LlamaForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16,
         device_map={"": "cpu"}  # Load to CPU for saving
@@ -38,10 +39,11 @@ def smoke_test_model(model_dir, prompt="Q: What is the largest animal?\nA:", max
 
     print(f"Running smoke test from {model_dir} on {'cuda' if use_cuda else 'cpu'}...")
 
-    tokenizer = LlamaTokenizer.from_pretrained(model_dir, use_fast=False)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=False)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    model = LlamaForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_dir,
         torch_dtype=dtype,
         device_map=device_map,
@@ -52,6 +54,6 @@ def smoke_test_model(model_dir, prompt="Q: What is the largest animal?\nA:", max
     print(tokenizer.decode(generation_output[0], skip_special_tokens=True))
 
 if __name__ == "__main__":
-    # Default to open_llama_3b as seen in the existing snippet
+    # Default to Vicuna-7B to match the original paper setup more closely.
     saved_dir = pull_model()
     smoke_test_model(saved_dir)

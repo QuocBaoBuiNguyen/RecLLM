@@ -1,7 +1,7 @@
 model:
   arch: mini_gpt4rec_v2
   model_type: pretrain_vicuna
-  llama_model: "/content/SigLLM/ckpt/llm/base"
+  llama_model: "/content/SigLLM/ckpt/llm/vicuna_7b"
   prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
   prompt_template: "{}"
   

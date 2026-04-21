@@ -5,7 +5,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from transformers import LlamaTokenizer, LlamaForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 import os
 
@@ -144,8 +144,9 @@ class QRecLLM(Rec2Base):
         log_step(f"Loading LLAMA: {llama_model}")
         model_path = llama_model if llama_model else "./content/ckpt/llm/base"
         
-        self.llama_tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-        self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
+        self.llama_tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+        if self.llama_tokenizer.pad_token is None:
+            self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
 
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -154,7 +155,7 @@ class QRecLLM(Rec2Base):
             bnb_4bit_use_double_quant=True,
         )
 
-        self.llama_model = LlamaForCausalLM.from_pretrained(
+        self.llama_model = AutoModelForCausalLM.from_pretrained(
             model_path,
             quantization_config=bnb_config,
             device_map="auto",
