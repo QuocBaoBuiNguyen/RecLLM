@@ -60,6 +60,8 @@ def _init_rec_model(cfg, device):
     and freezes parameters if configured.
     """
     mf_config = omegaconf.OmegaConf.create({
+        # TEMP_DISABLED_USER_CF: user_num is still needed to build/load MF weights,
+        # but stage 1 no longer calls mf.user_encoder().
         "user_num": int(cfg.user_num),
         "item_num": int(cfg.item_num),
         "embedding_size": int(cfg.embedding_size)
@@ -169,6 +171,7 @@ def _log_batch_preview(batch, prefix: str = "train_step", max_neg_preview: int =
 
 
 def _compute_alignment_metrics(u_vec, i_pos_vec, i_neg_vecs, t_vec, tau_ui: float, tau_it: float):
+    # TEMP_DISABLED_USER_CF: kept for rollback; train_step now uses item-text metrics only.
     """Compute Top-1 accuracy metrics for user-item and item-text alignment."""
     u = QRecInstructAlignmentModel.l2norm(u_vec)
     pos = QRecInstructAlignmentModel.l2norm(i_pos_vec)
@@ -192,11 +195,28 @@ def _compute_alignment_metrics(u_vec, i_pos_vec, i_neg_vecs, t_vec, tau_ui: floa
     }
 
 
+def _compute_item_text_metrics(i_pos_vec, t_vec, tau_it: float):
+    """Compute Top-1 accuracy for the temporary item-text-only stage-1 objective."""
+    pos_selected, _ = QRecInstructAlignmentModel.select_query_by_text(i_pos_vec, t_vec)
+    pos = QRecInstructAlignmentModel.l2norm(pos_selected)
+    text = QRecInstructAlignmentModel.l2norm(t_vec)
+
+    it_logits = (pos @ text.T) / tau_it
+    it_labels = torch.arange(pos.size(0), device=pos.device)
+    it_predictions = it_logits.argmax(dim=1)
+    it_top1 = (it_predictions == it_labels).float().mean()
+
+    return {
+        "ui_top1": i_pos_vec.new_zeros(()),
+        "it_top1": it_top1,
+    }
+
+
 def train_step(
     batch,
     model: QRecInstructAlignmentModel,
     w_ui: float = 1.0,
-    w_it: float = 0.5,
+    w_it: float = 1.0,
     tau_ui: float = 0.07,
     tau_it: float = 0.2,
     debug_batch: bool = False,
@@ -213,27 +233,36 @@ def train_step(
 
     ins_tok_emb = model.ins_tokens(ins_list, device)
 
-    u_vec = model.enc_user(u, ins_tok_emb)
+    # TEMP_DISABLED_USER_CF: old stage-1 user branch.
+    # u_vec = model.enc_user(u, ins_tok_emb)
+    u_vec = None
     i_pos_vec = model.enc_item(i_pos, ins_tok_emb)
 
-    B, K = i_negs.shape
-    ins_rep = ins_tok_emb.repeat_interleave(K, dim=0)
-    i_negs_flat = i_negs.reshape(B * K)
-    i_neg_vec_flat = model.enc_item(i_negs_flat, ins_rep)
-    i_neg_vecs = i_neg_vec_flat.reshape(B, K, -1)
+    # TEMP_DISABLED_USER_CF: negatives were only needed by user-item contrastive loss.
+    # B, K = i_negs.shape
+    # ins_rep = ins_tok_emb.repeat_interleave(K, dim=0)
+    # i_negs_flat = i_negs.reshape(B * K)
+    # i_neg_vec_flat = model.enc_item(i_negs_flat, ins_rep)
+    # i_neg_vecs = i_neg_vec_flat.reshape(B, K, -1)
+    i_neg_vecs = None
 
     t_vec = model.text_vec(itxt_list, device)
 
-    L_ui = model.loss_user_item(u_vec, i_pos_vec, i_neg_vecs, tau=tau_ui)
-    L_it = model.loss_item_text(i_pos_vec, t_vec, tau=tau_it)
-    metrics = _compute_alignment_metrics(u_vec, i_pos_vec, i_neg_vecs, t_vec, tau_ui, tau_it)
+    # TEMP_DISABLED_USER_CF: skip user-item loss because it depends on user CF.
+    # L_ui = model.loss_user_item(u_vec, i_pos_vec, i_neg_vecs, tau=tau_ui)
+    L_ui = i_pos_vec.new_zeros(())
+    L_it = model.loss_item_text_symmetric(i_pos_vec, t_vec, tau=tau_it)
+    # metrics = _compute_alignment_metrics(u_vec, i_pos_vec, i_neg_vecs, t_vec, tau_ui, tau_it)
+    metrics = _compute_item_text_metrics(i_pos_vec, t_vec, tau_it)
 
-    loss = w_ui * L_ui + w_it * L_it
+    # TEMP_DISABLED_USER_CF: old loss mixed user-item and item-text objectives.
+    # loss = w_ui * L_ui + w_it * L_it
+    loss = w_it * L_it
     return loss, {"L_ui": L_ui, "L_it": L_it, **metrics}
 
 
 
-def evaluate_loss(model, loader, w_ui=1.0, w_it=0.5, tau_ui=0.07, tau_it=0.2):
+def evaluate_loss(model, loader, w_ui=1.0, w_it=1.0, tau_ui=0.07, tau_it=0.2):
     """
     Evaluates the model on a given dataloader.
     Returns average loss, L_ui, and L_it.

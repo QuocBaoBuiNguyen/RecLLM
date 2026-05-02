@@ -4,7 +4,7 @@ from torch.nn import Parameter
 
 
 class QFormer(nn.Module):
-    """Align CF embeddings via learned queries and cross-attention. Instruction-conditioned Q-Former adapter."""
+    """Align item/history CF embeddings via learned queries and cross-attention."""
 
     def __init__(
         self,
@@ -40,6 +40,8 @@ class QFormer(nn.Module):
     def forward(self, cf_vec: torch.Tensor, ins_token_emb: torch.Tensor) -> torch.Tensor:
         B = cf_vec.size(0)
         q = self.q.unsqueeze(0).expand(B, -1, -1)
+        # TEMP_DISABLED_USER_CF: callers currently pass only item/history CF vectors.
+        # cf_tok used to include user CF when the user branch was active.
         cf_tok = self.proj_cf(cf_vec).unsqueeze(1)
         kv = torch.cat([ins_token_emb, cf_tok], dim=1)
 

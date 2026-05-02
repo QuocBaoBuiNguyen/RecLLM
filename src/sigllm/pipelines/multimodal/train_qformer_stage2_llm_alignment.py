@@ -56,6 +56,8 @@ def main():
     test_ = pd.read_pickle(os.path.join(data_dir, "test_ood2.pkl"))
     user_num = max(train_.uid.max(), valid_.uid.max(), test_.uid.max()) + 1
     item_num = max(train_.iid.max(), valid_.iid.max(), test_.iid.max()) + 1
+    # TEMP_DISABLED_USER_CF: keep user_num for dataset/eval and pretrained MF loading,
+    # but QRecLLM no longer injects mf.user_encoder(UserID) into the LLM prompt.
     cfg.model_cfg.rec_config.user_num = int(user_num)
     cfg.model_cfg.rec_config.item_num = int(item_num)
     cfg.pretty_print()

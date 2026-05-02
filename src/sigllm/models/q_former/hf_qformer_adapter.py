@@ -32,6 +32,9 @@ class HFQFormerAdapter(nn.Module):
 
     This makes it easy to swap in without rewriting the rest of the stage-1 or
     stage-2 pipeline.
+
+    TEMP_DISABLED_USER_CF: callers currently pass only item/history CF vectors.
+    The adapter stays generic so the old user-CF path can be restored later.
     """
 
     def __init__(
@@ -132,6 +135,8 @@ class HFQFormerAdapter(nn.Module):
         batch_size = cf_vec.size(0)
 
         query_embeds = self.q.expand(batch_size, -1, -1)
+        # TEMP_DISABLED_USER_CF: this CF token is now item/history-only in callers.
+        # The old user-CF caller code is commented in stage-1/stage-2 modules.
         cf_token = self.proj_cf(cf_vec).unsqueeze(1)
         encoder_hidden_states = torch.cat([ins_token_emb, cf_token], dim=1)
 

@@ -83,8 +83,9 @@ run:
     p_fixed: 0.3
     samples_per_user: 3
     lr: 2e-4
+    # TEMP_DISABLED_USER_CF: kept for config compatibility; stage-1 train_step ignores user-item loss.
     w_ui: 1.0
-    w_it: 0.30
+    w_it: 1.0
     tau_ui: 0.05
     tau_it: 0.10
     weight_decay: 1e-3

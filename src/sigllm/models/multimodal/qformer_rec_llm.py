@@ -59,12 +59,9 @@ class QRecLLM(Rec2Base):
         "pretrain_vicuna": "configs/models/minigpt4rec.yaml",
     }    
     
-    PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
-    SOFT_TOKEN_PLACEHOLDERS = {
-        "<UserID>": "<SOFT_USER_EMB>",
-        "<ItemIDList>": "<SOFT_HISTORY_EMB>",
-        "<TargetItemID>": "<SOFT_TARGET_EMB>",
-    }
+    # TEMP_DISABLED_USER_CF: old prompt order included a user soft-token slot.
+    # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
+    PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
 
     def __init__(
         self,
@@ -167,13 +164,6 @@ class QRecLLM(Rec2Base):
             torch_dtype=torch.float16
         )
 
-        added_token_count = self.llama_tokenizer.add_special_tokens(
-            {"additional_special_tokens": list(self.SOFT_TOKEN_PLACEHOLDERS.values())}
-        )
-        if added_token_count > 0:
-            self.llama_model.resize_token_embeddings(len(self.llama_tokenizer))
-            log_step("Added soft-token placeholders", f"count={added_token_count}")
-        
         for name, param in self.llama_model.named_parameters():
             param.requires_grad = False
         log_step("Loading LLAMA Done")
@@ -337,7 +327,12 @@ class QRecLLM(Rec2Base):
         if prompt_path:
             with open(prompt_path, 'r') as f:
                 raw_prompts = f.read().splitlines()
-            filted_prompts = [raw_prompt for raw_prompt in raw_prompts]
+            # TEMP_DISABLED_USER_CF: keep old prompts in the file with this marker,
+            # but do not sample them while user CF is disabled.
+            filted_prompts = [
+                raw_prompt for raw_prompt in raw_prompts
+                if raw_prompt.strip() and not raw_prompt.lstrip().startswith("# DISABLED_USER_CF")
+            ]
             self.prompt_list = [prompt_template.format(p) for p in filted_prompts]
             log_step(f"Load {len(self.prompt_list)} training prompts")
             log_step(f"Prompt List: \n{self.prompt_list}")
@@ -364,7 +359,9 @@ class QRecLLM(Rec2Base):
         if self.use_lora:
             return True
 
-        id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
+        # TEMP_DISABLED_USER_CF: old trainable placeholders included "<UserID>".
+        # id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
+        id_terms = ["<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
         for prompt in self.prompt_list:
             for id_term in id_terms:
                 if id_term in prompt:
@@ -404,18 +401,18 @@ class QRecLLM(Rec2Base):
 
     def encode_rec_features_to_llm_v2(self, batch_data, feature_order=None):
         """
-        Encodes recommendation features (User, History, Target) into LLM embedding space.
+        Encodes recommendation features (History, Target) into LLM embedding space.
         
         Args:
             batch_data (dict): Dictionary containing:
                 - 'UserID': (B,)
                 - 'TargetItemID': (B,)
                 - 'InteractedItemIDs_pad': (B, L)
-            feature_order (list): Order of features, e.g., ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
+            feature_order (list): Order of features, e.g., ["<ItemIDList>", "<TargetItemID>"]
             
         Returns:
             rec_embeds (dict):
-                - 'User_emb': (B, 1, H) - Individual user representation
+                - 'User_emb': None while TEMP_DISABLED_USER_CF is active
                 - 'TargetItem_emb': (B, 1, H) - Individual target item representation
                 - 'InteractedItems_embs': (B, L, H) - Historical items (includes padding)
                 - 'merged_embs': (N, H) - Flattened & filtered valid tokens for LLM input
@@ -442,22 +439,30 @@ class QRecLLM(Rec2Base):
 
         with self.maybe_autocast():
             # Stage-2 uses the in-tree rec encoder API: direct embedding lookup from ids.
-            user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
+            # TEMP_DISABLED_USER_CF: old path injected a user CF token into the LLM prompt.
+            # user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
+            user_q = None
+            user_llama = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
 
             # 2) QFormer outputs (instruction-conditioned)
-            user_q = self.qformer(user_cf, ins_tok_emb)        # [B,Q,d_model]
+            # user_q = self.qformer(user_cf, ins_tok_emb)        # [B,Q,d_model]
             target_q = self.qformer(target_cf, ins_tok_emb)    # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
-            user_llama = self.llama_proj(user_q)               # [B,Q,H]
+            # user_llama = self.llama_proj(user_q)               # [B,Q,H]
             target_llama = self.llama_proj(target_q)           # [B,Q,H]
 
             interacted_llama_flat = None
             merged_flat = None
 
             has_interacted = "InteractedItemIDs_pad" in batch_data
-            need_merge = has_interacted and feature_order is not None and len(feature_order) == 3
+            need_merge = (
+                has_interacted
+                and feature_order is not None
+                and "<ItemIDList>" in feature_order
+                and "<TargetItemID>" in feature_order
+            )
 
             if need_merge:
                 ids = batch_data["InteractedItemIDs_pad"]  # [B,L]
@@ -478,24 +483,25 @@ class QRecLLM(Rec2Base):
                 ones_q = torch.ones((B, Q), device=device, dtype=item_mask.dtype)         # [B,Q]
 
                 ph2emb = {
-                    "<UserID>": user_llama,                 # [B,Q,H]
+                    # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llama.
+                    # "<UserID>": user_llama,                 # [B,Q,H]
                     "<ItemIDList>": interacted_llama_flat,  # [B,L*Q,H]
                     "<TargetItemID>": target_llama          # [B,Q,H]
                 }
                 ph2mask = {
-                    "<UserID>": ones_q,
+                    # "<UserID>": ones_q,
                     "<ItemIDList>": item_mask_q,
                     "<TargetItemID>": ones_q
                 }
 
-                merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, Q + L*Q + Q, H]
-                full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)      # [B, Q + L*Q + Q]
+                merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, L*Q + Q, H]
+                full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)       # [B, L*Q + Q]
 
                 idx = torch.nonzero(full_mask, as_tuple=False)                            # [N,2]
                 merged_flat = merged_embeds[idx[:, 0], idx[:, 1]]                         # [N,H]
 
             rec_embeds = {
-                "User_emb": user_llama,                 # [B,Q,H]
+                "User_emb": user_llama,                 # None while TEMP_DISABLED_USER_CF is active
                 "TargetItem_emb": target_llama,         # [B,Q,H]
                 "InteractedItems_embs": interacted_llama_flat,  # [B,L*Q,H] or None
                 "merged_embs": merged_flat,             # [N,H] or None
@@ -512,16 +518,15 @@ class QRecLLM(Rec2Base):
         batch_size = batch_data['UserID'].shape[0]
         bos = self.llama_tokenizer.bos_token if self.llama_tokenizer.bos_token else "<s>"
         
-        user_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<UserID>"]
-        history_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<ItemIDList>"]
-        target_soft_token = self.SOFT_TOKEN_PLACEHOLDERS["<TargetItemID>"]
-        user_seq = " ".join([user_soft_token] * self.proj_token_num)
-        target_seq = " ".join([target_soft_token] * self.proj_token_num)
+        unk_token = self.llama_tokenizer.unk_token
+        unk_seq = " ".join([unk_token] * self.proj_token_num)
         
         prompt_template = bos + prompt_template 
-        prompt_template = prompt_template.replace("<UserID>", user_seq)
-        prompt_template = prompt_template.replace("<TargetItemID>", target_seq)
-        # prompt_template = prompt_template.replace("<DCNFeature>", user_seq)
+        # TEMP_DISABLED_USER_CF: old prompt path replaced <UserID> with soft tokens.
+        # prompt_template = prompt_template.replace("<UserID>", unk_seq)
+        prompt_template = prompt_template.replace("<UserID>", "")
+        prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
+        # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
 
         prompt_list = []
         for k in range(batch_size):
@@ -529,7 +534,7 @@ class QRecLLM(Rec2Base):
             
             if 'InteractedItemIDs_pad' in batch_data:
                 valid_items = (batch_data['InteractedItemIDs_pad'][k] != self.rec_encoder.padding_index).sum().item()
-                item_list_placeholder = " ".join([history_soft_token] * (valid_items * self.proj_token_num))
+                item_list_placeholder = " ".join([unk_seq] * valid_items)
                 current_prompt = current_prompt.replace('<ItemIDList>', item_list_placeholder)
 
             if "<ItemTitleList>" in current_prompt and 'InteractedItemTitles' in batch_data:
@@ -541,7 +546,19 @@ class QRecLLM(Rec2Base):
             prompt_list.append(current_prompt)
         
         if not self.has_print_prompt:
-            log_step("prompt example:", prompt_list[0])
+            preview_parts = []
+            if "<ItemIDList>" in prompt_ori and 'InteractedItemIDs_pad' in batch_data:
+                history_ids = batch_data['InteractedItemIDs_pad'][0].detach().cpu().tolist()
+                history_ids = [int(i) for i in history_ids if int(i) != self.rec_encoder.padding_index]
+                preview_parts.append(
+                    f"[ItemIDList ids={history_ids} soft_tokens={len(history_ids) * self.proj_token_num}]",
+                )
+            if "<TargetItemID>" in prompt_ori and 'TargetItemID' in batch_data:
+                target_id = int(batch_data['TargetItemID'][0].detach().cpu().item())
+                preview_parts.append(
+                    f"[TargetItemID id={target_id} soft_tokens={self.proj_token_num}]",
+                )
+            log_step("prompt injection preview:", " | ".join(preview_parts))
             self.has_print_prompt = True
 
         self.llama_tokenizer.padding_side = "left"
@@ -554,37 +571,24 @@ class QRecLLM(Rec2Base):
             add_special_tokens=False
         ).to(batch_data['UserID'].device)
 
+        unk_token_id = self.llama_tokenizer.unk_token_id
+
         embed_layer = self.llama_model.get_input_embeddings()
         inputs_embeds = embed_layer(prompts_tokens.input_ids)
 
-        replace_token_ids = torch.tensor(
-            [
-                self.llama_tokenizer.convert_tokens_to_ids(user_soft_token),
-                self.llama_tokenizer.convert_tokens_to_ids(history_soft_token),
-                self.llama_tokenizer.convert_tokens_to_ids(target_soft_token),
-            ],
-            device=prompts_tokens.input_ids.device,
-        )
-        replaced_idx = torch.nonzero(torch.isin(prompts_tokens.input_ids, replace_token_ids))
-        
-        if "<UserID>" in prompt_ori and "<TargetItemID>" in prompt_ori and "<ItemIDList>" in prompt_ori:
-            if rec_embeds["merged_embs"] is None:
-                raise ValueError("merged_embs is None while prompt requires <ItemIDList> soft-token injection.")
-            if replaced_idx.shape[0] != rec_embeds["merged_embs"].shape[0]:
-                raise ValueError(
-                    "Soft-token placeholder count does not match merged embedding count: "
-                    f"replaced_positions={replaced_idx.shape[0]}, merged_embs={rec_embeds['merged_embs'].shape[0]}"
-                )
+        replaced_idx = torch.nonzero(prompts_tokens.input_ids == unk_token_id)
+
+        has_history_placeholder = "<ItemIDList>" in prompt_ori
+        has_target_placeholder = "<TargetItemID>" in prompt_ori
+
+        if has_history_placeholder and has_target_placeholder and rec_embeds.get('merged_embs') is not None:
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
 
-        elif "<UserID>" in prompt_ori and "<TargetItemID>" in prompt_ori and "<ItemIDList>" not in prompt_ori:
-            emb_to_inject = torch.cat([rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1)
+        elif has_target_placeholder:
+            # TEMP_DISABLED_USER_CF: old target-only branch concatenated user and target tokens.
+            # emb_to_inject = torch.cat([rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1)
+            emb_to_inject = rec_embeds['TargetItem_emb']
             emb_to_inject = emb_to_inject.reshape(-1, emb_to_inject.shape[-1])
-            if replaced_idx.shape[0] != emb_to_inject.shape[0]:
-                raise ValueError(
-                    "Soft-token placeholder count does not match injected embedding count: "
-                    f"replaced_positions={replaced_idx.shape[0]}, emb_to_inject={emb_to_inject.shape[0]}"
-                )
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = emb_to_inject.to(inputs_embeds.dtype)
 
         elif "<DCNFeature>" in prompt_ori:
@@ -597,20 +601,20 @@ class QRecLLM(Rec2Base):
                     (batch_data['InteractedItemIDs_pad'][0] != self.rec_encoder.padding_index).sum().item()
                 )
 
-            user_soft_tokens = self.proj_token_num if "<UserID>" in prompt_ori else 0
             target_soft_tokens = self.proj_token_num if "<TargetItemID>" in prompt_ori else 0
             history_soft_tokens = valid_history_items * self.proj_token_num if "<ItemIDList>" in prompt_ori else 0
-            total_soft_tokens = user_soft_tokens + target_soft_tokens + history_soft_tokens
+            total_soft_tokens = target_soft_tokens + history_soft_tokens
+            sample_unk_slots = int((prompts_tokens.input_ids[0] == unk_token_id).sum().item())
 
             log_step(
                 "Prompt injection stats",
                 (
                     f"valid_history_items={valid_history_items}, "
-                    f"user_soft_tokens={user_soft_tokens}, "
                     f"history_soft_tokens={history_soft_tokens}, "
                     f"target_soft_tokens={target_soft_tokens}, "
-                    f"total_soft_tokens={total_soft_tokens}, "
-                    f"replaced_positions={replaced_idx.shape[0]}"
+                    f"sample_soft_tokens={total_soft_tokens}, "
+                    f"sample_unk_slots={sample_unk_slots}, "
+                    f"batch_unk_slots={replaced_idx.shape[0]}"
                 ),
             )
             self._has_logged_prompt_injection_stats = True
