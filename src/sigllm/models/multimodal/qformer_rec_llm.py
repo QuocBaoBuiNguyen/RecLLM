@@ -673,8 +673,8 @@ class QRecLLM(Rec2Base):
         target_logits = prediction_logits[:, pos_id]
         
         loss = nn.functional.binary_cross_entropy_with_logits(
-            target_logits, 
-            batch_data['label'].float()
+            target_logits.float(), 
+            batch_data['label'].float().to(target_logits.device)
         )
         
         return loss
@@ -722,7 +722,7 @@ class QRecLLM(Rec2Base):
         pos_id = self.llama_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
         label_seq_len = label_tokens.input_ids.shape[-1]
         logits = outputs.logits[:, -(label_seq_len + 1), :][:, pos_id]
-        logits = torch.sigmoid(logits)
+        logits = torch.sigmoid(logits.float())
 
         if return_all:
             return outputs, logits
