@@ -14,7 +14,7 @@ from sigllm.common.registry import registry
 from sigllm.models.multimodal.base.rec_base_model import Rec2Base
 # from sigllm.models.q_former.q_former import QFormer
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
-from sigllm.models.q_former.text_encoder import TextEncoder
+from sigllm.models.q_former.text_encoder import LlamaEmbeddingTextEncoder
 
 LOGGER = NotebookLogger.rich_logger("sigllm.rec_base_model")
 
@@ -112,18 +112,22 @@ class QRecLLM(Rec2Base):
 
     def _init_text_encoder(self, freeze_text_encoder: bool):
         """
-        Initializes the TextEncoder.
+        Initializes a frozen instruction encoder in the LLaMA embedding space.
         """
-        text_encoder = TextEncoder(model_name="bert-base-uncased")
+        text_encoder = LlamaEmbeddingTextEncoder(
+            tokenizer=self.llama_tokenizer,
+            embedding_layer=self.llama_model.get_input_embeddings(),
+            hidden_size=self.llama_model.config.hidden_size,
+        )
         
         # Freeze if necessary
         if freeze_text_encoder:
             for p in text_encoder.parameters():
                 p.requires_grad = False
             text_encoder.eval()
-            text_encoder.train = disabled_train.__get__(text_encoder, TextEncoder)
+            text_encoder.train = disabled_train.__get__(text_encoder, LlamaEmbeddingTextEncoder)
 
-        return text_encoder, text_encoder.model.config.hidden_size
+        return text_encoder, text_encoder.hidden_size
 
     def _init_rec_model(self, rec_model, rec_config, rec_precision, pretrained_rec, freeze_rec):
         log_step("Loading Rec_model")
@@ -266,6 +270,12 @@ class QRecLLM(Rec2Base):
             log_step("WARNING",
                     f"proj_token_num({proj_token_num}) != qformer.num_queries({Q}). "
                     f"Using Q={Q} to keep injection consistent.")
+
+        if d_q == H:
+            self.llama_proj = nn.Identity()
+            log_step("Projection removed", f"QFormer output already matches LLaMA hidden size H={H}")
+            log_step("Loading Projection Done", f"d_q={d_q}, H={H}, Q={self.proj_token_num}, identity=True")
+            return
 
         mid = int(proj_mid) if proj_mid is not None else 4
 

@@ -31,7 +31,7 @@ model:
   qformer_config:
     use_qformer: True
     qformer_ckpt: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}" # Exported best QFormer weights from stage 1 for stage 2
-    qformer_d_model: 768
+    qformer_d_model: null # Derived from LLaMA hidden size when using LLaMA embedding instructions
     num_queries: 8
     num_heads: 8
     num_layers: 2
@@ -98,7 +98,7 @@ run:
     best_qformer_weights_name: "qformer_stage1_best_qformer.pth"
     log_epoch: 1
     epoch: 100
-    text_model_name: "bert-base-uncased"
+    llama_model_name: ${model.llama_model}
     pretrained_rec_path: ${model.rec_config.pretrained_path}
     freeze_rec: True
     freeze_text_encoder: True

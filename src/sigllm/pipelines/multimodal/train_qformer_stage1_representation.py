@@ -15,7 +15,7 @@ from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDa
 from sigllm.models.rec.matrix_factorization import MatrixFactorization
 # from sigllm.models.q_former.q_former import QFormer
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
-from sigllm.models.q_former.text_encoder import TextEncoder
+from sigllm.models.q_former.text_encoder import LlamaEmbeddingTextEncoder
 from sigllm.models.projection.qformer_alignment_model import QRecInstructAlignmentModel
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -98,18 +98,21 @@ def _init_dataset(cfg, filename: str, shuffle: bool = True):
 
 def _init_text_encoder(cfg, device):
     """
-    Initializes the TextEncoder.
+    Initializes the frozen LLaMA embedding text encoder.
     """
-    text_encoder = TextEncoder(model_name=cfg.text_model_name).to(device)
+    text_encoder = LlamaEmbeddingTextEncoder(
+        model_name=cfg.llama_model_name,
+        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
+    ).to(device)
     
     # Freeze if necessary
     if cfg.freeze_text_encoder:
         for p in text_encoder.parameters():
             p.requires_grad = False
         text_encoder.eval()
-        text_encoder.train = disabled_train.__get__(text_encoder, TextEncoder)
+        text_encoder.train = disabled_train.__get__(text_encoder, type(text_encoder))
 
-    return text_encoder, text_encoder.model.config.hidden_size
+    return text_encoder, getattr(text_encoder, "hidden_size", text_encoder.model.config.hidden_size)
 
 
 def _init_qformer(cfg, d_model, device):
@@ -319,10 +322,18 @@ def _save_checkpoint(
     epoch,
     val_logs,
 ):
+    trainable_param_names = {
+        name for name, param in model.named_parameters() if param.requires_grad
+    }
+    trainable_state_dict = {
+        name: param
+        for name, param in model.state_dict().items()
+        if name in trainable_param_names
+    }
     torch.save(
         {
             "epoch": epoch,
-            "model": model.state_dict(),
+            "model": trainable_state_dict,
             "optimizer": optimizer.state_dict(),
             **{f"val_{key}": value for key, value in val_logs.items()},
         },
@@ -331,7 +342,7 @@ def _save_checkpoint(
 
 def _load_checkpoint(checkpoint_path, model, optimizer=None):
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    model.load_state_dict(checkpoint["model"])
+    model.load_state_dict(checkpoint["model"], strict=False)
     if optimizer is not None and "optimizer" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer"])
     return checkpoint
@@ -542,7 +553,7 @@ def main():
         "best_qformer_weights_name",
         "log_epoch",
         "epoch",
-        "text_model_name",
+        "llama_model_name",
         "pretrained_rec_path",
         "freeze_rec",
         "freeze_text_encoder",
