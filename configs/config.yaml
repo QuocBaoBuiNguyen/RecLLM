@@ -57,7 +57,7 @@ model:
     max_instruction_length: 48
     num_queries: 8
     num_heads: 8
-    num_layers: 4
+    num_layers: 8
 
   rec_config:
     user_num: 839
