@@ -2,12 +2,17 @@ import copy
 import os
 import pickle
 import sys
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from sigllm.common import NotebookLogger
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DEFAULT_RAW_DIR = os.environ.get("SIGLLM_RAW_DIR", str(_REPO_ROOT / "data" / "raw" / "ml-1m"))
+_DEFAULT_OUT_DIR = os.environ.get("SIGLLM_PROCESSED_DIR", str(_REPO_ROOT / "data" / "processed" / "ml-1m"))
 
 LOGGER = NotebookLogger.rich_logger("sigllm.data_prep")
 
@@ -59,8 +64,8 @@ def deal_with_each_u(x, u):
 
 
 def build_ml1m(
-    raw_dir: str = "/content/SigLLM/data/raw/ml-1m",
-    out_dir: str = "/content/SigLLM/data/processed/ml-1m",
+    raw_dir: str = _DEFAULT_RAW_DIR,
+    out_dir: str = _DEFAULT_OUT_DIR,
     train_slot: list = None,
     valid_slot: list = None,
     test_slot: list = None,
