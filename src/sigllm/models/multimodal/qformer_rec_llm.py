@@ -1,13 +1,19 @@
 
 import logging
+import os
 import random
 from typing import Optional
+
+# Disable Unsloth's fast-generate path globally — SigLLM only uses forward()
+# (training + eval both go through forward), and the fast-generate hook is
+# known to crash on `inputs_embeds=` (Unsloth issue #3309). Setting this before
+# `import unsloth` is the official workaround.
+os.environ.setdefault("UNSLOTH_DISABLE_FAST_GENERATION", "1")
 
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-import os
+from unsloth import FastLanguageModel
 
 from sigllm.common.logging_utils import NotebookLogger
 from sigllm.common.registry import registry
@@ -178,23 +184,28 @@ class QRecLLM(Rec2Base):
         log_step("Loading Rec_model Done")
 
     def _init_llm_model(self, llm_path):
-        log_step(f"Loading LLM: {llm_path}")
-        model_path = llm_path if llm_path else "./content/ckpt/llm/base"
+        log_step(f"Loading LLM via Unsloth: {llm_path}")
+        model_path = llm_path if llm_path else "unsloth/Qwen2-7B-bnb-4bit"
 
-        self.llm_tokenizer = AutoTokenizer.from_pretrained(
-            model_path, use_fast=False, trust_remote_code=True,
+        # Unsloth's FastLanguageModel handles 4-bit quantization + custom
+        # Triton kernels for attention/MLP/RoPE. Loads ~2x faster than HF +
+        # bitsandbytes for the same 4-bit footprint (~5GB on disk for 7B).
+        # `model_path` accepts both a HuggingFace repo id
+        # (e.g. "unsloth/Qwen2-7B-bnb-4bit") and a local directory.
+        self.llm_model, self.llm_tokenizer = FastLanguageModel.from_pretrained(
+            model_name=model_path,
+            max_seq_length=2048,
+            dtype=None,           # auto: bf16 on Ampere+, fp16 elsewhere
+            load_in_4bit=True,
         )
+
         if self.llm_tokenizer.pad_token is None:
             self.llm_tokenizer.pad_token = self.llm_tokenizer.eos_token
 
-        self.llm_model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            device_map="auto",
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        )
-
-        for name, param in self.llm_model.named_parameters():
+        # Freeze base LLM weights — only LoRA / Q-Former receive gradients.
+        # (FastLanguageModel.get_peft_model in _attach_lora unfreezes the
+        # LoRA adapter parameters specifically.)
+        for _, param in self.llm_model.named_parameters():
             param.requires_grad = False
 
         self._resolve_soft_token_placeholder()
@@ -207,6 +218,10 @@ class QRecLLM(Rec2Base):
 
         if self.use_lora:
             self._attach_lora()
+        else:
+            # No LoRA path: still need to switch Unsloth into training mode so
+            # gradients flow through inputs_embeds back to Q-Former in Stage 2.
+            FastLanguageModel.for_training(self.llm_model)
 
     def _resolve_soft_token_placeholder(self):
         tok = self.llm_tokenizer
@@ -255,22 +270,34 @@ class QRecLLM(Rec2Base):
         self._soft_token_id = tok.eos_token_id
 
     def _attach_lora(self):
-        from peft import LoraConfig, TaskType, get_peft_model
-
         log_step(
-            "Attaching LoRA to LLM",
+            "Attaching LoRA via Unsloth",
             f"r={self.lora_r}, alpha={self.lora_alpha}, "
             f"target_modules={list(self.lora_target_modules)}, dropout={self.lora_dropout}",
         )
-        lora_config = LoraConfig(
+
+        # Unsloth's get_peft_model is a drop-in for `peft.get_peft_model` with
+        # extra optimizations: fast LoRA forward kernels, fused dropout, and
+        # Unsloth-native gradient checkpointing that saves ~30% activation
+        # memory vs HF's default. The resulting model exposes `.peft_config`
+        # so the rest of the codebase (e.g. `_apply_tuning_step_policy`,
+        # `forward` LoRA-aware branches) keeps working unchanged.
+        self.llm_model = FastLanguageModel.get_peft_model(
+            self.llm_model,
             r=self.lora_r,
-            lora_alpha=self.lora_alpha,
             target_modules=list(self.lora_target_modules),
+            lora_alpha=self.lora_alpha,
             lora_dropout=self.lora_dropout,
             bias="none",
-            task_type=TaskType.CAUSAL_LM,
+            use_gradient_checkpointing="unsloth",
+            random_state=42,
         )
-        self.llm_model = get_peft_model(self.llm_model, lora_config)
+
+        # Switch into training mode (enables grad tracking on LoRA params,
+        # disables dropout overrides etc.). Must call before the first
+        # forward/backward pass.
+        FastLanguageModel.for_training(self.llm_model)
+
         log_step(
             "LoRA attached",
             f"trainable LoRA params={count_trainable_parameters(self.llm_model)}",
