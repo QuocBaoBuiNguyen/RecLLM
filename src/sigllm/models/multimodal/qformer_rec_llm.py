@@ -10,10 +10,11 @@ from typing import Optional
 # `import unsloth` is the official workaround.
 os.environ.setdefault("UNSLOTH_DISABLE_FAST_GENERATION", "1")
 
+from unsloth import FastLanguageModel
+
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from unsloth import FastLanguageModel
 
 from sigllm.common.logging_utils import NotebookLogger
 from sigllm.common.registry import registry
@@ -827,12 +828,14 @@ class QRecLLM(Rec2Base):
         return torch.cat([empty_targets, label_targets], dim=1)
 
     def execute_llm_forward(self, embeds, atts, targets):
-        with self.maybe_autocast():
-            return self.llm_model(
-                inputs_embeds=embeds,
-                attention_mask=atts,
-                return_dict=True,
-            )
+        llm_dtype = next(self.llm_model.parameters()).dtype
+        if embeds.dtype != llm_dtype:
+            embeds = embeds.to(llm_dtype)
+        return self.llm_model(
+            inputs_embeds=embeds,
+            attention_mask=atts,
+            return_dict=True,
+        )
 
     def calculate_recommendation_loss(self, outputs, label_tokens, batch_data, ans_map):
         pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
