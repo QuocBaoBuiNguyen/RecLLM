@@ -197,7 +197,7 @@ run:
   min_lr: 8e-5
   warmup_lr: 1e-5
   weight_decay: 1e-3
-  amp: True
+  amp: False
   
   # Training Schedule
   max_epoch: 200
