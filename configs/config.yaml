@@ -37,7 +37,7 @@ model:
     target_modules: [q_proj, v_proj]
     dropout: 0.0
 
-  max_txt_len: 1024
+  max_txt_len: 512
   end_sym: "###"
   ans_type: "v2"
 
@@ -202,8 +202,8 @@ run:
   # Training Schedule
   max_epoch: 200
   iters_per_epoch: 400
-  batch_size_train: 32
-  batch_size_eval: 64
+  batch_size_train: 64
+  batch_size_eval: 128
   num_workers: 4
   warmup_steps: 200
   
