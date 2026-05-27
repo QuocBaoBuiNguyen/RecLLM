@@ -290,7 +290,7 @@ class QRecLLM(Rec2Base):
             lora_alpha=self.lora_alpha,
             lora_dropout=self.lora_dropout,
             bias="none",
-            use_gradient_checkpointing="unsloth",
+            use_gradient_checkpointing=False,
             random_state=42,
         )
 
