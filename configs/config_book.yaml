@@ -94,9 +94,9 @@ run:
     wd: 1e-4
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
-    eval_epoch: 1
+    eval_epoch: 10
     patience: 100
-    batch_size: 1024
+    batch_size: 4096
   qformer_stage1:
     # BLIP-2 representation pretraining: ITC + ITM + ITG using the Q-Former's
     # own text branch (no external BERT). Item-item contrastive (w_ii) is a
