@@ -1,20 +1,24 @@
 import torch
 from torch.utils.data import Dataset
 
+
 class QFormerAlignmentDataset(Dataset):
     def __init__(self, filename: str):
-        obj = torch.load(filename, map_location="cpu")
+        obj = torch.load(filename, map_location="cpu", weights_only=False)
         self.samples = obj["samples"]
+        self.stats = obj.get("stats", {})
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        s = self.samples[idx]
+        sample = self.samples[idx]
         return {
-            "u": torch.tensor(s["u"], dtype=torch.long),
-            "i_pos": torch.tensor(s["i_pos"], dtype=torch.long),
-            "i_negs": torch.tensor(s["i_negs"], dtype=torch.long),
-            "instruction": s["instruction"],
-            "item_text": s["item_text"],
+            "sample_type": sample["sample_type"],
+            "u": torch.tensor(sample["u"], dtype=torch.long),
+            "i_left": torch.tensor(sample["i_left"], dtype=torch.long),
+            "i_right": torch.tensor(sample["i_right"], dtype=torch.long),
+            "weight": torch.tensor(sample["weight"], dtype=torch.float),
+            "instruction": sample["instruction"],
+            "text": sample["text"],
         }

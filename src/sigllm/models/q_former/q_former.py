@@ -40,12 +40,14 @@ class QFormer(nn.Module):
     def forward(self, cf_vec: torch.Tensor, ins_token_emb: torch.Tensor) -> torch.Tensor:
         B = cf_vec.size(0)
         q = self.q.unsqueeze(0).expand(B, -1, -1)
-        # TEMP_DISABLED_USER_CF: callers currently pass only item/history CF vectors.
-        # cf_tok used to include user CF when the user branch was active.
         cf_tok = self.proj_cf(cf_vec).unsqueeze(1)
-        kv = torch.cat([ins_token_emb, cf_tok], dim=1)
 
-        x = q
+        # InstructBLIP-style conditioning: instruction tokens share the
+        # Q-Former self-attention stream with learned queries, while the CF
+        # token is the cross-attention source.
+        x = torch.cat([q, ins_token_emb], dim=1)
+        query_count = q.size(1)
+        kv = cf_tok
         for attn, ffn, ln1, ln2, attn_dropout, ffn_dropout in zip(
             self.attn,
             self.ffn,
@@ -58,4 +60,4 @@ class QFormer(nn.Module):
             x = ln1(x + attn_dropout(y))
             z = ffn(x)
             x = ln2(x + ffn_dropout(z))
-        return x
+        return x[:, :query_count]

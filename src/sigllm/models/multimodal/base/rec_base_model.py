@@ -34,13 +34,13 @@ class Rec2Base(BaseModel):
         else:
             return contextlib.nullcontext()
         
-    def init_rec_encoder(self, rec_model, config, precision):
+    def init_rec_encoder(self, rec_model, config):
         if rec_model == "MF":
             log_step("Initializing Matrix Factorization model")
             rec_model = MatrixFactorization(config)
         else:
             raise NotImplementedError(f"Rec model {rec_model} not implemented.")
-        
+
         return rec_model
     
     def load_from_pretrained(self, url_or_filename):

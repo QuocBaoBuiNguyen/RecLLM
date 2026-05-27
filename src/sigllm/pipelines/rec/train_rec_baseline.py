@@ -200,28 +200,30 @@ def train_baseline_model(
             v_users, v_preds, v_labels = get_model_predictions(model, valid_loader, device)
             valid_auc = roc_auc_score(v_labels, v_preds)
             valid_uauc, _, _ = calculate_user_auc(v_users, v_preds, v_labels)
-            
-            t_users, t_preds, t_labels = get_model_predictions(model, test_loader, device)
-            test_auc = roc_auc_score(t_labels, t_preds)
-            test_uauc, _, _ = calculate_user_auc(t_users, t_preds, t_labels)
 
             threshold = 0.1
             acc = ((v_preds >= threshold) == v_labels).mean()
-            
-            log_step(f"Epoch {epoch}: Valid AUC: {valid_auc:.4f}, Valid uAUC: {valid_uauc:.4f}, Test AUC: {test_auc:.4f}, Test uAUC: {test_uauc:.4f}, Acc: {acc:.4f}")
 
             metrics = {
-                'valid_auc': valid_auc, 'valid_uauc': valid_uauc,
-                'test_auc': test_auc, 'test_uauc': test_uauc, 'epoch': epoch
+                'valid_auc': valid_auc, 'valid_uauc': valid_uauc, 'epoch': epoch
             }
-
             improved = stopper.update(metrics)
 
             if improved:
+                t_users, t_preds, t_labels = get_model_predictions(model, test_loader, device)
+                test_auc = roc_auc_score(t_labels, t_preds)
+                test_uauc, _, _ = calculate_user_auc(t_users, t_preds, t_labels)
+                metrics['test_auc'] = test_auc
+                metrics['test_uauc'] = test_uauc
+                stopper.best_full_metric = metrics
+
+                log_step(f"Epoch {epoch}: Valid AUC: {valid_auc:.4f}, Valid uAUC: {valid_uauc:.4f}, Test AUC: {test_auc:.4f}, Test uAUC: {test_uauc:.4f}, Acc: {acc:.4f}")
                 log_step(f"New best model found at epoch {epoch} with Valid uAUC: {valid_uauc:.4f}")
                 if save_file is not None:
                     torch.save(model.state_dict(), save_file)
                     log_step(f"Model saved to {save_file}")
+            else:
+                log_step(f"Epoch {epoch}: Valid AUC: {valid_auc:.4f}, Valid uAUC: {valid_uauc:.4f}, Acc: {acc:.4f}")
 
             if stopper.should_stop:
                 log_step("Early stopping triggered. Ending training.")

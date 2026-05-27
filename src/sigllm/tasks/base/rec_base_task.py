@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Optional
 from sklearn.metrics import roc_auc_score
+import numpy as np
 import torch
 import torch.distributed as dist
 from sigllm import datasets
@@ -51,9 +52,10 @@ class RecBaseTask:
         for name, dataset_config in datasets_config.items():
             builder = registry.get_builder_class(name)(dataset_config)
             dataset = builder.build_datasets(evaluate_only=evaluate_only)
-            dataset['train'].name = name
-            if 'sample_ratio' in dataset_config:
-                dataset['train'].sample_ratio = dataset_config.sample_ratio
+            if 'train' in dataset:
+                dataset['train'].name = name
+                if 'sample_ratio' in dataset_config:
+                    dataset['train'].sample_ratio = dataset_config.sample_ratio
             datasets[name] = dataset
 
         return datasets
@@ -160,16 +162,50 @@ class RecBaseTask:
             metrics = self._compute_metrics(combined_data)
             
             metric_logger.synchronize_between_processes()
-            logging.info(
+            loss_meter = metric_logger.meters.get("loss")
+            acc_meter = metric_logger.meters.get("acc")
+            val_loss = loss_meter.global_avg if loss_meter is not None else 0.0
+            val_acc = acc_meter.global_avg if acc_meter is not None else 0.0
+            eval_summary = (
                 f"Averaged stats: {metric_logger.global_avg()} "
                 f"***auc: {metrics.get('auc', 0):.4f} ***uauc: {metrics.get('uauc', 0):.4f}"
-            )        
+            )
+            logging.info(eval_summary)
+            log_step(
+                "Evaluation metrics",
+                (
+                    f"val_loss={val_loss:.6f}, "
+                    f"AUC={metrics.get('auc', 0):.6f}, "
+                    f"uAUC={metrics.get('uauc', 0):.6f}, "
+                    f"ACC@0.5={val_acc:.6f}, "
+                    f"pos_rate={metrics.get('pos_rate', 0):.4f}, "
+                    f"pred_pos_rate@0.5={metrics.get('pred_pos_rate', 0):.4f}"
+                ),
+            )
+            log_step(
+                "Score separation",
+                (
+                    f"pos_score_mean={metrics.get('pos_score_mean', 0):.6f}, "
+                    f"neg_score_mean={metrics.get('neg_score_mean', 0):.6f}, "
+                    f"score_gap={metrics.get('score_gap', 0):.6f}, "
+                    f"score_mean={metrics.get('score_mean', 0):.6f}, "
+                    f"score_std={metrics.get('score_std', 0):.6f}"
+                ),
+            )
             
             all_results = {
             'agg_metrics': metrics.get('auc', -metric_logger.meters['loss'].global_avg),
-            'acc': metric_logger.meters.get('acc', SmoothedValue()).global_avg,
-            'loss': metric_logger.meters['loss'].global_avg,
-            'uauc': metrics.get('uauc', 0)
+            'auc': metrics.get('auc', 0),
+            'acc': val_acc,
+            'loss': val_loss,
+            'uauc': metrics.get('uauc', 0),
+            'pos_rate': metrics.get('pos_rate', 0),
+            'pred_pos_rate': metrics.get('pred_pos_rate', 0),
+            'pos_score_mean': metrics.get('pos_score_mean', 0),
+            'neg_score_mean': metrics.get('neg_score_mean', 0),
+            'score_gap': metrics.get('score_gap', 0),
+            'score_mean': metrics.get('score_mean', 0),
+            'score_std': metrics.get('score_std', 0),
         }
         
         return all_results
@@ -216,9 +252,27 @@ class RecBaseTask:
     def _compute_metrics(self, data):
         if data['logits'] is None:
             return {}
-        auc = roc_auc_score(data['labels'], data['logits'])
-        uauc, _, _ = calculate_user_auc(data['users'], data['logits'], data['labels'])
-        return {'auc': auc, 'uauc': uauc}
+        labels = np.asarray(data['labels']).astype(np.float32)
+        scores = np.asarray(data['logits']).astype(np.float32)
+        pos_mask = labels == 1
+        neg_mask = labels == 0
+
+        auc = roc_auc_score(labels, scores)
+        uauc, _, _ = calculate_user_auc(data['users'], scores, labels)
+
+        pos_score_mean = float(scores[pos_mask].mean()) if pos_mask.any() else 0.0
+        neg_score_mean = float(scores[neg_mask].mean()) if neg_mask.any() else 0.0
+        return {
+            'auc': auc,
+            'uauc': uauc,
+            'pos_rate': float(labels.mean()) if labels.size else 0.0,
+            'pred_pos_rate': float((scores > 0.5).mean()) if scores.size else 0.0,
+            'pos_score_mean': pos_score_mean,
+            'neg_score_mean': neg_score_mean,
+            'score_gap': pos_score_mean - neg_score_mean,
+            'score_mean': float(scores.mean()) if scores.size else 0.0,
+            'score_std': float(scores.std()) if scores.size else 0.0,
+        }
     
     @staticmethod
     def save_result(result, result_dir, filename, remove_duplicate=""):

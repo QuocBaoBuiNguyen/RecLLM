@@ -19,6 +19,24 @@ def log_step(title: str, detail: Optional[str] = None) -> None:
     LOGGER.info(message)
 
 
+def preview_row_for_log(df: pd.DataFrame, max_list_items: int = 5) -> str:
+    """Return a compact preview of one row that is about to be serialized."""
+    if df.empty:
+        return "<empty dataframe>"
+
+    row = df.iloc[0].to_dict()
+    preview = {}
+    for key, value in row.items():
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, list):
+            suffix = " ..." if len(value) > max_list_items else ""
+            preview[key] = f"{value[:max_list_items]}{suffix} (len={len(value)})"
+        else:
+            preview[key] = value
+    return str(preview)
+
+
 def deal_with_each_u(x, u):
     """Build sequential interaction samples for a single user."""
     items = np.array(x.iid)
@@ -341,6 +359,13 @@ def build_ml1m(
         "Cold-start flags",
         f"valid warm={valid_['not_cold'].sum():,}, test warm={test_['not_cold'].sum():,}",
     )
+
+    log_step("Train pickle columns", ", ".join(train_.columns))
+    log_step("Train pickle sample", preview_row_for_log(train_))
+    log_step("Valid pickle columns", ", ".join(valid_.columns))
+    log_step("Valid pickle sample", preview_row_for_log(valid_))
+    log_step("Test pickle columns", ", ".join(test_.columns))
+    log_step("Test pickle sample", preview_row_for_log(test_))
 
     os.makedirs(out_dir, exist_ok=True)
     train_path = os.path.join(out_dir, "train_ood2.pkl")

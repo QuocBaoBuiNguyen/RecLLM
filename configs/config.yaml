@@ -1,47 +1,73 @@
 model:
   arch: mini_gpt4rec_v2
-  model_type: pretrain_vicuna
-  llama_model: "/content/SigLLM/ckpt/llm/base"
+  model_type: pretrain_vicuna  # legacy key — `_init_llm_model` uses AutoModel, any HF causal LM works.
+  llm_model: "/content/SigLLM/ckpt/llm/qwen2-7b-base"
   prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
-  prompt_template: "{}"
+  # Qwen2-7B-Base is NOT instruction-tuned, so the Vicuna USER/ASSISTANT
+  # chat wrapping is dropped. A trailing `Answer:` cue is appended so the
+  # base model continues with the "Yes" / "No" label as plain completion.
+  prompt_template: '{} Answer:'
   
   freeze_rec: True
   freeze_proj: False
-  freeze_lora: False
-  
+
+  # Stage 3 ablation switch. When True, target_llm and interacted_llm_flat
+  # are zeroed right after llm_proj, so every soft-token slot in the prompt
+  # carries a zero vector instead of the projected Q-Former output. Use this
+  # to measure the marginal contribution of soft tokens at inference: load a
+  # trained checkpoint, flip this to True, re-evaluate. If AUC barely drops,
+  # the Q-Former isn't contributing — the LLM is leaning on prompt text alone.
+  ablate_soft_tokens: False
+
+  # CoLLM-style 2-step tuning. Each Stage 3 pipeline script overrides this
+  # from its own `run.qformer_stage3_step{1,2}` block (see
+  # `apply_step{1,2}_overrides` in the two scripts). Leave null at top level —
+  # the model only enforces a step policy when this is explicitly 1 or 2.
+  tuning_step: null
+
+  lora_config:
+    use_lora: True
+    # Reverted to r=8 [q,v] after A ablation: r=16 [q,k,v,o] (10M trainable
+    # LoRA) overfit on 33k ML1M samples — val uAUC peaked at 0.7048 vs r=8
+    # baseline 0.7077, with train loss dropping ~2x faster than r=8.
+    # Conclusion: LoRA capacity is NOT the bottleneck; Q-Former Stage 1
+    # quality is (now addressed by 8 layers + user-item contrastive).
+    r: 8
+    alpha: 16
+    target_modules: [q_proj, v_proj]
+    dropout: 0.05
+
   max_txt_len: 1024
   end_sym: "###"
   ans_type: "v2"
-  
+
   proj_token_num: ${model.qformer_config.num_queries}
-  proj_drop: 0
-  proj_mid_times: 4
-  
+
   rec_model: "MF"
   user_num: -100
   item_num: -100
 
-  lora_config:
-    use_lora: False
-    r: 8
-    alpha: 16
-    target_modules: ["q_proj", "v_proj"]
-    dropout: 0.05
-
   qformer_config:
     use_qformer: True
-    qformer_ckpt: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}" # Exported best QFormer weights from stage 1 for stage 2
+    qformer_ckpt: "${run.qformer_stage2.output_dir}${run.qformer_stage2.qformer_ckpt_out}" # Q-Former weights after Stage 2 generative pretraining
+    llm_proj_ckpt: "${run.qformer_stage2.output_dir}${run.qformer_stage2.proj_ckpt_out}" # Projection weights after Stage 2 generative pretraining
     qformer_d_model: 768
+    qformer_output_dim: 768 # Keep Q-Former compact; llm_proj maps this to the LLM hidden size.
+    qformer_text_model_name: "bert-base-uncased"
+    max_instruction_length: 48
     num_queries: 8
     num_heads: 8
-    num_layers: 2
+    num_layers: 4
 
   rec_config:
     user_num: 839
     item_num: 3256
-    embedding_size: 256    
+    embedding_size: 256
     pretrained_path: "/content/SigLLM/ckpt/mf/mf_model.pth"
 
+  # Warm-init checkpoint. Step 2 overrides this with the Step 1 LoRA ckpt;
+  # Step 1 overrides it to null. Leave null at top level so a bare config
+  # build (e.g. an ablation run) does not silently load a warm-init.
   ckpt: null
 
 datasets:
@@ -53,7 +79,8 @@ datasets:
 
 run:
   task: rec_pretrain
-  output_dir: "ckpt/qformer_stage2_llm_finetune"
+  # Pipeline scripts override this from `run.qformer_stage3_step{1,2}`.
+  output_dir: "ckpt/qformer_stage3_default"
   device: "cuda"
   seed: 42
   rec_baseline:
@@ -69,6 +96,9 @@ run:
     patience: 100
     batch_size: 1024
   qformer_stage1:
+    # BLIP-2 representation pretraining: ITC + ITM + ITG using the Q-Former's
+    # own text branch (no external BERT). Item-item contrastive (w_ii) is a
+    # SigLLM-specific addition for co-watch collaborative signal.
     seed: 2025
     batch_size: 256
     num_workers: 4
@@ -78,16 +108,23 @@ run:
     num_queries: ${model.qformer_config.num_queries}
     num_heads: ${model.qformer_config.num_heads}
     num_layers: ${model.qformer_config.num_layers}
-    neg_k: 32
-    hard_k: 8
-    p_fixed: 0.3
-    samples_per_user: 3
-    lr: 2e-4
-    # TEMP_DISABLED_USER_CF: kept for config compatibility; stage-1 train_step ignores user-item loss.
+    qformer_d_model: ${model.qformer_config.qformer_d_model}
+    qformer_output_dim: ${model.qformer_config.qformer_output_dim}
+    qformer_text_model_name: ${model.qformer_config.qformer_text_model_name}
+    max_instruction_length: ${model.qformer_config.max_instruction_length}
+    item_pair_window: 2
+    max_item_item_pairs: null
+    max_user_item_pairs: null
+    include_user_item: True
+    lr: 5e-5
+    w_itc: 1.0
+    w_itm: 1.0
+    w_itg: 1.0
+    w_ii: 1.0
     w_ui: 1.0
-    w_it: 1.0
-    tau_ui: 0.05
-    tau_it: 0.10
+    tau_itc: 0.07
+    tau_ii: 0.05
+    tau_ui: 0.07
     weight_decay: 1e-3
     debug_batch: True
     debug_batch_max_steps: 10
@@ -97,12 +134,63 @@ run:
     best_qformer_weights_name: "qformer_stage1_best_qformer.pth"
     log_epoch: 1
     epoch: 100
-    text_model_name: "bert-base-uncased"
     pretrained_rec_path: ${model.rec_config.pretrained_path}
     freeze_rec: True
-    freeze_text_encoder: True
     output_dir: "/content/SigLLM/ckpt/qformer_stage1/"
-  
+
+  qformer_stage2:
+    # BLIP-2-style generative pretraining: train Q-Former + linear projection
+    # on next-token LM of item-text captions with the LLM fully frozen (no LoRA).
+    seed: 2025
+    batch_size: 32
+    num_workers: 4
+    embedding_size: ${model.rec_config.embedding_size}
+    user_num: ${model.rec_config.user_num}
+    item_num: ${model.rec_config.item_num}
+    num_queries: ${model.qformer_config.num_queries}
+    num_heads: ${model.qformer_config.num_heads}
+    num_layers: ${model.qformer_config.num_layers}
+    qformer_d_model: ${model.qformer_config.qformer_d_model}
+    qformer_output_dim: ${model.qformer_config.qformer_output_dim}
+    qformer_text_model_name: ${model.qformer_config.qformer_text_model_name}
+    max_instruction_length: ${model.qformer_config.max_instruction_length}
+    llm_model_name: ${model.llm_model}
+    pretrained_rec_path: ${model.rec_config.pretrained_path}
+    qformer_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}"
+    qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
+    proj_ckpt_out: "qformer_stage2_best_proj.pth"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"
+    lr: 1e-4
+    weight_decay: 1e-3
+    epoch: 20
+    log_epoch: 1
+    max_caption_length: 64
+    early_stopping_patience: 5
+    early_stopping_min_delta: 1e-4
+
+  qformer_stage3_step1:
+    # CoLLM Step 1 — train LoRA only on text-only prompts (no `<ItemIDList>` /
+    # `<TargetItemID>` placeholders). Q-Former + projection are frozen here;
+    # they will be unfrozen in Step 2. Only Step 1-specific overrides live
+    # here — everything else (optimizer schedule, warmup, batch sizes) is
+    # inherited from the top-level `run.*` defaults.
+    prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie_text_only.txt"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_lora_qwen2/"
+    best_ckpt_name: "checkpoint_best.pth"
+    init_lr: 2e-4
+    max_epoch: 5
+
+  qformer_stage3_step2:
+    # CoLLM Step 2 — train Q-Former + projection on the full prompt, LoRA
+    # loaded frozen from the Step 1 best checkpoint. Symmetric in shape to
+    # `qformer_stage3_step1`: only the keys that differ from the top-level
+    # defaults are listed here.
+    prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_cie_qwen2/"
+    ckpt: "${run.qformer_stage3_step1.output_dir}${run.qformer_stage3_step1.best_ckpt_name}"
+    init_lr: 3e-5
+    max_epoch: 200
+
   # Optimization
   lr_sched: "linear_warmup_cosine_lr"
   init_lr: 1e-4
@@ -124,7 +212,7 @@ run:
   mode: "v2"
   train_splits: ["train"]
   valid_splits: ["valid"]
-  test_splits: ["test", "valid"]
+  test_splits: ["test", "test_warm", "test_cold"]
   resume_ckpt_path: null
 
   # Distributed
