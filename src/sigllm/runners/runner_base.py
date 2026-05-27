@@ -6,6 +6,7 @@
 """
 
 import datetime
+import gc
 import json
 import logging
 import os
@@ -234,7 +235,8 @@ class RunnerBase:
                     # having lora or IDs are used
                     train_stats = self.train_epoch(cur_epoch)
                     self.log_stats(split_name="train", stats=train_stats)
-                    # torch.cuda.empty_cache()
+                    gc.collect()
+                    torch.cuda.empty_cache()
                 
                         
                 # evaluation phase
