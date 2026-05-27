@@ -35,7 +35,7 @@ model:
     r: 8
     alpha: 16
     target_modules: [q_proj, v_proj]
-    dropout: 0.05
+    dropout: 0.0
 
   max_txt_len: 1024
   end_sym: "###"
