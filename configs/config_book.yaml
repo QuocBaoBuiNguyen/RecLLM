@@ -64,7 +64,7 @@ model:
     # safe to leave at the BinLLM-reported scale until preprocessing finishes.
     user_num: 22967
     item_num: 34154
-    embedding_size: 256
+    embedding_size: 64
     pretrained_path: "/content/SigLLM/ckpt/mf_book/mf_model.pth"
 
   # Warm-init checkpoint. Step 2 overrides this with the Step 1 LoRA ckpt;
@@ -90,7 +90,7 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    lr: 1e-3
+    lr: 1e-4
     wd: 1e-4
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
