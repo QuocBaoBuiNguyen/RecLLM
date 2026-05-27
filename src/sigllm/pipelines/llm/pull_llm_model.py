@@ -1,34 +1,35 @@
 import os
+
 import torch
-from transformers import LlamaTokenizer, LlamaForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-def pull_model(model_path="lmsys/vicuna-7b-v1.5", save_dir="./ckpt/llm/base"):
-    """
-    Download and save the Vicuna LLaMA-family model and tokenizer.
 
-    Default matches the InstructBLIP paper backbone (Vicuna-7B-v1.5). Vicuna
-    is an instruction-tuned LLaMA-2 derivative, which is required by this
-    pipeline since the LLM is kept frozen (no LoRA) — only an instruction-
-    tuned model can follow the Yes/No prompts at Stage 3.
+def pull_model(model_path="Qwen/Qwen2-7B", save_dir="./ckpt/llm/qwen2-7b-base"):
+    """Download and save an HF causal LM + tokenizer in fp16.
+
+    Uses ``AutoTokenizer`` / ``AutoModelForCausalLM`` so any LLaMA-family,
+    Qwen2-family or other compatible backbone resolves automatically. The
+    default targets Qwen2-7B-Base (branch `feat/swap-llm-qwen2`); pass
+    ``model_path="lmsys/vicuna-7b-v1.5"``, ``save_dir="./ckpt/llm/base"`` to
+    pull the original Vicuna backbone instead.
     """
     print(f"Pulling model from {model_path}...")
-    
-    # Initialize tokenizer
-    tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-    tokenizer.pad_token = tokenizer.eos_token
-    
-    # Initialize model
-    model = LlamaForCausalLM.from_pretrained(
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16,
-        device_map={"": "cpu"}  # Load to CPU for saving
+        device_map={"": "cpu"},
+        trust_remote_code=True,
     )
 
     if model.generation_config is not None:
         model.generation_config.temperature = 1.0
         model.generation_config.top_p = 1.0
 
-    # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
 
     print(f"Saving model and tokenizer to {save_dir}...")
@@ -47,13 +48,15 @@ def smoke_test_model(model_dir, prompt="Q: What is the largest animal?\nA:", max
 
     print(f"Running smoke test from {model_dir} on {'cuda' if use_cuda else 'cpu'}...")
 
-    tokenizer = LlamaTokenizer.from_pretrained(model_dir, use_fast=False)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=False, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    model = LlamaForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_dir,
         torch_dtype=dtype,
         device_map=device_map,
+        trust_remote_code=True,
     )
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from torch import dist
@@ -44,7 +45,7 @@ class RecBaseDatasetBuilder(ABC):
 
         datasets = dict()
 
-        if not evaluate_only:            
+        if not evaluate_only:
             datasets["train"] = dataset_cls(
                 dataset_config=self.dataset_config,
                 filename="train_ood2.pkl",
@@ -59,13 +60,24 @@ class RecBaseDatasetBuilder(ABC):
                 filename="test_ood2.pkl",
             )
         else:
-            datasets['test_warm'] = dataset_cls(
+            datasets["test"] = dataset_cls(
                 dataset_config=self.dataset_config,
-                filename="test_warm_cold=warm",
+                filename="test_ood2.pkl",
             )
-            datasets['test_cold'] = dataset_cls(
-                dataset_config=self.dataset_config,
-                filename="test_warm_cold=cold",
-            )
+            warm_cold_filename = "test_warm_cold_ood2.pkl"
+            warm_cold_path = Path(storage_path) / warm_cold_filename
+            if warm_cold_path.exists():
+                datasets["test_warm"] = dataset_cls(
+                    dataset_config=self.dataset_config,
+                    filename=warm_cold_filename,
+                    subset="warm",
+                )
+                datasets["test_cold"] = dataset_cls(
+                    dataset_config=self.dataset_config,
+                    filename=warm_cold_filename,
+                    subset="cold",
+                )
+            else:
+                log_step("Skipping warm/cold subsets", f"file not found: {warm_cold_path}")
 
         return datasets

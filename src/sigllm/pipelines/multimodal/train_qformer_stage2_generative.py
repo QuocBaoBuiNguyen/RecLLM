@@ -1,13 +1,13 @@
 """Stage 2 — Generative pretraining of Q-Former + projection (BLIP-2 style).
 
 Loads the Q-Former weights from Stage 1, attaches a fresh ``nn.Linear``
-projection into LLaMA's hidden size, and trains Q-Former + projection with
-next-token language modeling on item-text captions while keeping the LLM
-fully frozen. The Q-Former runs uni-modal here (queries cross-attend to the
-CF vector only, no text input on the Q-Former text branch) — instruction-
-awareness is reserved for Stage 3, matching BLIP-2's stage-2 design. This
-produces a checkpoint usable as the starting point for Stage 3 (instruction
-tuning with frozen LLM in ``QRecLLM``).
+projection into the LLM's hidden size, and trains Q-Former + projection
+with next-token language modeling on item-text captions while keeping the
+LLM fully frozen. The Q-Former runs uni-modal here (queries cross-attend
+to the CF vector only, no text input on the Q-Former text branch) —
+instruction-awareness is reserved for Stage 3, matching BLIP-2's stage-2
+design. This produces a checkpoint usable as the starting point for
+Stage 3 (instruction tuning with frozen LLM in ``QRecLLM``).
 
 Prompt layout per sample:
 
@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import Subset
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizer
 
 from sigllm.common import EarlyStopping, NotebookLogger
 from sigllm.common.config import Config
@@ -110,12 +110,14 @@ def _init_qformer(cfg, device):
 
 
 def _init_llm(model_path, device):
-    tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-    tokenizer.pad_token = tokenizer.eos_token
-    llm = LlamaForCausalLM.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    llm = AutoModelForCausalLM.from_pretrained(
         model_path,
         device_map="auto",
         torch_dtype=torch.float16,
+        trust_remote_code=True,
     )
     for p in llm.parameters():
         p.requires_grad = False
@@ -146,12 +148,13 @@ def _build_projection(d_q: int, hidden_size: int, device) -> nn.Module:
 def _build_inputs(
     soft_tokens: torch.Tensor,
     captions: list,
-    tokenizer: LlamaTokenizer,
+    tokenizer: PreTrainedTokenizer,
     embed_layer: nn.Module,
     max_caption_length: int,
 ):
-    """Assemble ``[BOS][K soft tokens][caption + EOS]`` with -100 labels on
-    BOS + soft positions."""
+    """Assemble ``[BOS?][K soft tokens][caption + EOS]`` with -100 labels on
+    the prefix (BOS + soft positions). Tokenizers without an explicit BOS
+    (e.g. Qwen2) skip the BOS slot entirely; the loss target is unchanged."""
 
     device = soft_tokens.device
     batch_size, query_count, hidden = soft_tokens.shape
@@ -170,18 +173,23 @@ def _build_inputs(
     cap_mask = cap_tokens.attention_mask
 
     cap_embeds = embed_layer(cap_ids).to(soft_tokens.dtype)
-
-    bos_ids = torch.full(
-        (batch_size, 1), tokenizer.bos_token_id, dtype=torch.long, device=device
-    )
-    bos_embeds = embed_layer(bos_ids).to(soft_tokens.dtype)
-    bos_mask = torch.ones((batch_size, 1), dtype=cap_mask.dtype, device=device)
     soft_mask = torch.ones((batch_size, query_count), dtype=cap_mask.dtype, device=device)
 
-    inputs_embeds = torch.cat([bos_embeds, soft_tokens, cap_embeds], dim=1)
-    attention_mask = torch.cat([bos_mask, soft_mask, cap_mask], dim=1)
+    has_bos = tokenizer.bos_token_id is not None
+    if has_bos:
+        bos_ids = torch.full(
+            (batch_size, 1), tokenizer.bos_token_id, dtype=torch.long, device=device
+        )
+        bos_embeds = embed_layer(bos_ids).to(soft_tokens.dtype)
+        bos_mask = torch.ones((batch_size, 1), dtype=cap_mask.dtype, device=device)
+        inputs_embeds = torch.cat([bos_embeds, soft_tokens, cap_embeds], dim=1)
+        attention_mask = torch.cat([bos_mask, soft_mask, cap_mask], dim=1)
+        prefix_len = 1 + query_count
+    else:
+        inputs_embeds = torch.cat([soft_tokens, cap_embeds], dim=1)
+        attention_mask = torch.cat([soft_mask, cap_mask], dim=1)
+        prefix_len = query_count
 
-    prefix_len = 1 + query_count
     prefix_labels = torch.full(
         (batch_size, prefix_len), -100, dtype=torch.long, device=device
     )
@@ -198,7 +206,7 @@ def _move_batch_to_device(batch, device):
     return batch
 
 
-def forward_stage2(batch, mf, qformer, llama_proj, tokenizer, llm, max_caption_length: int):
+def forward_stage2(batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length: int):
     item_ids = batch["i_left"]
     captions = batch["text"]
 
@@ -210,7 +218,7 @@ def forward_stage2(batch, mf, qformer, llama_proj, tokenizer, llm, max_caption_l
     # deferred to Stage 3 (instruction tuning).
     query_tokens = qformer.encode_cf(item_cf)
     query_tokens = qformer.out_proj(query_tokens)
-    soft_tokens = llama_proj(query_tokens)
+    soft_tokens = llm_proj(query_tokens)
 
     llm_dtype = next(llm.parameters()).dtype
     soft_tokens_lm = soft_tokens.to(llm_dtype)
@@ -234,21 +242,21 @@ def forward_stage2(batch, mf, qformer, llama_proj, tokenizer, llm, max_caption_l
     return outputs.loss
 
 
-def evaluate(loader, mf, qformer, llama_proj, tokenizer, llm, device, max_caption_length: int):
+def evaluate(loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int):
     qformer.eval()
-    llama_proj.eval()
+    llm_proj.eval()
     total = 0.0
     steps = 0
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
             loss = forward_stage2(
-                batch, mf, qformer, llama_proj, tokenizer, llm, max_caption_length
+                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length
             )
             total += float(loss.item())
             steps += 1
     qformer.train()
-    llama_proj.train()
+    llm_proj.train()
     if steps == 0:
         return 0.0
     return total / steps
@@ -273,15 +281,15 @@ def train_qformer_stage2_generative(cfg):
 
     mf = _init_rec_model(cfg, device)
     qformer = _init_qformer(cfg, device).train()
-    tokenizer, llm = _init_llm(cfg.llama_model_name, device)
+    tokenizer, llm = _init_llm(cfg.llm_model_name, device)
 
     d_q = qformer.output_dim
     hidden_size = llm.config.hidden_size
-    llama_proj = _build_projection(d_q, hidden_size, device).train()
+    llm_proj = _build_projection(d_q, hidden_size, device).train()
 
     trainable_params = [
         p for p in qformer.parameters() if p.requires_grad
-    ] + list(llama_proj.parameters())
+    ] + list(llm_proj.parameters())
     optimizer = Adam(
         trainable_params, lr=float(cfg.lr), weight_decay=float(cfg.weight_decay)
     )
@@ -310,14 +318,14 @@ def train_qformer_stage2_generative(cfg):
 
     for epoch in range(int(cfg.epoch)):
         qformer.train()
-        llama_proj.train()
+        llm_proj.train()
         train_total = 0.0
         train_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
             optimizer.zero_grad()
             loss = forward_stage2(
-                batch, mf, qformer, llama_proj, tokenizer, llm, max_caption_length
+                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length
             )
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -330,7 +338,7 @@ def train_qformer_stage2_generative(cfg):
             continue
 
         val_loss = evaluate(
-            valid_loader, mf, qformer, llama_proj, tokenizer, llm, device, max_caption_length
+            valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length
         )
         print(
             f"epoch {epoch + 1} | train_loss={avg_train_loss:.4f} | val_loss={val_loss:.4f}"
@@ -339,7 +347,7 @@ def train_qformer_stage2_generative(cfg):
         improved = stopper.update({"epoch": epoch + 1, "val_loss": val_loss})
         if improved:
             torch.save(qformer.state_dict(), qformer_out)
-            torch.save(llama_proj.state_dict(), proj_out)
+            torch.save(llm_proj.state_dict(), proj_out)
             log_step(
                 "Saved best Stage 2 checkpoint",
                 f"epoch={epoch + 1}, val_loss={val_loss:.4f}, "
@@ -395,7 +403,7 @@ def main():
         "qformer_d_model",
         "qformer_text_model_name",
         "max_instruction_length",
-        "llama_model_name",
+        "llm_model_name",
         "lr",
         "weight_decay",
         "epoch",

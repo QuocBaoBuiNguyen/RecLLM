@@ -5,7 +5,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from transformers import LlamaTokenizer, LlamaForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 import os
 
@@ -87,9 +87,9 @@ class QRecLLM(Rec2Base):
         rec_config=None,
         pretrained_rec=None,
         pretrained_qformer=None,
-        pretrained_llama_proj=None,
+        pretrained_llm_proj=None,
         freeze_rec=True,
-        llama_model="",
+        llm_model="",
         prompt_path="",
         prompt_template="",
         max_txt_len=1024,
@@ -125,9 +125,9 @@ class QRecLLM(Rec2Base):
         if self.ablate_soft_tokens:
             log_step(
                 "ABLATION ACTIVE",
-                "ablate_soft_tokens=True → target_llama and interacted_llama_flat "
+                "ablate_soft_tokens=True → target_llm and interacted_llm_flat "
                 "will be zeroed before injection (Information flow log will show "
-                "target_llama mean/std=0).",
+                "target_llm mean/std=0).",
             )
 
         self.use_lora = bool(use_lora)
@@ -143,7 +143,7 @@ class QRecLLM(Rec2Base):
 
         # Initialize components
         self._init_rec_model(rec_model, rec_config, pretrained_rec, freeze_rec)
-        self._init_llm_model(llama_model)
+        self._init_llm_model(llm_model)
         self._init_qformer(
             d_cf=rec_config.embedding_size,
             d_model=qformer_d_model,
@@ -156,7 +156,7 @@ class QRecLLM(Rec2Base):
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
         )
-        self._init_projection(proj_token_num, freeze_proj, pretrained_llama_proj)
+        self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
         self._apply_tuning_step_policy()
 
@@ -177,31 +177,95 @@ class QRecLLM(Rec2Base):
 
         log_step("Loading Rec_model Done")
 
-    def _init_llm_model(self, llama_model):
-        log_step(f"Loading LLAMA: {llama_model}")
-        model_path = llama_model if llama_model else "./content/ckpt/llm/base"
+    def _init_llm_model(self, llm_path):
+        log_step(f"Loading LLM: {llm_path}")
+        model_path = llm_path if llm_path else "./content/ckpt/llm/base"
 
-        self.llama_tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-        self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
+        self.llm_tokenizer = AutoTokenizer.from_pretrained(
+            model_path, use_fast=False, trust_remote_code=True,
+        )
+        if self.llm_tokenizer.pad_token is None:
+            self.llm_tokenizer.pad_token = self.llm_tokenizer.eos_token
 
-        self.llama_model = LlamaForCausalLM.from_pretrained(
-            model_path,
-            device_map="auto",
-            torch_dtype=torch.float16,
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
         )
 
-        for name, param in self.llama_model.named_parameters():
+        self.llm_model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            device_map="auto",
+            quantization_config=bnb_config,
+            trust_remote_code=True,
+        )
+
+        for name, param in self.llm_model.named_parameters():
             param.requires_grad = False
-        log_step("Loading LLAMA Done")
+
+        self._resolve_soft_token_placeholder()
+        log_step(
+            "Loading LLM Done",
+            f"hidden_size={self.llm_model.config.hidden_size}, "
+            f"pad_token_id={self.llm_tokenizer.pad_token_id}, "
+            f"soft_token_id={self._soft_token_id} ('{self._soft_token_str}')",
+        )
 
         if self.use_lora:
             self._attach_lora()
+
+    def _resolve_soft_token_placeholder(self):
+        tok = self.llm_tokenizer
+        if tok.unk_token_id is not None:
+            self._soft_token_str = tok.unk_token
+            self._soft_token_id = tok.unk_token_id
+            return
+
+        skip_ids = {tok.eos_token_id, tok.pad_token_id, tok.bos_token_id}
+        skip_ids.discard(None)
+
+        hardcoded = (
+            "<|extra_0|>", "<|reserved_0|>", "<|fim_pad|>",
+            "<|object_ref_start|>", "<|object_ref_end|>",
+            "<|box_start|>", "<|box_end|>",
+            "<|quad_start|>", "<|quad_end|>",
+            "<|vision_start|>", "<|vision_end|>", "<|vision_pad|>",
+            "<|image_pad|>", "<|video_pad|>",
+            "<|im_start|>",
+        )
+        for candidate in hardcoded:
+            ids = tok(candidate, add_special_tokens=False).input_ids
+            if len(ids) == 1 and ids[0] not in skip_ids:
+                self._soft_token_str = candidate
+                self._soft_token_id = ids[0]
+                return
+
+        added = getattr(tok, "added_tokens_decoder", None) or {}
+        for token_id, added_token in added.items():
+            if token_id in skip_ids:
+                continue
+            content = getattr(added_token, "content", str(added_token))
+            ids = tok(content, add_special_tokens=False).input_ids
+            if len(ids) == 1 and ids[0] == token_id:
+                self._soft_token_str = content
+                self._soft_token_id = token_id
+                return
+
+        log_step(
+            "Soft-token fallback",
+            "no unk_token and no safe single-token candidate; using eos_token "
+            "as soft-slot placeholder. Soft slots will COLLIDE with padding if "
+            "pad_token == eos_token — Step 2 may corrupt embeddings silently.",
+        )
+        self._soft_token_str = tok.eos_token
+        self._soft_token_id = tok.eos_token_id
 
     def _attach_lora(self):
         from peft import LoraConfig, TaskType, get_peft_model
 
         log_step(
-            "Attaching LoRA to LLaMA",
+            "Attaching LoRA to LLM",
             f"r={self.lora_r}, alpha={self.lora_alpha}, "
             f"target_modules={list(self.lora_target_modules)}, dropout={self.lora_dropout}",
         )
@@ -213,10 +277,10 @@ class QRecLLM(Rec2Base):
             bias="none",
             task_type=TaskType.CAUSAL_LM,
         )
-        self.llama_model = get_peft_model(self.llama_model, lora_config)
+        self.llm_model = get_peft_model(self.llm_model, lora_config)
         log_step(
             "LoRA attached",
-            f"trainable LoRA params={count_trainable_parameters(self.llama_model)}",
+            f"trainable LoRA params={count_trainable_parameters(self.llm_model)}",
         )
 
     def _apply_tuning_step_policy(self):
@@ -227,28 +291,35 @@ class QRecLLM(Rec2Base):
         if int(step) == 1:
             for p in self.qformer.parameters():
                 p.requires_grad = False
-            for p in self.llama_proj.parameters():
+            for p in self.llm_proj.parameters():
                 p.requires_grad = False
             self.qformer.eval()
             self.qformer.train = disabled_train
-            self.llama_proj.eval()
-            self.llama_proj.train = disabled_train
+            self.llm_proj.eval()
+            self.llm_proj.train = disabled_train
             log_step(
                 "Tuning step 1",
                 "LoRA trainable; Q-Former, projection, MF and base LLM all frozen.",
             )
 
         elif int(step) == 2:
-            if hasattr(self.llama_model, "peft_config"):
-                for n, p in self.llama_model.named_parameters():
+            # CoLLM Equation (5), Ω = ϕ variant: Q-Former + projection trainable,
+            # LoRA + base LLM + MF frozen. Q-Former was briefly frozen here as an
+            # α2 experiment (theory: 8-layer Q-Former too large for 33k samples);
+            # plateaued at uAUC ~0.694, below baseline 0.708, because llm_proj
+            # alone (~2.8M params) lacks capacity to fix the CIE channel. Unfrozen
+            # again to let Q-Former co-adapt with projection on the recommendation
+            # task — matches the original CoLLM recipe.
+            if hasattr(self.llm_model, "peft_config"):
+                for n, p in self.llm_model.named_parameters():
                     if "lora_" in n:
                         p.requires_grad = False
             for p in self.qformer.parameters():
                 p.requires_grad = True
             self.qformer.train()
-            for p in self.llama_proj.parameters():
+            for p in self.llm_proj.parameters():
                 p.requires_grad = True
-            self.llama_proj.train()
+            self.llm_proj.train()
             log_step(
                 "Tuning step 2",
                 "Q-Former + projection trainable; LoRA, base LLM and MF frozen.",
@@ -312,14 +383,14 @@ class QRecLLM(Rec2Base):
         log_step("Loading QFormer Done")
         return self.qformer
 
-    def _init_projection(self, proj_token_num, freeze_proj, pretrained_llama_proj=None):
+    def _init_projection(self, proj_token_num, freeze_proj, pretrained_llm_proj=None):
         """
         Stage 3 projection: map Q-Former output tokens -> LLM hidden tokens.
         Input  : qformer_out [B, Q, d_q]
         Output : llm_tokens  [B, Q, H]
 
         Matches InstructBLIP: a single ``nn.Linear`` from Q-Former hidden size
-        to LLM hidden size, applied per token. If ``pretrained_llama_proj``
+        to LLM hidden size, applied per token. If ``pretrained_llm_proj``
         points to a state dict (e.g. from Stage 2 generative pretraining), it
         is loaded before any freezing.
         """
@@ -329,12 +400,12 @@ class QRecLLM(Rec2Base):
             raise ValueError("qformer is None. Please init/load Q-Former before init projection.")
         if not hasattr(self.qformer, "q"):
             raise ValueError("qformer.q (learned query tokens) is required to infer num_queries.")
-        if self.llama_model is None:
-            raise ValueError("llama_model is None. Please init LLM backbone before init projection.")
+        if self.llm_model is None:
+            raise ValueError("llm_model is None. Please init LLM backbone before init projection.")
 
         d_q = self.qformer.output_dim
         Q = int(self.qformer.q.shape[-2])
-        H = int(self.llama_model.config.hidden_size)
+        H = int(self.llm_model.config.hidden_size)
 
         # luôn sync theo Q-Former để tránh lệch số <unk> khi inject
         self.proj_token_num = Q
@@ -343,26 +414,26 @@ class QRecLLM(Rec2Base):
                     f"proj_token_num({proj_token_num}) != qformer.num_queries({Q}). "
                     f"Using Q={Q} to keep injection consistent.")
 
-        self.llama_proj = nn.Sequential(
+        self.llm_proj = nn.Sequential(
             nn.Linear(d_q, H),
             nn.LayerNorm(H),
         )
-        nn.init.normal_(self.llama_proj[0].weight, std=0.02)
-        nn.init.zeros_(self.llama_proj[0].bias)
-        nn.init.constant_(self.llama_proj[1].weight, H ** -0.5)
-        nn.init.zeros_(self.llama_proj[1].bias)
+        nn.init.normal_(self.llm_proj[0].weight, std=0.02)
+        nn.init.zeros_(self.llm_proj[0].bias)
+        nn.init.constant_(self.llm_proj[1].weight, H ** -0.5)
+        nn.init.zeros_(self.llm_proj[1].bias)
 
-        if pretrained_llama_proj and pretrained_llama_proj != "not_have" and os.path.exists(pretrained_llama_proj):
-            state_dict = torch.load(pretrained_llama_proj, map_location="cpu")
-            self.llama_proj.load_state_dict(state_dict, strict=True)
-            log_step("Loaded Stage 2 projection", pretrained_llama_proj)
+        if pretrained_llm_proj and pretrained_llm_proj != "not_have" and os.path.exists(pretrained_llm_proj):
+            state_dict = torch.load(pretrained_llm_proj, map_location="cpu")
+            self.llm_proj.load_state_dict(state_dict, strict=True)
+            log_step("Loaded Stage 2 projection", pretrained_llm_proj)
 
         if freeze_proj:
-            for p in self.llama_proj.parameters():
+            for p in self.llm_proj.parameters():
                 p.requires_grad = False
-            self.llama_proj.eval()
-            self.llama_proj.train = disabled_train
-            log_step("Freeze llama_proj")
+            self.llm_proj.eval()
+            self.llm_proj.train = disabled_train
+            log_step("Freeze llm_proj")
 
         log_step("Loading Projection Done",
                 f"d_q={d_q}, H={H}, Q={self.proj_token_num}")
@@ -371,27 +442,27 @@ class QRecLLM(Rec2Base):
         if self._has_logged_trainable_stats:
             return
 
-        llama_total = (
-            count_trainable_parameters(self.llama_model) if self.llama_model is not None else 0
+        llm_total = (
+            count_trainable_parameters(self.llm_model) if self.llm_model is not None else 0
         )
         lora_total = 0
-        if self.llama_model is not None and hasattr(self.llama_model, "peft_config"):
+        if self.llm_model is not None and hasattr(self.llm_model, "peft_config"):
             lora_total = sum(
                 p.numel()
-                for n, p in self.llama_model.named_parameters()
+                for n, p in self.llm_model.named_parameters()
                 if "lora_" in n and p.requires_grad
             )
         stats = [
             f"rec_encoder={count_trainable_parameters(self.rec_encoder) if self.rec_encoder is not None else 0}",
             f"qformer={count_trainable_parameters(self.qformer) if self.qformer is not None else 0}",
-            f"llama_proj={count_trainable_parameters(self.llama_proj) if hasattr(self, 'llama_proj') else 0}",
-            f"llama_model={llama_total}",
-            f"llama_lora={lora_total}",
+            f"llm_proj={count_trainable_parameters(self.llm_proj) if hasattr(self, 'llm_proj') else 0}",
+            f"llm_model={llm_total}",
+            f"llm_lora={lora_total}",
         ]
         log_step("Trainable parameter counts", ", ".join(stats))
         self._has_logged_trainable_stats = True
 
-    def _log_information_flow(self, user_q, target_q, user_llama, target_llama, merged_flat):
+    def _log_information_flow(self, user_q, target_q, user_llm, target_llm, merged_flat):
         if self._flow_log_steps >= self._max_flow_log_steps:
             return
 
@@ -401,8 +472,8 @@ class QRecLLM(Rec2Base):
                 [
                     tensor_stat_string("user_q", user_q),
                     tensor_stat_string("target_q", target_q),
-                    tensor_stat_string("user_llama", user_llama),
-                    tensor_stat_string("target_llama", target_llama),
+                    tensor_stat_string("user_llm", user_llm),
+                    tensor_stat_string("target_llm", target_llm),
                     tensor_stat_string("merged_embs", merged_flat),
                 ]
             ),
@@ -451,8 +522,8 @@ class QRecLLM(Rec2Base):
                 if id_term in prompt:
                     return True
 
-        if self.llama_model is not None and hasattr(self.llama_model, "peft_config"):
-            for n, p in self.llama_model.named_parameters():
+        if self.llm_model is not None and hasattr(self.llm_model, "peft_config"):
+            for n, p in self.llm_model.named_parameters():
                 if "lora_" in n and p.requires_grad:
                     return True
 
@@ -465,8 +536,8 @@ class QRecLLM(Rec2Base):
         elif mode == 'v2':
             self.pos_ans = ['Yes']
             self.neg_ans = ['No']
-            pos_ans_id = self.llama_tokenizer(self.pos_ans[0],add_special_tokens=False).input_ids[0]
-            neg_ans_id = self.llama_tokenizer(self.neg_ans[0],add_special_tokens=False).input_ids[0]
+            pos_ans_id = self.llm_tokenizer(self.pos_ans[0],add_special_tokens=False).input_ids[0]
+            neg_ans_id = self.llm_tokenizer(self.neg_ans[0],add_special_tokens=False).input_ids[0]
             log_step("answer token ids: pos:{}, neg ids:{}".format(pos_ans_id, neg_ans_id))
             
         else:
@@ -515,7 +586,7 @@ class QRecLLM(Rec2Base):
         device = batch_data["UserID"].device
         B = batch_data["UserID"].shape[0]
         Q = self.proj_token_num
-        H = self.llama_model.config.hidden_size
+        H = self.llm_model.config.hidden_size
 
         if instruction_list is None:
             instruction_list = batch_data.get(
@@ -534,7 +605,7 @@ class QRecLLM(Rec2Base):
             # TEMP_DISABLED_USER_CF: old path injected a user CF token into the LLM prompt.
             # user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
             user_q = None
-            user_llama = None
+            user_llm = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
 
             # 2) QFormer outputs (instruction-conditioned)
@@ -542,13 +613,13 @@ class QRecLLM(Rec2Base):
             target_q = self.qformer(target_cf, ins_list)      # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
-            # user_llama = self.llama_proj(user_q)               # [B,Q,H]
-            target_llama = self.llama_proj(target_q)           # [B,Q,H]
+            # user_llm = self.llm_proj(user_q)               # [B,Q,H]
+            target_llm = self.llm_proj(target_q)           # [B,Q,H]
 
             if self.ablate_soft_tokens:
-                target_llama = torch.zeros_like(target_llama)
+                target_llm = torch.zeros_like(target_llm)
 
-            interacted_llama_flat = None
+            interacted_llm_flat = None
             merged_flat = None
 
             has_interacted = "InteractedItemIDs_pad" in batch_data
@@ -568,11 +639,11 @@ class QRecLLM(Rec2Base):
                 inter_ins_list = [ins for ins in ins_list for _ in range(L)]               # len B*L
 
                 inter_q_flat = self.qformer(inter_cf_flat, inter_ins_list)                 # [B*L,Q,d_model]
-                inter_llama_flat2 = self.llama_proj(inter_q_flat)                         # [B*L,Q,H]
+                inter_llm_flat2 = self.llm_proj(inter_q_flat)                         # [B*L,Q,H]
                 if self.ablate_soft_tokens:
-                    inter_llama_flat2 = torch.zeros_like(inter_llama_flat2)
-                inter_llama = inter_llama_flat2.reshape(B, L, Q, H)                       # [B,L,Q,H]
-                interacted_llama_flat = inter_llama.reshape(B, L * Q, H)                  # [B,L*Q,H]
+                    inter_llm_flat2 = torch.zeros_like(inter_llm_flat2)
+                inter_llm = inter_llm_flat2.reshape(B, L, Q, H)                       # [B,L,Q,H]
+                interacted_llm_flat = inter_llm.reshape(B, L * Q, H)                  # [B,L*Q,H]
 
                 # mask expand theo Q
                 item_mask = (ids != self.rec_encoder.padding_index).long()                # [B,L]
@@ -580,10 +651,10 @@ class QRecLLM(Rec2Base):
                 ones_q = torch.ones((B, Q), device=device, dtype=item_mask.dtype)         # [B,Q]
 
                 ph2emb = {
-                    # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llama.
-                    # "<UserID>": user_llama,                 # [B,Q,H]
-                    "<ItemIDList>": interacted_llama_flat,  # [B,L*Q,H]
-                    "<TargetItemID>": target_llama          # [B,Q,H]
+                    # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llm.
+                    # "<UserID>": user_llm,                 # [B,Q,H]
+                    "<ItemIDList>": interacted_llm_flat,  # [B,L*Q,H]
+                    "<TargetItemID>": target_llm          # [B,Q,H]
                 }
                 ph2mask = {
                     # "<UserID>": ones_q,
@@ -598,12 +669,12 @@ class QRecLLM(Rec2Base):
                 merged_flat = merged_embeds[idx[:, 0], idx[:, 1]]                         # [N,H]
 
             rec_embeds = {
-                "User_emb": user_llama,                 # None while TEMP_DISABLED_USER_CF is active
-                "TargetItem_emb": target_llama,         # [B,Q,H]
-                "InteractedItems_embs": interacted_llama_flat,  # [B,L*Q,H] or None
+                "User_emb": user_llm,                 # None while TEMP_DISABLED_USER_CF is active
+                "TargetItem_emb": target_llm,         # [B,Q,H]
+                "InteractedItems_embs": interacted_llm_flat,  # [B,L*Q,H] or None
                 "merged_embs": merged_flat,             # [N,H] or None
             }
-            self._log_information_flow(user_q, target_q, user_llama, target_llama, merged_flat)
+            self._log_information_flow(user_q, target_q, user_llm, target_llm, merged_flat)
 
         return rec_embeds, None
 
@@ -613,10 +684,10 @@ class QRecLLM(Rec2Base):
         
         prompt_ori = prompt_template
         batch_size = batch_data['UserID'].shape[0]
-        bos = self.llama_tokenizer.bos_token if self.llama_tokenizer.bos_token else "<s>"
-        
-        unk_token = self.llama_tokenizer.unk_token
-        unk_seq = " ".join([unk_token] * self.proj_token_num) 
+        bos = self.llm_tokenizer.bos_token if self.llm_tokenizer.bos_token else ""
+
+        unk_token = self._soft_token_str
+        unk_seq = " ".join([unk_token] * self.proj_token_num)
         
         prompt_template = bos + prompt_template 
         # TEMP_DISABLED_USER_CF: old prompt path replaced <UserID> with soft tokens.
@@ -658,8 +729,8 @@ class QRecLLM(Rec2Base):
             log_step("prompt injection preview:", " | ".join(preview_parts))
             self.has_print_prompt = True
 
-        self.llama_tokenizer.padding_side = "left"
-        prompts_tokens = self.llama_tokenizer(
+        self.llm_tokenizer.padding_side = "left"
+        prompts_tokens = self.llm_tokenizer(
             prompt_list,
             return_tensors="pt",
             padding="longest",
@@ -668,9 +739,9 @@ class QRecLLM(Rec2Base):
             add_special_tokens=False
         ).to(batch_data['UserID'].device)
 
-        unk_token_id = self.llama_tokenizer.unk_token_id
+        unk_token_id = self._soft_token_id
         
-        embed_layer = self.llama_model.get_input_embeddings()
+        embed_layer = self.llm_model.get_input_embeddings()
         inputs_embeds = embed_layer(prompts_tokens.input_ids)
 
         replaced_idx = torch.nonzero(prompts_tokens.input_ids == unk_token_id)
@@ -730,22 +801,22 @@ class QRecLLM(Rec2Base):
         empty_targets = torch.full((batch_size, input_len), -100, device=device)
         
         label_targets = label_tokens.input_ids.masked_fill(
-            label_tokens.input_ids == self.llama_tokenizer.pad_token_id, -100
+            label_tokens.input_ids == self.llm_tokenizer.pad_token_id, -100
         )
         
         return torch.cat([empty_targets, label_targets], dim=1)
 
     def execute_llm_forward(self, embeds, atts, targets):
         with self.maybe_autocast():
-            return self.llama_model(
+            return self.llm_model(
                 inputs_embeds=embeds,
                 attention_mask=atts,
                 return_dict=True,
             )
 
     def calculate_recommendation_loss(self, outputs, label_tokens, batch_data, ans_map):
-        pos_id = self.llama_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
-        neg_id = self.llama_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
+        pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
+        neg_id = self.llm_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
         label_seq_len = label_tokens.input_ids.shape[-1]
         
         prediction_logits = outputs.logits[:, -(label_seq_len + 1), :]
@@ -760,8 +831,8 @@ class QRecLLM(Rec2Base):
         return loss
 
     def recommendation_scores(self, outputs, label_tokens, ans_map):
-        pos_id = self.llama_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
-        neg_id = self.llama_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
+        pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
+        neg_id = self.llm_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
         label_seq_len = label_tokens.input_ids.shape[-1]
 
         prediction_logits = outputs.logits[:, -(label_seq_len + 1), :]
@@ -776,8 +847,8 @@ class QRecLLM(Rec2Base):
         ans_map = {1: self.pos_ans[0], 0: self.neg_ans[0]}
         text_labels = [ans_map[int(label)] for label in batch_data["label"]]
 
-        self.llama_tokenizer.padding_side = "right"
-        label_tokens = self.llama_tokenizer(
+        self.llm_tokenizer.padding_side = "right"
+        label_tokens = self.llm_tokenizer(
             text_labels,
             return_tensors="pt",
             padding="longest",
@@ -786,7 +857,7 @@ class QRecLLM(Rec2Base):
             add_special_tokens=False
         ).to(device)
 
-        embed_layer = self.llama_model.get_input_embeddings()
+        embed_layer = self.llm_model.get_input_embeddings()
         label_embeds = embed_layer(label_tokens.input_ids)
 
         return label_embeds, label_tokens, ans_map
@@ -915,7 +986,7 @@ class QRecLLM(Rec2Base):
         freeze_rec = cfg.get("freeze_rec",True)
         rec_config = cfg.get("rec_config")
         qformer_config = cfg.get("qformer_config") or {}
-        llama_model = cfg.get("llama_model")
+        llm_model = cfg.get("llm_model")
         proj_token_num = cfg.get("proj_token_num")
         freeze_proj = cfg.get("freeze_proj")
         prompt_path = cfg.get("prompt_path", "")
@@ -930,7 +1001,7 @@ class QRecLLM(Rec2Base):
         pretrained_qformer = qformer_config.get("qformer_ckpt")
         qformer_text_model_name = qformer_config.get("qformer_text_model_name", "bert-base-uncased")
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
-        pretrained_llama_proj = qformer_config.get("llama_proj_ckpt")
+        pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -946,9 +1017,9 @@ class QRecLLM(Rec2Base):
             rec_config=rec_config,
             pretrained_rec=rec_config['pretrained_path'],
             pretrained_qformer=pretrained_qformer,
-            pretrained_llama_proj=pretrained_llama_proj,
+            pretrained_llm_proj=pretrained_llm_proj,
             freeze_rec=freeze_rec,
-            llama_model=llama_model,
+            llm_model=llm_model,
             prompt_path=prompt_path,
             prompt_template=prompt_template,
             max_txt_len=max_txt_len,

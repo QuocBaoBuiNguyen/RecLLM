@@ -146,12 +146,14 @@ def train_step(
     w_itm: float = 1.0,
     w_itg: float = 1.0,
     w_ii: float = 1.0,
+    w_ui: float = 0.0,
     tau_itc: float = 0.07,
     tau_ii: float = 0.07,
+    tau_ui: float = 0.07,
     debug_batch: bool = False,
 ):
     """BLIP-2 stage-1 step: ITC + ITM + ITG on item-text samples, plus the
-    SigLLM-specific item-item contrastive on co-watch pairs."""
+    SigLLM-specific item-item and (ILM-style) user-item contrastives."""
 
     device = batch["i_left"].device
 
@@ -164,10 +166,12 @@ def train_step(
         "L_itm": zero,
         "L_itg": zero,
         "L_ii": zero,
+        "L_ui": zero,
         "itc_top1": zero.detach(),
         "itm_acc": zero.detach(),
         "itg_acc": zero.detach(),
         "ii_top1": zero.detach(),
+        "ui_top1": zero.detach(),
     }
     losses = []
 
@@ -204,6 +208,16 @@ def train_step(
         logs["ii_top1"] = ii_top1.detach()
         losses.append(w_ii * loss_ii)
 
+    user_item_idx = _indices_for_type(batch, "user_item", device)
+    if w_ui > 0.0 and user_item_idx.numel() >= 2:
+        user_item_batch = _subset_batch(batch, user_item_idx)
+        loss_ui, ui_top1 = model.loss_user_item(
+            user_item_batch["u"], user_item_batch["i_left"], tau=tau_ui
+        )
+        logs["L_ui"] = loss_ui
+        logs["ui_top1"] = ui_top1.detach()
+        losses.append(w_ui * loss_ui)
+
     loss = sum(losses, zero)
     return loss, logs
 
@@ -215,8 +229,10 @@ def evaluate_loss(
     w_itm=1.0,
     w_itg=1.0,
     w_ii=1.0,
+    w_ui=0.0,
     tau_itc=0.07,
     tau_ii=0.07,
+    tau_ui=0.07,
 ):
     model.eval()
     device = next(model.parameters()).device
@@ -226,10 +242,12 @@ def evaluate_loss(
         "L_itm": 0.0,
         "L_itg": 0.0,
         "L_ii": 0.0,
+        "L_ui": 0.0,
         "itc_top1": 0.0,
         "itm_acc": 0.0,
         "itg_acc": 0.0,
         "ii_top1": 0.0,
+        "ui_top1": 0.0,
     }
     steps = 0
 
@@ -243,8 +261,10 @@ def evaluate_loss(
                 w_itm=w_itm,
                 w_itg=w_itg,
                 w_ii=w_ii,
+                w_ui=w_ui,
                 tau_itc=tau_itc,
                 tau_ii=tau_ii,
+                tau_ui=tau_ui,
             )
             totals["loss"] += loss.item()
             for key in logs:
@@ -306,6 +326,9 @@ def train_qformer_stage1_representation(cfg):
     )
     log_step("Training setup", f"seed={cfg.seed}, output_dir={outdir}")
 
+    w_ui = float(cfg.get("w_ui", 0.0))
+    tau_ui = float(cfg.get("tau_ui", 0.07))
+
     for epoch in range(cfg.epoch):
         model.train()
         train_totals = {
@@ -314,10 +337,12 @@ def train_qformer_stage1_representation(cfg):
             "L_itm": 0.0,
             "L_itg": 0.0,
             "L_ii": 0.0,
+            "L_ui": 0.0,
             "itc_top1": 0.0,
             "itm_acc": 0.0,
             "itg_acc": 0.0,
             "ii_top1": 0.0,
+            "ui_top1": 0.0,
         }
         train_steps = 0
         for batch in train_loader:
@@ -331,8 +356,10 @@ def train_qformer_stage1_representation(cfg):
                 w_itm=cfg.w_itm,
                 w_itg=cfg.w_itg,
                 w_ii=cfg.w_ii,
+                w_ui=w_ui,
                 tau_itc=cfg.tau_itc,
                 tau_ii=cfg.tau_ii,
+                tau_ui=tau_ui,
                 debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
             )
             loss.backward()
@@ -355,23 +382,30 @@ def train_qformer_stage1_representation(cfg):
                 w_itm=cfg.w_itm,
                 w_itg=cfg.w_itg,
                 w_ii=cfg.w_ii,
+                w_ui=w_ui,
                 tau_itc=cfg.tau_itc,
                 tau_ii=cfg.tau_ii,
+                tau_ui=tau_ui,
             )
             print(
                 f"epoch {epoch+1} | "
                 f"Train Loss={avg_train['loss']:.4f} "
                 f"L_itc={avg_train['L_itc']:.4f} L_itm={avg_train['L_itm']:.4f} "
                 f"L_itg={avg_train['L_itg']:.4f} L_ii={avg_train['L_ii']:.4f} "
+                f"L_ui={avg_train['L_ui']:.4f} "
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
-                f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} | "
+                f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} "
+                f"UI@1={avg_train['ui_top1']:.4f} | "
                 f"Val Loss={val_logs['loss']:.4f} "
                 f"L_itc={val_logs['L_itc']:.4f} L_itm={val_logs['L_itm']:.4f} "
                 f"L_itg={val_logs['L_itg']:.4f} L_ii={val_logs['L_ii']:.4f} "
+                f"L_ui={val_logs['L_ui']:.4f} "
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
-                f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} | "
+                f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
+                f"UI@1={val_logs['ui_top1']:.4f} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
-                f"w_ii={cfg.w_ii:.3f} tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f}"
+                f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} "
+                f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f}"
             )
 
             metrics = {

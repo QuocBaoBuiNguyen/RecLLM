@@ -24,7 +24,7 @@ from torch.distributed.elastic.multiprocessing.errors import record
 from sigllm import tasks
 from sigllm.common.config import Config
 from sigllm.common.dist_utils import get_rank, init_distributed_mode
-from sigllm.common.utils import now
+from sigllm.common.utils import derive_job_id_from_llm
 from sigllm.runners.runner_base_rec import RecRunnerBase  # noqa: F401  (registry side-effect)
 
 
@@ -48,11 +48,13 @@ def setup_seeds(config):
     cudnn.deterministic = True
 
 
-def apply_step2_overrides(cfg):
+def apply_step2_overrides(cfg, slug):
     step2 = cfg.run_cfg.qformer_stage3_step2
     cfg.model_cfg.tuning_step = 2
     cfg.model_cfg.prompt_path = step2.prompt_path
-    cfg.model_cfg.ckpt = step2.ckpt
+    step1_out = cfg.run_cfg.qformer_stage3_step1.output_dir
+    best_name = cfg.run_cfg.qformer_stage3_step1.best_ckpt_name
+    cfg.model_cfg.ckpt = os.path.join(step1_out, slug, best_name)
     cfg.run_cfg.output_dir = step2.output_dir
     cfg.run_cfg.init_lr = step2.init_lr
     cfg.run_cfg.max_epoch = step2.max_epoch
@@ -60,9 +62,9 @@ def apply_step2_overrides(cfg):
 
 @record
 def main():
-    job_id = now()
     cfg = Config(parse_args())
-    apply_step2_overrides(cfg)
+    job_id = derive_job_id_from_llm(cfg)
+    apply_step2_overrides(cfg, job_id)
     init_distributed_mode(cfg.run_cfg)
     setup_seeds(cfg)
 

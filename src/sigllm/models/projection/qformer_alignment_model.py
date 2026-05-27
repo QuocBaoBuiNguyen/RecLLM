@@ -210,3 +210,23 @@ class QRecInstructAlignmentModel(nn.Module):
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
         return loss, accuracy
+
+    def loss_user_item(self, user_ids: torch.Tensor, item_ids: torch.Tensor, tau: float = 0.07):
+        """User-item contrastive (ILM-style). Pulls Q-Former representation of
+        a user toward their positively-interacted item via in-batch InfoNCE.
+        Mirrors ``loss_item_item_ilm`` but uses ``mf.user_encoder`` on the left
+        side. On ML1M this captures the dominant CF signal (888K positive
+        user-item pairs vs 3K item-text pairs in our pkls)."""
+        user_cf = self.mf.user_encoder(user_ids)
+        item_cf = self.mf.item_encoder(item_ids)
+        user_q = self.qformer.encode_cf(user_cf)
+        item_q = self.qformer.encode_cf(item_cf)
+        user_sel, item_sel, _, _ = self.select_pair_by_similarity(user_q, item_q)
+
+        user_norm = self.l2norm(user_sel)
+        item_norm = self.l2norm(item_sel)
+        logits = (user_norm @ item_norm.T) / tau
+        labels = torch.arange(logits.size(0), device=logits.device)
+        loss = F.cross_entropy(logits, labels)
+        accuracy = (logits.argmax(dim=1) == labels).float().mean()
+        return loss, accuracy

@@ -20,7 +20,7 @@ from torch.distributed.elastic.multiprocessing.errors import record
 from sigllm import tasks
 from sigllm.common.config import Config
 from sigllm.common.dist_utils import get_rank, init_distributed_mode
-from sigllm.common.utils import now
+from sigllm.common.utils import derive_job_id_from_llm
 from sigllm.runners.runner_base_rec import RecRunnerBase  # noqa: F401  (registry side-effect)
 
 
@@ -56,9 +56,9 @@ def apply_step1_overrides(cfg):
 
 @record
 def main():
-    job_id = now()
     cfg = Config(parse_args())
     apply_step1_overrides(cfg)
+    job_id = derive_job_id_from_llm(cfg)
     init_distributed_mode(cfg.run_cfg)
     setup_seeds(cfg)
 
