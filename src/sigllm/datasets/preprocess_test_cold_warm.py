@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -9,6 +10,12 @@ from sigllm.common import NotebookLogger
 
 LOGGER = NotebookLogger.rich_logger("sigllm.data_prep_warm_cold")
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DEFAULT_DATA_DIR = os.environ.get(
+    "SIGLLM_PROCESSED_DIR",
+    str(_REPO_ROOT / "data" / "processed" / "ml-1m"),
+)
+
 
 def log_step(title: str, detail: Optional[str] = None) -> None:
     """Emit a compact log line with optional detail string."""
@@ -17,7 +24,7 @@ def log_step(title: str, detail: Optional[str] = None) -> None:
 
 
 def process_warm_cold(
-    data_dir: str = "/content/SigLLM/data/processed/ml-1m/",
+    data_dir: str = _DEFAULT_DATA_DIR,
     min_user_inter: int = 3,
     min_item_inter: int = 3
 ) -> pd.DataFrame:
