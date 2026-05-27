@@ -294,6 +294,19 @@ class QRecLLM(Rec2Base):
             random_state=42,
         )
 
+        base_dtype = next(
+            p.dtype
+            for n, p in self.llm_model.named_parameters()
+            if "lora_" not in n.lower() and p.is_floating_point()
+        )
+        for name, param in self.llm_model.named_parameters():
+            if "lora_" in name.lower():
+                param.data = param.data.to(base_dtype)
+        log_step(
+            "LoRA params cast",
+            f"all lora_* parameters moved to {base_dtype} to match base LLM",
+        )
+
         # Switch into training mode (enables grad tracking on LoRA params,
         # disables dropout overrides etc.). Must call before the first
         # forward/backward pass.
