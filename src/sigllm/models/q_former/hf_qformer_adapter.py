@@ -58,8 +58,10 @@ class HFQFormerAdapter(nn.Module):
         qformer_text_model_name: str = "bert-base-uncased",
         max_instruction_length: int = 48,
         init_from_pretrained_text: bool = True,
+        instruction_aware: bool = True,
     ):
         super().__init__()
+        self.instruction_aware = bool(instruction_aware)
 
         if AutoTokenizer is None or InstructBlipQFormerConfig is None or InstructBlipQFormerModel is None:
             raise ModuleNotFoundError(
@@ -357,7 +359,17 @@ class HFQFormerAdapter(nn.Module):
     def forward(self, cf_vec: torch.Tensor, instruction) -> torch.Tensor:
         """LLM-feeding mode: queries cross-attend to ``cf_vec`` while the text
         stream consumes ``instruction``. Returns query hidden states with
-        ``out_proj`` applied: ``[B, num_queries, output_dim]``."""
+        ``out_proj`` applied: ``[B, num_queries, output_dim]``.
+
+        When ``self.instruction_aware`` is False, the instruction text is
+        dropped and this reduces to ``encode_cf`` + ``out_proj`` — a vanilla
+        BLIP-2 forward without instruction routing. This is the ablation
+        baseline isolating the contribution of the instruction-aware design.
+        """
+
+        if not self.instruction_aware:
+            query_hidden = self.encode_cf(cf_vec)
+            return self.out_proj(query_hidden)
 
         query_hidden, _, _, _ = self.forward_multimodal(
             cf_vec, instruction, causal_text=False

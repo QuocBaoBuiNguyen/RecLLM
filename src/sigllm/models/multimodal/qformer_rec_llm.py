@@ -102,6 +102,7 @@ class QRecLLM(Rec2Base):
         qformer_output_dim=None,
         qformer_text_model_name="bert-base-uncased",
         max_instruction_length=48,
+        instruction_aware=True,
         freeze_proj=False,
         ablate_soft_tokens=False,
         use_lora=False,
@@ -155,6 +156,7 @@ class QRecLLM(Rec2Base):
             freeze_qformer=False,
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
+            instruction_aware=instruction_aware,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
@@ -333,11 +335,17 @@ class QRecLLM(Rec2Base):
         freeze_qformer: bool,
         qformer_text_model_name: str,
         max_instruction_length: int,
+        instruction_aware: bool = True,
     ):
         log_step("Loading QFormer")
         log_step(
             "Using Q-Former tokenizer for instructions",
             f"tokenizer={qformer_text_model_name}, hidden_size={d_model}",
+        )
+        log_step(
+            "Q-Former mode",
+            "instruction-aware (InstructBLIP-style)" if instruction_aware
+            else "vanilla queries-only (BLIP-2-style) [ABLATION]",
         )
 
         self.qformer = HFQFormerAdapter(
@@ -350,6 +358,7 @@ class QRecLLM(Rec2Base):
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
             init_from_pretrained_text=False,
+            instruction_aware=instruction_aware,
         ).to(self.device)
 
         if pretrained_qformer and pretrained_qformer != "not_have":
@@ -994,6 +1003,7 @@ class QRecLLM(Rec2Base):
         pretrained_qformer = qformer_config.get("qformer_ckpt")
         qformer_text_model_name = qformer_config.get("qformer_text_model_name", "bert-base-uncased")
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
+        instruction_aware = qformer_config.get("instruction_aware", True)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
@@ -1025,6 +1035,7 @@ class QRecLLM(Rec2Base):
             qformer_output_dim=qformer_output_dim,
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
+            instruction_aware=instruction_aware,
             freeze_proj=freeze_proj,
             ablate_soft_tokens=ablate_soft_tokens,
             use_lora=use_lora,

@@ -55,6 +55,7 @@ model:
     qformer_output_dim: 768 # Keep Q-Former compact; llm_proj maps this to the LLM hidden size.
     qformer_text_model_name: "bert-base-uncased"
     max_instruction_length: 48
+    instruction_aware: True
     num_queries: 8
     num_heads: 8
     num_layers: 4
