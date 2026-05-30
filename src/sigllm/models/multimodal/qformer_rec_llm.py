@@ -388,7 +388,22 @@ class QRecLLM(Rec2Base):
             state_dict = ckpt
             if isinstance(state_dict, dict) and any(k.startswith("qformer.") for k in state_dict.keys()):
                 state_dict = {k.replace("qformer.", "", 1): v for k, v in state_dict.items()}
-            self.qformer.load_state_dict(state_dict, strict=True)
+            # strict=False: tolerate keys that exist in the current adapter
+            # but not in older checkpoints — specifically
+            # `interaction_pos_embedding` which was added on the
+            # interaction-aware branch. Such keys keep their random init and
+            # are trained during Stage 3 step 2 when the flag is enabled.
+            load_result = self.qformer.load_state_dict(state_dict, strict=False)
+            if load_result.missing_keys:
+                log_step(
+                    "QFormer ckpt missing keys (kept at init)",
+                    ", ".join(load_result.missing_keys),
+                )
+            if load_result.unexpected_keys:
+                log_step(
+                    "QFormer ckpt unexpected keys (ignored)",
+                    ", ".join(load_result.unexpected_keys),
+                )
             log_step("Successfully loaded QFormer checkpoint", pretrained_qformer)
 
         # 3) freeze / train tiếp
