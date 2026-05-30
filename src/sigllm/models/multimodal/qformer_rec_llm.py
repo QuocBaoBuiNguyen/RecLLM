@@ -555,7 +555,14 @@ class QRecLLM(Rec2Base):
     def to_be_trained(self):
         # TEMP_DISABLED_USER_CF: old trainable placeholders included "<UserID>".
         # id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
-        id_terms = ["<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
+        # <InteractionContext> added for interaction-aware mode — same
+        # semantic role (soft-token slot signaling there is CF info to inject).
+        id_terms = [
+            "<ItemIDList>",
+            "<TargetItemID>",
+            "<DCNFeature>",
+            "<InteractionContext>",
+        ]
         for prompt in self.prompt_list:
             for id_term in id_terms:
                 if id_term in prompt:
@@ -780,11 +787,14 @@ class QRecLLM(Rec2Base):
         unk_token = self._soft_token_str
         unk_seq = " ".join([unk_token] * self.proj_token_num)
         
-        prompt_template = bos + prompt_template 
+        prompt_template = bos + prompt_template
         # TEMP_DISABLED_USER_CF: old prompt path replaced <UserID> with soft tokens.
         # prompt_template = prompt_template.replace("<UserID>", unk_seq)
         prompt_template = prompt_template.replace("<UserID>", "")
         prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
+        # Interaction-aware: single joint slot replaces per-item layout.
+        # Q soft tokens encode target+history compatibility jointly.
+        prompt_template = prompt_template.replace("<InteractionContext>", unk_seq)
         # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
 
         prompt_list = []
@@ -817,6 +827,14 @@ class QRecLLM(Rec2Base):
                 preview_parts.append(
                     f"[TargetItemID id={target_id} soft_tokens={self.proj_token_num}]",
                 )
+            if "<InteractionContext>" in prompt_ori and 'TargetItemID' in batch_data:
+                target_id = int(batch_data['TargetItemID'][0].detach().cpu().item())
+                history_ids = batch_data['InteractedItemIDs_pad'][0].detach().cpu().tolist()
+                valid = [int(i) for i in history_ids if int(i) != self.rec_encoder.padding_index]
+                preview_parts.append(
+                    f"[InteractionContext target_id={target_id} "
+                    f"history_ids={valid} joint_soft_tokens={self.proj_token_num}]",
+                )
             log_step("prompt injection preview:", " | ".join(preview_parts))
             self.has_print_prompt = True
 
@@ -839,8 +857,17 @@ class QRecLLM(Rec2Base):
 
         has_history_placeholder = "<ItemIDList>" in prompt_ori
         has_target_placeholder = "<TargetItemID>" in prompt_ori
+        has_interaction_placeholder = "<InteractionContext>" in prompt_ori
 
-        if has_history_placeholder and has_target_placeholder and rec_embeds.get('merged_embs') is not None:
+        if has_interaction_placeholder and rec_embeds.get('merged_embs') is not None:
+            # Interaction-aware: merged_embs is [B*Q, H] (Q tokens per sample,
+            # all at the single <InteractionContext> slot). replaced_idx covers
+            # exactly B*Q positions because each sample's slot expands to Q
+            # unk tokens via wrap (Q copies of unk_seq's Q tokens... actually
+            # unk_seq is Q tokens, so B samples × Q unk = B*Q positions).
+            inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
+
+        elif has_history_placeholder and has_target_placeholder and rec_embeds.get('merged_embs') is not None:
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
 
         elif has_target_placeholder:
@@ -862,7 +889,8 @@ class QRecLLM(Rec2Base):
 
             target_soft_tokens = self.proj_token_num if "<TargetItemID>" in prompt_ori else 0
             history_soft_tokens = valid_history_items * self.proj_token_num if "<ItemIDList>" in prompt_ori else 0
-            total_soft_tokens = target_soft_tokens + history_soft_tokens
+            interaction_soft_tokens = self.proj_token_num if "<InteractionContext>" in prompt_ori else 0
+            total_soft_tokens = target_soft_tokens + history_soft_tokens + interaction_soft_tokens
             sample_unk_slots = int((prompts_tokens.input_ids[0] == unk_token_id).sum().item())
 
             log_step(
@@ -871,6 +899,7 @@ class QRecLLM(Rec2Base):
                     f"valid_history_items={valid_history_items}, "
                     f"history_soft_tokens={history_soft_tokens}, "
                     f"target_soft_tokens={target_soft_tokens}, "
+                    f"interaction_soft_tokens={interaction_soft_tokens}, "
                     f"sample_soft_tokens={total_soft_tokens}, "
                     f"sample_unk_slots={sample_unk_slots}, "
                     f"batch_unk_slots={replaced_idx.shape[0]}"
