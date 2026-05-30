@@ -401,9 +401,16 @@ class HFQFormerAdapter(nn.Module):
         target_cf: torch.Tensor,
         history_cf: torch.Tensor,
         history_mask: torch.Tensor,
+        instruction=None,
     ) -> torch.Tensor:
         """Interaction-aware mode: queries jointly cross-attend to the
-        sequence ``[target_cf, history_cf_1, ..., history_cf_L]``.
+        sequence ``[target_cf, history_cf_1, ..., history_cf_L]``. Optionally
+        instruction-aware: when ``instruction`` is provided and
+        ``self.instruction_aware=True``, instruction tokens are concatenated
+        with queries in the self-attention path while the queries cross-attend
+        to the multi-element encoder memory — this is the faithful
+        InstructBLIP design adapted for recommendation (multi-element memory
+        replaces image patches, instruction guides query routing).
 
         Unlike per-item mode (``encode_cf`` / ``forward``), the queries see
         the entire user-item-history context in a single forward pass and
@@ -422,6 +429,13 @@ class HFQFormerAdapter(nn.Module):
             ``[B, L]`` — binary mask: 1 where the history slot is a real
             (non-padded) item, 0 where the slot is padding. The target slot
             is always considered valid and is not part of this mask.
+        instruction
+            Optional. Single string (broadcast to batch) or list of B strings.
+            When provided AND ``self.instruction_aware=True``, instruction
+            tokens concat with queries in self-attention (full InstructBLIP
+            design over the multi-element memory). When None or
+            ``self.instruction_aware=False``, falls back to vanilla
+            queries-only over the multi-element memory.
 
         Returns
         -------
@@ -466,11 +480,38 @@ class HFQFormerAdapter(nn.Module):
         )
         encoder_attention_mask = torch.cat([target_mask, history_mask], dim=1)
 
-        # 4. Q-Former forward — queries cross-attend the interaction sequence.
+        # 4. Queries + (optional) instruction tokens.
         query_tokens = self.q.expand(batch_size, -1, -1)
+        query_count = query_tokens.size(1)
         query_attention_mask = torch.ones(
-            batch_size, query_tokens.size(1), dtype=torch.long, device=target_cf.device
+            batch_size, query_count, dtype=torch.long, device=target_cf.device
         )
+
+        use_instruction = self.instruction_aware and instruction is not None
+        if use_instruction:
+            # Tokenize instruction and concat in self-attention (matches
+            # forward_multimodal pattern but with multi-element encoder memory).
+            text_list = self._normalize_text_input(instruction, batch_size)
+            text_ids, text_attention_mask = self._tokenize(
+                text_list, self.max_instruction_length, target_cf.device
+            )
+            joint_attention_mask = torch.cat(
+                [query_attention_mask, text_attention_mask], dim=1
+            )
+            outputs = self.qformer(
+                input_ids=text_ids,
+                attention_mask=joint_attention_mask,
+                query_embeds=query_tokens,
+                encoder_hidden_states=encoder_hidden,
+                encoder_attention_mask=encoder_attention_mask,
+                return_dict=True,
+            )
+            # Slice query positions only (drop instruction tokens at output).
+            sequence_hidden = outputs.last_hidden_state
+            query_hidden = sequence_hidden[:, :query_count]
+            return self.out_proj(query_hidden)
+
+        # Fallback: queries-only over multi-element memory (no instruction).
         outputs = self.qformer(
             input_ids=None,
             attention_mask=query_attention_mask,

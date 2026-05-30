@@ -65,11 +65,10 @@ class QRecLLM(Rec2Base):
     # containing num_queries (=8) tokens that encode target + history jointly.
     PLACEHOLDERS_FOR_EMBED_INTERACTION = ["<InteractionContext>"]
 
-    # Item-text instructions for the Q-Former. Must match the distribution
-    # the Q-Former was trained on in stage 1 (see
-    # QFormerAlignmentBuilder.TEMPL_ITEM_TEXT). The verbose stage 2 prompt
-    # MUST NOT be passed here — it gets truncated to max_instruction_length
-    # tokens and would carry no per-item signal.
+    # Per-item Q-Former instructions (used when interaction_aware=False).
+    # Each instruction is sampled per batch and routed via Q-Former
+    # self-attention with the queries while cross-attending a SINGLE CF
+    # vector. Designed to roughly match the Stage 1 alignment distribution.
     QFORMER_ITEM_INSTRUCTIONS = [
         "Represent this movie for recommendation using its title and genres.",
         "Align this movie metadata with its collaborative filtering representation.",
@@ -83,6 +82,20 @@ class QRecLLM(Rec2Base):
         "Encode the semantic information of this movie for item-language alignment.",
         "Use a few metadata cues to align this movie with behavioral item signals.",
         "Produce a recommendation-aware representation from this movie description.",
+    ]
+
+    # Interaction-aware Q-Former instructions (used when
+    # interaction_aware=True). Encoder memory at Stage 3 holds the FULL
+    # interaction sequence [target, history_1, ..., history_L] — so
+    # instructions are framed around comparison / compatibility between
+    # history and target, not per-item description. This is the InstructBLIP
+    # spirit applied faithfully: instruction routes the queries' attention
+    # over a multi-element memory toward task-relevant signals.
+    QFORMER_INTERACTION_INSTRUCTIONS = [
+        "Compare the user's historical items with the target movie and extract signals for preference prediction.",
+        "Identify whether the target movie matches the patterns in the user's viewing history.",
+        "Encode the compatibility between the user's past preferences and the candidate movie.",
+        "Extract features that predict whether this user-target pair represents a positive interaction.",
     ]
 
     def __init__(
@@ -676,8 +689,14 @@ class QRecLLM(Rec2Base):
                 history_cf = self.rec_encoder.item_encoder(ids)  # [B,L,d_cf]
                 history_mask = (ids != self.rec_encoder.padding_index).long()  # [B,L]
 
+                # Pass instruction so Q-Former (when instruction_aware=True)
+                # routes queries via the InstructBLIP-style self-attention path
+                # over the multi-element interaction memory. When
+                # instruction_aware=False, the adapter falls back to
+                # queries-only over the memory (current behaviour preserved).
                 interaction_q = self.qformer.forward_interaction(
-                    target_cf, history_cf, history_mask
+                    target_cf, history_cf, history_mask,
+                    instruction=ins_list,
                 )  # [B,Q,d_model]
                 interaction_llm = self.llm_proj(interaction_q)  # [B,Q,H]
                 if self.ablate_soft_tokens:
@@ -990,15 +1009,24 @@ class QRecLLM(Rec2Base):
         return label_embeds, label_tokens, ans_map
 
     def _build_qformer_instructions(self, batch_size: int) -> list:
-        """Build short item-text instructions for the Q-Former.
+        """Build short instructions for the Q-Former at Stage 3.
 
-        Matches the distribution the Q-Former was trained on in stage 1: a
-        fresh sample per row during training, a deterministic fixed string
-        during eval/inference so the same input maps to the same embedding.
+        Picks from ``QFORMER_INTERACTION_INSTRUCTIONS`` when interaction-aware
+        is active (encoder memory is the multi-element [target+history]
+        sequence — instructions are comparison-framed), otherwise from
+        ``QFORMER_ITEM_INSTRUCTIONS`` (per-item encoder, item-description
+        framing matching Stage 1 alignment distribution). Training uses a
+        fresh sample per row; eval uses a deterministic fixed string so the
+        same input maps to the same embedding.
         """
+        pool = (
+            self.QFORMER_INTERACTION_INSTRUCTIONS
+            if getattr(self, "interaction_aware", False)
+            else self.QFORMER_ITEM_INSTRUCTIONS
+        )
         if self.training:
-            return random.choices(self.QFORMER_ITEM_INSTRUCTIONS, k=batch_size)
-        return [self.QFORMER_ITEM_INSTRUCTIONS[0]] * batch_size
+            return random.choices(pool, k=batch_size)
+        return [pool[0]] * batch_size
 
     def build_llm_inputs_from_prompt_v2(self, prompt_template, batch_data):
         feature_order = self.get_placeholder_order(prompt_template) if prompt_template else None
