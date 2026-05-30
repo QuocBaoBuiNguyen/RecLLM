@@ -61,24 +61,29 @@ class QRecLLM(Rec2Base):
     # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
     PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
 
-    # Item-text instructions for the Q-Former. Must match the distribution
-    # the Q-Former was trained on in stage 1 (see
-    # QFormerAlignmentBuilder.TEMPL_ITEM_TEXT). The verbose stage 2 prompt
-    # MUST NOT be passed here — it gets truncated to max_instruction_length
-    # tokens and would carry no per-item signal.
+    # Set A — CTR-task-focused instructions (replaces v1 paraphrase-style list).
+    # Hypothesis: prior list's 12 templates were semantic paraphrases of
+    # "represent for recommendation" (a pretraining-stage objective), so the
+    # instruction-aware ablation showed no measurable contribution (|Δ uAUC|
+    # < 0.005). Set A reframes instructions around the actual Stage 3
+    # downstream task — binary Yes/No CTR — by mentioning "user", "predict",
+    # "preference", "matching", "binary", "personalized". Vocabulary is also
+    # distinct from Stage 1 alignment ("title and genres" → "features",
+    # "matching", "scoring") so Q-Former receives a task signal that is
+    # genuinely new at Stage 3 rather than echoing pretraining. Reduced to
+    # 8 templates since paraphrase quantity adds noise, not diversity.
     QFORMER_ITEM_INSTRUCTIONS = [
-        "Represent this movie for recommendation using its title and genres.",
-        "Align this movie metadata with its collaborative filtering representation.",
-        "Given the movie metadata, extract recommendation-relevant item features.",
-        "Use the title and genres to describe this movie in the item embedding space.",
-        "Map this movie's textual attributes to its collaborative recommendation signal.",
-        "Identify the movie preferences implied by its title and genre metadata.",
-        "Create a language-aligned representation of this movie for recommendation.",
-        "Summarize this movie as an item a recommender system can compare.",
-        "Based on the title and genres, represent what kind of users may like this movie.",
-        "Encode the semantic information of this movie for item-language alignment.",
-        "Use a few metadata cues to align this movie with behavioral item signals.",
-        "Produce a recommendation-aware representation from this movie description.",
+        # User-item compatibility framing
+        "Extract features of this movie for matching against a specific user's viewing history.",
+        "Identify aspects of this movie that signal compatibility with user preferences.",
+        "Encode this movie's characteristics relevant for predicting individual user enjoyment.",
+        # Binary decision framing
+        "Represent this movie's features that distinguish positive from negative user responses.",
+        "Extract signals predictive of binary user preference for this movie.",
+        # Personalization framing
+        "Encode aspects of this movie that drive personalized recommendation decisions.",
+        "Extract user-specific relevance signals from this movie's content.",
+        "Represent this movie's features for individual taste-based preference scoring.",
     ]
 
     def __init__(
