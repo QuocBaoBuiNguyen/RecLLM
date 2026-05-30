@@ -596,7 +596,14 @@ class QRecLLM(Rec2Base):
         self.rec_encoder.to("cpu")
         self.rec_encoder.float()
     
-    def get_placeholder_order(self, prompt: str, placeholders=PLACEHOLDERS_FOR_EMBED):
+    def get_placeholder_order(self, prompt: str, placeholders=None):
+        # Default to the INSTANCE attribute self.PLACEHOLDERS_FOR_EMBED so the
+        # interaction-aware switch in __init__ (which overrides this list to
+        # ["<InteractionContext>"]) is respected. Using the class attribute as
+        # the default-arg value would bind at method-definition time and miss
+        # the interaction-aware override.
+        if placeholders is None:
+            placeholders = self.PLACEHOLDERS_FOR_EMBED
         positions = []
         for ph in placeholders:
             pos = prompt.find(ph)
