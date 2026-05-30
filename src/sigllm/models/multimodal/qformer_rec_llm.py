@@ -60,6 +60,10 @@ class QRecLLM(Rec2Base):
     # TEMP_DISABLED_USER_CF: old prompt order included a user soft-token slot.
     # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
     PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
+    # Interaction-aware mode (model.qformer_config.interaction_aware=True)
+    # replaces the per-item soft-token layout with a single joint slot
+    # containing num_queries (=8) tokens that encode target + history jointly.
+    PLACEHOLDERS_FOR_EMBED_INTERACTION = ["<InteractionContext>"]
 
     # Item-text instructions for the Q-Former. Must match the distribution
     # the Q-Former was trained on in stage 1 (see
@@ -103,6 +107,8 @@ class QRecLLM(Rec2Base):
         qformer_text_model_name="bert-base-uncased",
         max_instruction_length=48,
         instruction_aware=True,
+        interaction_aware=False,
+        max_interaction_length=11,
         freeze_proj=False,
         ablate_soft_tokens=False,
         use_lora=False,
@@ -131,6 +137,19 @@ class QRecLLM(Rec2Base):
                 "target_llm mean/std=0).",
             )
 
+        self.interaction_aware = bool(interaction_aware)
+        self.max_interaction_length = int(max_interaction_length)
+        if self.interaction_aware:
+            # Switch placeholder layout: single joint slot instead of per-item.
+            self.PLACEHOLDERS_FOR_EMBED = list(self.PLACEHOLDERS_FOR_EMBED_INTERACTION)
+            log_step(
+                "INTERACTION-AWARE MODE",
+                "interaction_aware=True → Q-Former encodes [target + history] "
+                "jointly via forward_interaction; prompt uses single "
+                "<InteractionContext> slot with num_queries soft tokens "
+                "(replaces <ItemIDList>/<TargetItemID> per-item layout).",
+            )
+
         self.use_lora = bool(use_lora)
         self.lora_r = int(lora_r)
         self.lora_alpha = int(lora_alpha)
@@ -157,6 +176,7 @@ class QRecLLM(Rec2Base):
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
             instruction_aware=instruction_aware,
+            max_interaction_length=max_interaction_length,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
@@ -336,6 +356,7 @@ class QRecLLM(Rec2Base):
         qformer_text_model_name: str,
         max_instruction_length: int,
         instruction_aware: bool = True,
+        max_interaction_length: int = 11,
     ):
         log_step("Loading QFormer")
         log_step(
@@ -359,6 +380,7 @@ class QRecLLM(Rec2Base):
             max_instruction_length=max_instruction_length,
             init_from_pretrained_text=False,
             instruction_aware=instruction_aware,
+            max_interaction_length=max_interaction_length,
         ).to(self.device)
 
         if pretrained_qformer and pretrained_qformer != "not_have":
@@ -609,6 +631,58 @@ class QRecLLM(Rec2Base):
             user_q = None
             user_llm = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
+
+            # ─────────────────────────────────────────────────────────────
+            # Interaction-aware branch: joint encoding of target + history
+            # in a single Q-Former forward, output 1 slot of Q soft tokens
+            # at <InteractionContext>. Replaces per-item layout entirely.
+            # ─────────────────────────────────────────────────────────────
+            if self.interaction_aware:
+                if "InteractedItemIDs_pad" not in batch_data:
+                    raise ValueError(
+                        "interaction_aware=True requires InteractedItemIDs_pad in "
+                        "batch_data; got keys " + str(list(batch_data.keys()))
+                    )
+                ids = batch_data["InteractedItemIDs_pad"]  # [B,L]
+                history_cf = self.rec_encoder.item_encoder(ids)  # [B,L,d_cf]
+                history_mask = (ids != self.rec_encoder.padding_index).long()  # [B,L]
+
+                interaction_q = self.qformer.forward_interaction(
+                    target_cf, history_cf, history_mask
+                )  # [B,Q,d_model]
+                interaction_llm = self.llm_proj(interaction_q)  # [B,Q,H]
+                if self.ablate_soft_tokens:
+                    interaction_llm = torch.zeros_like(interaction_llm)
+
+                # Single joint slot. Target is always valid (mask=1 per query).
+                ones_q = torch.ones((B, Q), device=device, dtype=torch.long)
+                ph2emb = {"<InteractionContext>": interaction_llm}
+                ph2mask = {"<InteractionContext>": ones_q}
+                merged_embeds = torch.cat(
+                    [ph2emb[ph] for ph in feature_order], dim=1
+                )  # [B,Q,H]
+                full_mask = torch.cat(
+                    [ph2mask[ph] for ph in feature_order], dim=1
+                )  # [B,Q]
+                idx = torch.nonzero(full_mask, as_tuple=False)
+                merged_flat = merged_embeds[idx[:, 0], idx[:, 1]]  # [N,H]
+
+                rec_embeds = {
+                    "User_emb": None,
+                    "TargetItem_emb": interaction_llm,  # repurposed: joint encoding
+                    "InteractedItems_embs": None,
+                    "merged_embs": merged_flat,
+                }
+                # Log under target_q/target_llm to reuse the existing
+                # information-flow logger — these tensors are the joint
+                # interaction encoding under interaction_aware mode.
+                self._log_information_flow(
+                    user_q, interaction_q, user_llm, interaction_llm, merged_flat
+                )
+                return rec_embeds, None
+            # ─────────────────────────────────────────────────────────────
+            # End interaction-aware branch. Fall through to per-item path.
+            # ─────────────────────────────────────────────────────────────
 
             # 2) QFormer outputs (instruction-conditioned)
             # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
@@ -1004,6 +1078,8 @@ class QRecLLM(Rec2Base):
         qformer_text_model_name = qformer_config.get("qformer_text_model_name", "bert-base-uncased")
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         instruction_aware = qformer_config.get("instruction_aware", True)
+        interaction_aware = qformer_config.get("interaction_aware", False)
+        max_interaction_length = qformer_config.get("max_interaction_length", 11)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
@@ -1036,6 +1112,8 @@ class QRecLLM(Rec2Base):
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
             instruction_aware=instruction_aware,
+            interaction_aware=interaction_aware,
+            max_interaction_length=max_interaction_length,
             freeze_proj=freeze_proj,
             ablate_soft_tokens=ablate_soft_tokens,
             use_lora=use_lora,

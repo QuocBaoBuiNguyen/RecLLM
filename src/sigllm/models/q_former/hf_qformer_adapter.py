@@ -37,10 +37,17 @@ class HFQFormerAdapter(nn.Module):
       returning both query and text hidden states. ``causal_text=True`` masks
       text→text attention causally for ITG; ``False`` is the default
       bidirectional mode used by ITM and by ``forward``.
+    - ``forward_interaction(target_cf, history_cf, history_mask)`` —
+      interaction-aware mode: queries cross-attend a joint sequence of
+      ``[target, history_1, ..., history_L]`` rather than a single CF token,
+      so the user-target-history compatibility is encoded inside Q-Former
+      itself rather than left to the downstream LLM. Used at Stage 3 step 2
+      when ``model.qformer_config.interaction_aware=True`` in config.
 
     The recommendation signal enters through ``encoder_hidden_states`` (cross-
-    attention to a single CF token); the text stream enters through
-    ``input_ids`` (self-attention with the learned queries).
+    attention to a single CF token, or to the L+1 sequence in interaction
+    mode); the text stream enters through ``input_ids`` (self-attention with
+    the learned queries).
     """
 
     def __init__(
@@ -59,9 +66,13 @@ class HFQFormerAdapter(nn.Module):
         max_instruction_length: int = 48,
         init_from_pretrained_text: bool = True,
         instruction_aware: bool = True,
+        max_interaction_length: int = 11,
     ):
         super().__init__()
         self.instruction_aware = bool(instruction_aware)
+        # Length budget for forward_interaction's encoder input
+        # (target + max_history). ML-1M max history is 10 → 11 slots total.
+        self.max_interaction_length = int(max_interaction_length)
 
         if AutoTokenizer is None or InstructBlipQFormerConfig is None or InstructBlipQFormerModel is None:
             raise ModuleNotFoundError(
@@ -82,6 +93,15 @@ class HFQFormerAdapter(nn.Module):
         self.q = Parameter(torch.randn(1, num_queries, d_model))
         self.proj_cf = nn.Linear(d_cf, d_model)
         self.out_proj = nn.Identity() if self.output_dim == d_model else nn.Linear(d_model, self.output_dim)
+
+        # Learnable positional embedding for the encoder sequence in
+        # forward_interaction. Slot 0 = target item; slots 1..max_history =
+        # history items in temporal order (oldest → newest). Small-scale
+        # init follows BLIP-2 / BERT positional embedding convention.
+        self.interaction_pos_embedding = Parameter(
+            torch.empty(self.max_interaction_length, d_model)
+        )
+        nn.init.normal_(self.interaction_pos_embedding, mean=0.0, std=initializer_range)
 
         config = InstructBlipQFormerConfig(
             vocab_size=len(self.qformer_tokenizer),
@@ -375,3 +395,88 @@ class HFQFormerAdapter(nn.Module):
             cf_vec, instruction, causal_text=False
         )
         return self.out_proj(query_hidden)
+
+    def forward_interaction(
+        self,
+        target_cf: torch.Tensor,
+        history_cf: torch.Tensor,
+        history_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Interaction-aware mode: queries jointly cross-attend to the
+        sequence ``[target_cf, history_cf_1, ..., history_cf_L]``.
+
+        Unlike per-item mode (``encode_cf`` / ``forward``), the queries see
+        the entire user-item-history context in a single forward pass and
+        the output ``[B, num_queries, output_dim]`` encodes target-history
+        compatibility directly — rather than leaving that reasoning to the
+        downstream LLM's self-attention over many per-item soft tokens.
+
+        Args
+        ----
+        target_cf
+            ``[B, d_cf]`` — target item's CF embedding.
+        history_cf
+            ``[B, L, d_cf]`` — L history item CF embeddings, padded with
+            zero/sentinel rows where ``history_mask`` is 0.
+        history_mask
+            ``[B, L]`` — binary mask: 1 where the history slot is a real
+            (non-padded) item, 0 where the slot is padding. The target slot
+            is always considered valid and is not part of this mask.
+
+        Returns
+        -------
+        ``[B, num_queries, output_dim]`` interaction-aware query hidden
+        states with ``out_proj`` applied.
+        """
+        if target_cf.dim() != 2:
+            raise ValueError(
+                f"Expected target_cf shape [B, d_cf], got {tuple(target_cf.shape)}"
+            )
+        if history_cf.dim() != 3:
+            raise ValueError(
+                f"Expected history_cf shape [B, L, d_cf], got {tuple(history_cf.shape)}"
+            )
+        if history_mask.dim() != 2:
+            raise ValueError(
+                f"Expected history_mask shape [B, L], got {tuple(history_mask.shape)}"
+            )
+
+        batch_size = target_cf.size(0)
+        history_len = history_cf.size(1)
+        seq_len = history_len + 1  # target slot + L history slots
+
+        if seq_len > self.max_interaction_length:
+            raise ValueError(
+                f"seq_len={seq_len} exceeds max_interaction_length="
+                f"{self.max_interaction_length}. Increase max_interaction_length "
+                f"or truncate history."
+            )
+
+        # 1. Stack target + history: [B, L+1, d_cf]; target at position 0.
+        sequence_cf = torch.cat([target_cf.unsqueeze(1), history_cf], dim=1)
+
+        # 2. Project to d_model and add positional embedding.
+        encoder_hidden = self.proj_cf(sequence_cf)
+        encoder_hidden = encoder_hidden + self.interaction_pos_embedding[:seq_len].unsqueeze(0)
+
+        # 3. Build attention mask: target always valid (1), history slots
+        # follow history_mask.
+        target_mask = torch.ones(
+            batch_size, 1, dtype=history_mask.dtype, device=history_mask.device
+        )
+        encoder_attention_mask = torch.cat([target_mask, history_mask], dim=1)
+
+        # 4. Q-Former forward — queries cross-attend the interaction sequence.
+        query_tokens = self.q.expand(batch_size, -1, -1)
+        query_attention_mask = torch.ones(
+            batch_size, query_tokens.size(1), dtype=torch.long, device=target_cf.device
+        )
+        outputs = self.qformer(
+            input_ids=None,
+            attention_mask=query_attention_mask,
+            query_embeds=query_tokens,
+            encoder_hidden_states=encoder_hidden,
+            encoder_attention_mask=encoder_attention_mask,
+            return_dict=True,
+        )
+        return self.out_proj(outputs.last_hidden_state)
