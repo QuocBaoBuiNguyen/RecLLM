@@ -57,9 +57,11 @@ class QRecLLM(Rec2Base):
         "pretrain_vicuna": "configs/models/minigpt4rec.yaml",
     }    
     
-    # TEMP_DISABLED_USER_CF: old prompt order included a user soft-token slot.
-    # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
-    PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
+    # Class-level full placeholder list. Instances override `self.PLACEHOLDERS_FOR_EMBED`
+    # in __init__ based on the `enable_user_soft_tokens` flag — when disabled, `<UserID>`
+    # is removed so the soft-token bridge only carries item-side CF (legacy behaviour).
+    PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
+    PLACEHOLDERS_FOR_EMBED_NO_USER = ["<ItemIDList>", "<TargetItemID>"]
 
     # Item-text instructions for the Q-Former. Must match the distribution
     # the Q-Former was trained on in stage 1 (see
@@ -110,6 +112,7 @@ class QRecLLM(Rec2Base):
         lora_target_modules=("q_proj", "v_proj"),
         lora_dropout=0.05,
         tuning_step=None,
+        enable_user_soft_tokens=False,
     ):
         super().__init__()
 
@@ -136,6 +139,22 @@ class QRecLLM(Rec2Base):
         self.lora_target_modules = tuple(lora_target_modules)
         self.lora_dropout = float(lora_dropout)
         self.tuning_step = tuning_step
+
+        # Per-instance placeholder list — when user soft tokens are enabled, `<UserID>`
+        # joins the embed-replacement set so its slot receives projected user CF.
+        self.enable_user_soft_tokens = bool(enable_user_soft_tokens)
+        self.PLACEHOLDERS_FOR_EMBED = (
+            list(type(self).PLACEHOLDERS_FOR_EMBED)
+            if self.enable_user_soft_tokens
+            else list(type(self).PLACEHOLDERS_FOR_EMBED_NO_USER)
+        )
+        if self.enable_user_soft_tokens:
+            log_step(
+                "USER SOFT TOKENS ENABLED",
+                "enable_user_soft_tokens=True → <UserID> slot is active. "
+                "Q-Former encodes user_cf into Q soft tokens and injects them into the LLM prompt "
+                "(re-enables the legacy CoLLM-style user channel that was disabled in the vanilla baseline).",
+            )
 
         log_step("Running MiniGPT4Rec_v2 initialization")
 
@@ -543,7 +562,12 @@ class QRecLLM(Rec2Base):
         self.rec_encoder.to("cpu")
         self.rec_encoder.float()
     
-    def get_placeholder_order(self, prompt: str, placeholders=PLACEHOLDERS_FOR_EMBED):
+    def get_placeholder_order(self, prompt: str, placeholders=None):
+        # Default to the instance attribute so the user-soft-token toggle (set in __init__)
+        # is respected — class-attr defaults bind at method-definition time and would miss
+        # instance overrides.
+        if placeholders is None:
+            placeholders = self.PLACEHOLDERS_FOR_EMBED
         positions = []
         for ph in placeholders:
             pos = prompt.find(ph)
@@ -595,22 +619,29 @@ class QRecLLM(Rec2Base):
 
         with self.maybe_autocast():
             # Stage-2 uses the in-tree rec encoder API: direct embedding lookup from ids.
-            # TEMP_DISABLED_USER_CF: old path injected a user CF token into the LLM prompt.
-            # user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
             user_q = None
             user_llm = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
 
+            # User-side CF bridge — re-enabled via `enable_user_soft_tokens` flag.
+            # When on, encode user_cf through the SAME Q-Former + llm_proj used for items,
+            # so user soft tokens share the alignment manifold learned during Stage 1/2.
+            if self.enable_user_soft_tokens:
+                user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])      # [B,d_cf]
+                user_q = self.qformer(user_cf, ins_list)                            # [B,Q,d_model]
+
             # 2) QFormer outputs (instruction-conditioned)
-            # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
             target_q = self.qformer(target_cf, ins_list)      # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
-            # user_llm = self.llm_proj(user_q)               # [B,Q,H]
-            target_llm = self.llm_proj(target_q)           # [B,Q,H]
+            if user_q is not None:
+                user_llm = self.llm_proj(user_q)               # [B,Q,H]
+            target_llm = self.llm_proj(target_q)               # [B,Q,H]
 
             if self.ablate_soft_tokens:
                 target_llm = torch.zeros_like(target_llm)
+                if user_llm is not None:
+                    user_llm = torch.zeros_like(user_llm)
 
             interacted_llm_flat = None
             merged_flat = None
@@ -644,16 +675,16 @@ class QRecLLM(Rec2Base):
                 ones_q = torch.ones((B, Q), device=device, dtype=item_mask.dtype)         # [B,Q]
 
                 ph2emb = {
-                    # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llm.
-                    # "<UserID>": user_llm,                 # [B,Q,H]
                     "<ItemIDList>": interacted_llm_flat,  # [B,L*Q,H]
                     "<TargetItemID>": target_llm          # [B,Q,H]
                 }
                 ph2mask = {
-                    # "<UserID>": ones_q,
                     "<ItemIDList>": item_mask_q,
                     "<TargetItemID>": ones_q
                 }
+                if self.enable_user_soft_tokens and user_llm is not None:
+                    ph2emb["<UserID>"] = user_llm        # [B,Q,H]
+                    ph2mask["<UserID>"] = ones_q          # [B,Q]
 
                 merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, L*Q + Q, H]
                 full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)       # [B, L*Q + Q]
@@ -682,10 +713,14 @@ class QRecLLM(Rec2Base):
         unk_token = self._soft_token_str
         unk_seq = " ".join([unk_token] * self.proj_token_num)
         
-        prompt_template = bos + prompt_template 
-        # TEMP_DISABLED_USER_CF: old prompt path replaced <UserID> with soft tokens.
-        # prompt_template = prompt_template.replace("<UserID>", unk_seq)
-        prompt_template = prompt_template.replace("<UserID>", "")
+        prompt_template = bos + prompt_template
+        # When user soft tokens are enabled, `<UserID>` becomes `Q` unk-token slots
+        # that get replaced by projected user_cf at embed time. Otherwise drop the
+        # placeholder so the prompt text stays consistent with the legacy baseline.
+        if self.enable_user_soft_tokens:
+            prompt_template = prompt_template.replace("<UserID>", unk_seq)
+        else:
+            prompt_template = prompt_template.replace("<UserID>", "")
         prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
         # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
 
@@ -708,6 +743,11 @@ class QRecLLM(Rec2Base):
         
         if not self.has_print_prompt:
             preview_parts = []
+            if self.enable_user_soft_tokens and "<UserID>" in prompt_ori and 'UserID' in batch_data:
+                user_id = int(batch_data['UserID'][0].detach().cpu().item())
+                preview_parts.append(
+                    f"[UserID id={user_id} soft_tokens={self.proj_token_num}]",
+                )
             if "<ItemIDList>" in prompt_ori and 'InteractedItemIDs_pad' in batch_data:
                 history_ids = batch_data['InteractedItemIDs_pad'][0].detach().cpu().tolist()
                 history_ids = [int(i) for i in history_ids if int(i) != self.rec_encoder.padding_index]
@@ -746,9 +786,18 @@ class QRecLLM(Rec2Base):
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
 
         elif has_target_placeholder:
-            # TEMP_DISABLED_USER_CF: old target-only branch concatenated user and target tokens.
-            # emb_to_inject = torch.cat([rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1)
-            emb_to_inject = rec_embeds['TargetItem_emb']
+            # Concat user soft tokens before target when both are present in the prompt;
+            # else target-only fallback. Mirrors the legacy CoLLM-style injection order.
+            if (
+                self.enable_user_soft_tokens
+                and "<UserID>" in prompt_ori
+                and rec_embeds.get('User_emb') is not None
+            ):
+                emb_to_inject = torch.cat(
+                    [rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1
+                )
+            else:
+                emb_to_inject = rec_embeds['TargetItem_emb']
             emb_to_inject = emb_to_inject.reshape(-1, emb_to_inject.shape[-1])
             inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = emb_to_inject.to(inputs_embeds.dtype)
 
@@ -762,15 +811,21 @@ class QRecLLM(Rec2Base):
                     (batch_data['InteractedItemIDs_pad'][0] != self.rec_encoder.padding_index).sum().item()
                 )
 
+            user_soft_tokens = (
+                self.proj_token_num
+                if (self.enable_user_soft_tokens and "<UserID>" in prompt_ori)
+                else 0
+            )
             target_soft_tokens = self.proj_token_num if "<TargetItemID>" in prompt_ori else 0
             history_soft_tokens = valid_history_items * self.proj_token_num if "<ItemIDList>" in prompt_ori else 0
-            total_soft_tokens = target_soft_tokens + history_soft_tokens
+            total_soft_tokens = user_soft_tokens + target_soft_tokens + history_soft_tokens
             sample_unk_slots = int((prompts_tokens.input_ids[0] == unk_token_id).sum().item())
 
             log_step(
                 "Prompt injection stats",
                 (
                     f"valid_history_items={valid_history_items}, "
+                    f"user_soft_tokens={user_soft_tokens}, "
                     f"history_soft_tokens={history_soft_tokens}, "
                     f"target_soft_tokens={target_soft_tokens}, "
                     f"sample_soft_tokens={total_soft_tokens}, "
@@ -995,6 +1050,7 @@ class QRecLLM(Rec2Base):
         qformer_text_model_name = qformer_config.get("qformer_text_model_name", "bert-base-uncased")
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
+        enable_user_soft_tokens = bool(qformer_config.get("enable_user_soft_tokens", False))
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1033,6 +1089,7 @@ class QRecLLM(Rec2Base):
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
+            enable_user_soft_tokens=enable_user_soft_tokens,
         )
 
         ckpt_path = cfg.get("ckpt", "")
