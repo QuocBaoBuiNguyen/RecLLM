@@ -55,8 +55,20 @@ model:
     qformer_output_dim: 768 # Keep Q-Former compact; llm_proj maps this to the LLM hidden size.
     qformer_text_model_name: "bert-base-uncased"
     max_instruction_length: 48
-    num_queries: 8
-    num_heads: 8
+    # SHRINK SWEEP V2 (feat/qformer-shrink-2L-4Q branch, variant 4L+4Q):
+    # Initial 2L+4Q variant failed Stage 1 catastrophically (train ITC@1=0.40
+    # vs baseline 4L+8Q at 0.86; train II@1=0.02 vs baseline 0.34 — model could
+    # not even fit training set). Diagnosis: capacity issue, not optimization
+    # — 2 layers + 4 queries cannot represent the 5-loss Stage 1 objectives.
+    # Revert to 4 layers (keep BERT inheritance for full depth) but keep
+    # num_queries=4 to test whether the bottleneck reduction alone is helpful
+    # without the depth cut that crippled the model.
+    # num_heads=12 still matches BERT-base (12 × head_dim=64) for faithful
+    # init transfer; Q/K/V weights are [768,768] regardless of head count, but
+    # BERT trained on chunks of 64. Compute overhead vs 8 heads is negligible.
+    # Soft tokens per sample: 88 → 44 (4 target + 40 history × 4q).
+    num_queries: 4
+    num_heads: 12
     num_layers: 4
     enable_user_soft_tokens: False
 
@@ -137,7 +149,7 @@ run:
     epoch: 100
     pretrained_rec_path: ${model.rec_config.pretrained_path}
     freeze_rec: True
-    output_dir: "/content/SigLLM/ckpt/qformer_stage1/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage1_shrink_4L4Q/"
 
   qformer_stage2:
     # BLIP-2-style generative pretraining: train Q-Former + linear projection
@@ -160,7 +172,7 @@ run:
     qformer_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}"
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage2_shrink_4L4Q_qwen2/"
     lr: 1e-4
     weight_decay: 1e-3
     epoch: 20
@@ -176,7 +188,7 @@ run:
     # here — everything else (optimizer schedule, warmup, batch sizes) is
     # inherited from the top-level `run.*` defaults.
     prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie_text_only.txt"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_lora_qwen2/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_shrink_4L4Q_qwen2/"
     best_ckpt_name: "checkpoint_best.pth"
     init_lr: 2e-4
     max_epoch: 5
@@ -187,7 +199,7 @@ run:
     # `qformer_stage3_step1`: only the keys that differ from the top-level
     # defaults are listed here.
     prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_cie_qwen2/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_cie_shrink_4L4Q_qwen2/"
     ckpt: "${run.qformer_stage3_step1.output_dir}${run.qformer_stage3_step1.best_ckpt_name}"
     init_lr: 3e-5
     max_epoch: 200
