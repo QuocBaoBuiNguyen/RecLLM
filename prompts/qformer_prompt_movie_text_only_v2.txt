@@ -1,0 +1,1 @@
+Given the user's preference history and a target movie, predict whether the user will enjoy the target. User's history titles: <ItemTitleList>. Target movie title: <TargetItemTitle>.
