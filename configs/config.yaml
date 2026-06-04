@@ -58,12 +58,19 @@ model:
     # SHRINK SWEEP (feat/qformer-shrink-2L-4Q):
     # Hypothesis — Q-Former 76M params on 33K samples is ~2300:1 over-parameterized.
     # Past "8 layers" experiment regressed to ~0.694 uAUC; "smaller" direction never
-    # tested. Reduce queries (8→4) and depth (4→2) keeping d_model=768 so BERT layer
-    # 0-1 init still applies. Measured param drop: 76M → ~50M (−34%). BERT vocab
-    # embeddings (~23M) dominate the budget — bigger savings require d_model cut too.
-    # Soft-token throughput drops: 88 → 44 per sample (4 target + 40 history × 4q).
+    # tested. Reduce queries (8→4) and depth (4→2) keeping d_model=768 so BERT
+    # layer 0-1 init still applies.
+    # num_heads raised 8→12 to MATCH BERT-base (12 heads × head_dim=64). Q/K/V
+    # weights are [768,768] regardless of head count, but BERT trained with
+    # chunks of 64; using 12 heads here preserves BERT's attention patterns 1:1
+    # at init. With 8 heads each chunk of 96 mixed 1.5 BERT heads → garbled
+    # transfer. Compute overhead 12 vs 4 heads is negligible (2 layers × 4
+    # queries × 1 CF cross-attn token).
+    # Measured param drop: 76M → ~50M (−34%); BERT vocab embeddings (~23M)
+    # dominate the remaining budget — bigger savings require d_model cuts too.
+    # Soft tokens per sample: 88 → 44 (4 target + 40 history × 4q).
     num_queries: 4
-    num_heads: 8
+    num_heads: 12
     num_layers: 2
 
   rec_config:
