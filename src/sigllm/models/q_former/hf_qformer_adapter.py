@@ -21,33 +21,35 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover - depends on runt
 LOGGER = logging.getLogger(__name__)
 
 
+TYPE_USER = 0
+TYPE_TARGET = 1
+TYPE_HISTORY = 2
+
+
 class HFQFormerAdapter(nn.Module):
     """Wrapper around Hugging Face InstructBLIP Q-Former.
 
-    Exposes multiple forward modes used by the SigLLM training stages:
+    Cross-attention K/V is a 12-token sequence per sample: 1 user, 1 target,
+    10 history (left-padded, mask drops empty slots). Each token is
+    ``proj_cf(MF) + type_emb + (pos_emb for history)``. Queries cross-attend
+    the full sequence in a single forward.
 
-    - ``forward(cf_vec, text)`` — joint forward returning query hidden states
-      with ``out_proj`` applied. Used by Stage 2 / Stage 3 when ``text`` is the
-      InstructBLIP-style task instruction.
-    - ``encode_cf(cf_vec)`` — queries only, no text branch input. Used by
-      Stage 1 ITC where the CF and text streams are kept uni-modal.
-    - ``encode_text(text)`` — text only, no queries, no cross-attention. Used
-      by Stage 1 ITC and as a CLS pool for downstream contrastive losses.
-    - ``forward_multimodal(cf_vec, text, causal_text)`` — joint forward
-      returning both query and text hidden states. ``causal_text=True`` masks
-      text→text attention causally for ITG; ``False`` is the default
-      bidirectional mode used by ITM and by ``forward``.
+    Modes:
 
-    The recommendation signal enters through ``encoder_hidden_states`` (cross-
-    attention to a single CF token); the text stream enters through
-    ``input_ids`` (self-attention with the learned queries).
+    - ``forward(user_cf, target_cf, history_cf, history_mask, text)`` —
+      LLM-feeding joint forward with ``out_proj`` applied.
+    - ``encode_cf(user_cf, target_cf, history_cf, history_mask)`` — queries
+      only, no text branch.
+    - ``encode_text(text)`` — text only, no queries, no cross-attention.
+    - ``forward_multimodal(...)`` — joint forward returning query + text
+      hidden states. ``causal_text=True`` is the ITG mask.
     """
 
     def __init__(
         self,
         d_cf: int,
         d_model: int,
-        num_queries: int = 8,
+        num_queries: int = 16,
         num_heads: int = 8,
         num_layers: int = 2,
         output_dim: Optional[int] = None,
@@ -57,6 +59,7 @@ class HFQFormerAdapter(nn.Module):
         initializer_range: float = 0.02,
         qformer_text_model_name: str = "bert-base-uncased",
         max_instruction_length: int = 48,
+        max_history_length: int = 10,
         init_from_pretrained_text: bool = True,
     ):
         super().__init__()
@@ -70,6 +73,7 @@ class HFQFormerAdapter(nn.Module):
         self.d_cf = d_cf
         self.d_model = d_model
         self.num_queries = num_queries
+        self.max_history_length = int(max_history_length)
         self.output_dim = int(output_dim) if output_dim is not None else d_model
         self.max_instruction_length = int(max_instruction_length)
         self.qformer_tokenizer = AutoTokenizer.from_pretrained(
@@ -79,6 +83,8 @@ class HFQFormerAdapter(nn.Module):
 
         self.q = Parameter(torch.randn(1, num_queries, d_model))
         self.proj_cf = nn.Linear(d_cf, d_model)
+        self.type_emb = Parameter(torch.randn(3, d_model) * initializer_range)
+        self.pos_emb = Parameter(torch.randn(self.max_history_length, d_model) * initializer_range)
         self.out_proj = nn.Identity() if self.output_dim == d_model else nn.Linear(d_model, self.output_dim)
 
         config = InstructBlipQFormerConfig(
@@ -214,12 +220,55 @@ class HFQFormerAdapter(nn.Module):
         )
         return tokens.input_ids.to(device), tokens.attention_mask.to(device)
 
-    def _project_cf(self, cf_vec: torch.Tensor):
-        if cf_vec.dim() != 2:
-            raise ValueError(f"Expected cf_vec to have shape [B, d_cf], got {tuple(cf_vec.shape)}")
-        encoder_hidden_states = self.proj_cf(cf_vec).unsqueeze(1)
-        encoder_attention_mask = torch.ones(
-            cf_vec.size(0), 1, dtype=torch.long, device=cf_vec.device
+    def _build_multi_token_encoder(
+        self,
+        user_cf: torch.Tensor,
+        target_cf: torch.Tensor,
+        history_cf: torch.Tensor,
+        history_mask: torch.Tensor,
+    ):
+        """Build the [B, 2+H, d_model] cross-attention encoder sequence.
+
+        Layout: token 0 = user, token 1 = target, tokens 2..2+H = history
+        (chronological, left-padded). Each token is the shared ``proj_cf``
+        projection plus its type embedding; history tokens also receive a
+        per-slot positional embedding. The attention mask is 1 for user
+        and target, and ``history_mask`` for the history slots.
+        """
+        if user_cf.dim() != 2 or target_cf.dim() != 2:
+            raise ValueError(
+                f"Expected user_cf/target_cf as [B, d_cf]; got "
+                f"{tuple(user_cf.shape)} / {tuple(target_cf.shape)}"
+            )
+        if history_cf.dim() != 3 or history_cf.size(1) != self.max_history_length:
+            raise ValueError(
+                f"Expected history_cf as [B, {self.max_history_length}, d_cf]; "
+                f"got {tuple(history_cf.shape)}"
+            )
+        if history_mask.shape != history_cf.shape[:2]:
+            raise ValueError(
+                f"history_mask shape {tuple(history_mask.shape)} does not match "
+                f"history_cf batch/length {tuple(history_cf.shape[:2])}"
+            )
+
+        batch_size = user_cf.size(0)
+        device = user_cf.device
+
+        user_tok = self.proj_cf(user_cf) + self.type_emb[TYPE_USER]
+        target_tok = self.proj_cf(target_cf) + self.type_emb[TYPE_TARGET]
+        history_tok = (
+            self.proj_cf(history_cf)
+            + self.type_emb[TYPE_HISTORY]
+            + self.pos_emb.unsqueeze(0)
+        )
+
+        encoder_hidden_states = torch.cat(
+            [user_tok.unsqueeze(1), target_tok.unsqueeze(1), history_tok], dim=1
+        )
+
+        ones = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        encoder_attention_mask = torch.cat(
+            [ones, ones, history_mask.to(dtype=torch.long, device=device)], dim=1
         )
         return encoder_hidden_states, encoder_attention_mask
 
@@ -248,21 +297,27 @@ class HFQFormerAdapter(nn.Module):
         mask[:, query_count:, :] = mask[:, query_count:, :] * row_pad
         return mask
 
-    def encode_cf(self, cf_vec: torch.Tensor) -> torch.Tensor:
-        """Queries-only forward over a CF (collaborative filtering) vector.
+    def encode_cf(
+        self,
+        user_cf: torch.Tensor,
+        target_cf: torch.Tensor,
+        history_cf: torch.Tensor,
+        history_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Queries-only forward over the multi-token CF sequence.
 
-        The recommendation signal enters via cross-attention to a single CF
-        token; there is no text-side input. Returns query hidden states of
-        shape ``[B, num_queries, d_model]``. ``out_proj`` is not applied
-        here; callers decide whether they want the projected (LLM-feeding)
-        or raw (contrastive) representation.
+        Queries cross-attend the 12-token user/target/history sequence; no
+        text-side input. Returns query hidden states of shape
+        ``[B, num_queries, d_model]`` (``out_proj`` not applied).
         """
-        batch_size = cf_vec.size(0)
+        batch_size = user_cf.size(0)
         query_tokens = self.q.expand(batch_size, -1, -1)
         query_attention_mask = torch.ones(
-            batch_size, query_tokens.size(1), dtype=torch.long, device=cf_vec.device
+            batch_size, query_tokens.size(1), dtype=torch.long, device=user_cf.device
         )
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec)
+        encoder_hidden_states, encoder_attention_mask = self._build_multi_token_encoder(
+            user_cf, target_cf, history_cf, history_mask
+        )
 
         outputs = self.qformer(
             input_ids=None,
@@ -304,33 +359,36 @@ class HFQFormerAdapter(nn.Module):
 
     def forward_multimodal(
         self,
-        cf_vec: torch.Tensor,
+        user_cf: torch.Tensor,
+        target_cf: torch.Tensor,
+        history_cf: torch.Tensor,
+        history_mask: torch.Tensor,
         text: Union[str, list],
         causal_text: bool = False,
         max_text_length: Optional[int] = None,
     ):
         """Joint forward returning ``(query_hidden, text_hidden, text_ids, text_mask)``.
 
-        ``causal_text=True`` enables a causal mask on the text→text attention
-        block (used by ITG); the default is bidirectional (used by ITM and by
-        the LLM-feeding ``forward``).
+        Queries + text self-attend together while cross-attending the
+        12-token CF sequence. ``causal_text=True`` enables a causal mask on
+        the text→text block (used by ITG); the default is bidirectional
+        (used by ITM and by the LLM-feeding ``forward``).
         """
-        if cf_vec.dim() != 2:
-            raise ValueError(f"Expected cf_vec to have shape [B, d_cf], got {tuple(cf_vec.shape)}")
-
-        batch_size = cf_vec.size(0)
+        batch_size = user_cf.size(0)
         text_list = self._normalize_text_input(text, batch_size)
 
         query_tokens = self.q.expand(batch_size, -1, -1)
         query_count = query_tokens.size(1)
 
         text_ids, text_attention_mask = self._tokenize(
-            text_list, max_text_length or self.max_instruction_length, cf_vec.device
+            text_list, max_text_length or self.max_instruction_length, user_cf.device
         )
 
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec)
+        encoder_hidden_states, encoder_attention_mask = self._build_multi_token_encoder(
+            user_cf, target_cf, history_cf, history_mask
+        )
         query_attention_mask = torch.ones(
-            batch_size, query_count, dtype=torch.long, device=cf_vec.device
+            batch_size, query_count, dtype=torch.long, device=user_cf.device
         )
 
         if causal_text:
@@ -354,12 +412,20 @@ class HFQFormerAdapter(nn.Module):
         text_hidden = sequence_hidden[:, query_count:]
         return query_hidden, text_hidden, text_ids, text_attention_mask
 
-    def forward(self, cf_vec: torch.Tensor, instruction) -> torch.Tensor:
-        """LLM-feeding mode: queries cross-attend to ``cf_vec`` while the text
-        stream consumes ``instruction``. Returns query hidden states with
-        ``out_proj`` applied: ``[B, num_queries, output_dim]``."""
+    def forward(
+        self,
+        user_cf: torch.Tensor,
+        target_cf: torch.Tensor,
+        history_cf: torch.Tensor,
+        history_mask: torch.Tensor,
+        instruction,
+    ) -> torch.Tensor:
+        """LLM-feeding mode: queries cross-attend the multi-token CF
+        sequence while the text stream consumes ``instruction``. Returns
+        query hidden states with ``out_proj`` applied: ``[B, num_queries,
+        output_dim]``."""
 
         query_hidden, _, _, _ = self.forward_multimodal(
-            cf_vec, instruction, causal_text=False
+            user_cf, target_cf, history_cf, history_mask, instruction, causal_text=False
         )
         return self.out_proj(query_hidden)
