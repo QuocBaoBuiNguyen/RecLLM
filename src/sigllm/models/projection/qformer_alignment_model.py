@@ -44,7 +44,13 @@ class QRecInstructAlignmentModel(nn.Module):
 
     def encode_item_queries(self, item_ids: torch.Tensor) -> torch.Tensor:
         item_cf = self.mf.item_encoder(item_ids)
-        return self.qformer.encode_cf(item_cf)
+        ctx = self.qformer.pack_item_context(item_cf)
+        return self.qformer.encode_cf(*ctx)
+
+    def encode_user_queries(self, user_ids: torch.Tensor) -> torch.Tensor:
+        user_cf = self.mf.user_encoder(user_ids)
+        ctx = self.qformer.pack_user_context(user_cf)
+        return self.qformer.encode_cf(*ctx)
 
     def encode_text_cls(self, text_list) -> torch.Tensor:
         _, text_cls = self.qformer.encode_text(text_list)
@@ -151,8 +157,13 @@ class QRecInstructAlignmentModel(nn.Module):
         cf_concat = torch.cat([pos_item_cf, pos_item_cf, neg_item_cf], dim=0)
         text_concat = pos_text + neg_text + pos_text
 
+        user_cf, target_cf, history_cf, history_mask, u_mask, t_mask = (
+            self.qformer.pack_item_context(cf_concat)
+        )
         query_hidden, _, _, _ = self.qformer.forward_multimodal(
-            cf_concat, text_concat, causal_text=False
+            user_cf, target_cf, history_cf, history_mask,
+            text_concat, causal_text=False,
+            user_mask=u_mask, target_mask=t_mask,
         )
         pooled = query_hidden.mean(dim=1)
         logits = self.itm_head(pooled)
@@ -173,8 +184,13 @@ class QRecInstructAlignmentModel(nn.Module):
         item CF vector via cross-attention through the learned queries."""
 
         item_cf = self.mf.item_encoder(item_ids)
+        user_cf, target_cf, history_cf, history_mask, u_mask, t_mask = (
+            self.qformer.pack_item_context(item_cf)
+        )
         _, text_hidden, text_ids, text_attention_mask = self.qformer.forward_multimodal(
-            item_cf, text_list, causal_text=True
+            user_cf, target_cf, history_cf, history_mask,
+            text_list, causal_text=True,
+            user_mask=u_mask, target_mask=t_mask,
         )
 
         logits = self.lm_head(text_hidden[:, :-1, :])
@@ -199,8 +215,8 @@ class QRecInstructAlignmentModel(nn.Module):
         """SigLLM-specific co-watch item-item contrastive."""
         left_cf = self.mf.item_encoder(left_ids)
         right_cf = self.mf.item_encoder(right_ids)
-        left_q = self.qformer.encode_cf(left_cf)
-        right_q = self.qformer.encode_cf(right_cf)
+        left_q = self.qformer.encode_cf(*self.qformer.pack_item_context(left_cf))
+        right_q = self.qformer.encode_cf(*self.qformer.pack_item_context(right_cf))
         left_sel, right_sel, _, _ = self.select_pair_by_similarity(left_q, right_q)
 
         left_norm = self.l2norm(left_sel)
@@ -219,8 +235,8 @@ class QRecInstructAlignmentModel(nn.Module):
         user-item pairs vs 3K item-text pairs in our pkls)."""
         user_cf = self.mf.user_encoder(user_ids)
         item_cf = self.mf.item_encoder(item_ids)
-        user_q = self.qformer.encode_cf(user_cf)
-        item_q = self.qformer.encode_cf(item_cf)
+        user_q = self.qformer.encode_cf(*self.qformer.pack_user_context(user_cf))
+        item_q = self.qformer.encode_cf(*self.qformer.pack_item_context(item_cf))
         user_sel, item_sel, _, _ = self.select_pair_by_similarity(user_q, item_q)
 
         user_norm = self.l2norm(user_sel)

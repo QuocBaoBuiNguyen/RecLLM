@@ -216,7 +216,7 @@ def forward_stage2(batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_len
     # BLIP-2-style generative pretraining: queries cross-attend to the CF
     # vector only, no text input to the Q-Former. Instruction-awareness is
     # deferred to Stage 3 (instruction tuning).
-    query_tokens = qformer.encode_cf(item_cf)
+    query_tokens = qformer.encode_cf(*qformer.pack_item_context(item_cf))
     query_tokens = qformer.out_proj(query_tokens)
     soft_tokens = llm_proj(query_tokens)
 

@@ -226,14 +226,17 @@ class HFQFormerAdapter(nn.Module):
         target_cf: torch.Tensor,
         history_cf: torch.Tensor,
         history_mask: torch.Tensor,
+        user_mask: Optional[torch.Tensor] = None,
+        target_mask: Optional[torch.Tensor] = None,
     ):
         """Build the [B, 2+H, d_model] cross-attention encoder sequence.
 
         Layout: token 0 = user, token 1 = target, tokens 2..2+H = history
         (chronological, left-padded). Each token is the shared ``proj_cf``
         projection plus its type embedding; history tokens also receive a
-        per-slot positional embedding. The attention mask is 1 for user
-        and target, and ``history_mask`` for the history slots.
+        per-slot positional embedding. ``user_mask`` and ``target_mask``
+        default to all-ones (Stage 3 usage); Stage 1 single-anchor losses
+        pass mask=0 to hide whichever slot is not present.
         """
         if user_cf.dim() != 2 or target_cf.dim() != 2:
             raise ValueError(
@@ -266,11 +269,56 @@ class HFQFormerAdapter(nn.Module):
             [user_tok.unsqueeze(1), target_tok.unsqueeze(1), history_tok], dim=1
         )
 
-        ones = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        if user_mask is None:
+            user_mask = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        else:
+            user_mask = user_mask.to(dtype=torch.long, device=device).view(batch_size, 1)
+        if target_mask is None:
+            target_mask = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        else:
+            target_mask = target_mask.to(dtype=torch.long, device=device).view(batch_size, 1)
+
         encoder_attention_mask = torch.cat(
-            [ones, ones, history_mask.to(dtype=torch.long, device=device)], dim=1
+            [user_mask, target_mask, history_mask.to(dtype=torch.long, device=device)],
+            dim=1,
         )
         return encoder_hidden_states, encoder_attention_mask
+
+    def pack_item_context(self, item_cf: torch.Tensor):
+        """Stage 1 single-item helper: returns the 6-tuple
+        ``(user_cf, target_cf, history_cf, history_mask, user_mask, target_mask)``
+        with the item placed in the target slot and user/history masked out.
+        """
+        if item_cf.dim() != 2:
+            raise ValueError(f"Expected item_cf as [B, d_cf]; got {tuple(item_cf.shape)}")
+        batch_size = item_cf.size(0)
+        device = item_cf.device
+        zeros_cf = torch.zeros_like(item_cf)
+        zero_hist = torch.zeros(
+            batch_size, self.max_history_length, self.d_cf,
+            dtype=item_cf.dtype, device=device,
+        )
+        zero_mask = torch.zeros(batch_size, self.max_history_length, dtype=torch.long, device=device)
+        off = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        on = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        return zeros_cf, item_cf, zero_hist, zero_mask, off, on
+
+    def pack_user_context(self, user_cf: torch.Tensor):
+        """Stage 1 single-user helper: user in the user slot, target/history
+        masked out."""
+        if user_cf.dim() != 2:
+            raise ValueError(f"Expected user_cf as [B, d_cf]; got {tuple(user_cf.shape)}")
+        batch_size = user_cf.size(0)
+        device = user_cf.device
+        zeros_cf = torch.zeros_like(user_cf)
+        zero_hist = torch.zeros(
+            batch_size, self.max_history_length, self.d_cf,
+            dtype=user_cf.dtype, device=device,
+        )
+        zero_mask = torch.zeros(batch_size, self.max_history_length, dtype=torch.long, device=device)
+        on = torch.ones(batch_size, 1, dtype=torch.long, device=device)
+        off = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        return user_cf, zeros_cf, zero_hist, zero_mask, on, off
 
     def _build_causal_joint_mask(
         self,
@@ -303,6 +351,8 @@ class HFQFormerAdapter(nn.Module):
         target_cf: torch.Tensor,
         history_cf: torch.Tensor,
         history_mask: torch.Tensor,
+        user_mask: Optional[torch.Tensor] = None,
+        target_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Queries-only forward over the multi-token CF sequence.
 
@@ -316,7 +366,7 @@ class HFQFormerAdapter(nn.Module):
             batch_size, query_tokens.size(1), dtype=torch.long, device=user_cf.device
         )
         encoder_hidden_states, encoder_attention_mask = self._build_multi_token_encoder(
-            user_cf, target_cf, history_cf, history_mask
+            user_cf, target_cf, history_cf, history_mask, user_mask, target_mask
         )
 
         outputs = self.qformer(
@@ -366,6 +416,8 @@ class HFQFormerAdapter(nn.Module):
         text: Union[str, list],
         causal_text: bool = False,
         max_text_length: Optional[int] = None,
+        user_mask: Optional[torch.Tensor] = None,
+        target_mask: Optional[torch.Tensor] = None,
     ):
         """Joint forward returning ``(query_hidden, text_hidden, text_ids, text_mask)``.
 
@@ -385,7 +437,7 @@ class HFQFormerAdapter(nn.Module):
         )
 
         encoder_hidden_states, encoder_attention_mask = self._build_multi_token_encoder(
-            user_cf, target_cf, history_cf, history_mask
+            user_cf, target_cf, history_cf, history_mask, user_mask, target_mask
         )
         query_attention_mask = torch.ones(
             batch_size, query_count, dtype=torch.long, device=user_cf.device
@@ -419,6 +471,8 @@ class HFQFormerAdapter(nn.Module):
         history_cf: torch.Tensor,
         history_mask: torch.Tensor,
         instruction,
+        user_mask: Optional[torch.Tensor] = None,
+        target_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """LLM-feeding mode: queries cross-attend the multi-token CF
         sequence while the text stream consumes ``instruction``. Returns
@@ -426,6 +480,13 @@ class HFQFormerAdapter(nn.Module):
         output_dim]``."""
 
         query_hidden, _, _, _ = self.forward_multimodal(
-            user_cf, target_cf, history_cf, history_mask, instruction, causal_text=False
+            user_cf,
+            target_cf,
+            history_cf,
+            history_mask,
+            instruction,
+            causal_text=False,
+            user_mask=user_mask,
+            target_mask=target_mask,
         )
         return self.out_proj(query_hidden)
