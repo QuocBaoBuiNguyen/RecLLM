@@ -179,10 +179,11 @@ run:
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_book_qwen2/"
-    # 1e-4 -> 3e-4: val_loss still dropping past epoch 11 with a fresh llm_proj;
-    # constant-lr Adam at 1e-4 was too conservative. fp16 AMP + GradScaler, so if
-    # loss spikes/NaNs early, back off to 2e-4.
-    lr: 3e-4
+    # lr history: 1e-4 converged smoothly (val 1.69 by ep11, still dropping).
+    # 3e-4 overshot — val_loss bounced (1.72->1.74->1.72) and stalled ABOVE the
+    # 1e-4 curve. 2e-4 is the compromise: modestly faster, stable. If it still
+    # bounces in the first ~3 epochs, just use 1e-4 — it was already healthy.
+    lr: 2e-4
     weight_decay: 1e-3
     # 20 -> 40: give headroom since it was still improving at the old cap.
     # early_stopping_patience=5 will cut it once val_loss plateaus.
