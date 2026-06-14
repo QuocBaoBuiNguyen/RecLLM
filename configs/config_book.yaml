@@ -124,8 +124,13 @@ run:
     # Amazon-Book has 22k items vs ML-1M's 3.2k. Cap item-item/user-item pair
     # counts so Stage 1 pkl build stays under a manageable size; bump if
     # under-sampling shows up in Stage 1 logs.
-    max_item_item_pairs: 5000000
-    max_user_item_pairs: 5000000
+    # 5M+5M made one epoch ~40k steps (~10 min/epoch on A100). Contrastive
+    # pretraining saturates with far fewer pairs, so cap at 1M each (~5x fewer
+    # steps/epoch). NOTE: caps are applied at *build* time
+    # (qformer_alignment_builder.py:241,283) — rerun the builder to regenerate
+    # the samples pkl; editing this value alone will not shrink an existing pkl.
+    max_item_item_pairs: 1000000
+    max_user_item_pairs: 1000000
     include_user_item: True
     lr: 5e-5
     w_itc: 1.0
