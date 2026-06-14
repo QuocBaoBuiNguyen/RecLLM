@@ -67,18 +67,18 @@ class QRecLLM(Rec2Base):
     # MUST NOT be passed here — it gets truncated to max_instruction_length
     # tokens and would carry no per-item signal.
     QFORMER_ITEM_INSTRUCTIONS = [
-        "Represent this movie for recommendation using its title and genres.",
-        "Align this movie metadata with its collaborative filtering representation.",
-        "Given the movie metadata, extract recommendation-relevant item features.",
-        "Use the title and genres to describe this movie in the item embedding space.",
-        "Map this movie's textual attributes to its collaborative recommendation signal.",
-        "Identify the movie preferences implied by its title and genre metadata.",
-        "Create a language-aligned representation of this movie for recommendation.",
-        "Summarize this movie as an item a recommender system can compare.",
-        "Based on the title and genres, represent what kind of users may like this movie.",
-        "Encode the semantic information of this movie for item-language alignment.",
-        "Use a few metadata cues to align this movie with behavioral item signals.",
-        "Produce a recommendation-aware representation from this movie description.",
+        "Represent this item for recommendation using its title and genres.",
+        "Align this item metadata with its collaborative filtering representation.",
+        "Given the item metadata, extract recommendation-relevant item features.",
+        "Use the title and genres to describe this item in the item embedding space.",
+        "Map this item's textual attributes to its collaborative recommendation signal.",
+        "Identify the preferences implied by this item's title and genre metadata.",
+        "Create a language-aligned representation of this item for recommendation.",
+        "Summarize this item so a recommender system can compare it.",
+        "Based on the title and genres, represent what kind of users may like this item.",
+        "Encode the semantic information of this item for item-language alignment.",
+        "Use a few metadata cues to align this item with behavioral item signals.",
+        "Produce a recommendation-aware representation from this item description.",
     ]
 
     def __init__(
