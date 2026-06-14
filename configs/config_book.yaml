@@ -64,7 +64,10 @@ model:
     # safe to leave at the BinLLM-reported scale until preprocessing finishes.
     user_num: 22967
     item_num: 34154
-    embedding_size: 64
+    # 64 was a workaround for the old training instability (huge default-init
+    # logits). With small-std init + bias terms fixed in MatrixFactorization,
+    # capacity is the real lever again — 256 matches the BinLLM/CoLLM MF setup.
+    embedding_size: 256
     pretrained_path: "/content/SigLLM/ckpt/mf_book/mf_model.pth"
 
   # Warm-init checkpoint. Step 2 overrides this with the Step 1 LoRA ckpt;
@@ -90,8 +93,11 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    lr: 1e-4
-    wd: 1e-4
+    # lr was pushed down to 1e-4 to stop loss exploding from the bad init.
+    # With the init fixed, 1e-3 is the healthy Adam rate for MF and converges
+    # far faster. wd kept light (1e-5) since the symptom was underfit.
+    lr: 1e-3
+    wd: 1e-5
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
     eval_epoch: 10
