@@ -119,7 +119,7 @@ def _log_batch_preview(batch, prefix: str = "train_step"):
 def _move_batch_to_device(batch, device):
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
-            batch[key] = value.to(device)
+            batch[key] = value.to(device, non_blocking=True)
     return batch
 
 
@@ -251,7 +251,7 @@ def evaluate_loss(
     }
     steps = 0
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
             loss, logs = train_step(
@@ -306,6 +306,12 @@ def train_qformer_stage1_representation(cfg):
     set_seed(int(cfg.seed))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # A100 free speedups: TF32 matmuls (huge for the BERT/Q-Former linear
+    # layers) and cudnn autotuning. No accuracy impact worth worrying about.
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+
     train_loader, val_loader, test_loader = build_qformer_loaders(cfg, data_dir=cfg.data_dir)
     
     mf = _init_rec_model(cfg, device)
@@ -349,19 +355,24 @@ def train_qformer_stage1_representation(cfg):
             batch = _move_batch_to_device(batch, device)
             opt.zero_grad()
 
-            loss, logs = train_step(
-                batch,
-                model,
-                w_itc=cfg.w_itc,
-                w_itm=cfg.w_itm,
-                w_itg=cfg.w_itg,
-                w_ii=cfg.w_ii,
-                w_ui=w_ui,
-                tau_itc=cfg.tau_itc,
-                tau_ii=cfg.tau_ii,
-                tau_ui=tau_ui,
-                debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
-            )
+            # bf16 autocast: ~2x faster on A100 for the BERT/Q-Former forwards.
+            # bf16 has the same exponent range as fp32, so no GradScaler is
+            # needed (unlike fp16). cross_entropy/softmax are auto-promoted to
+            # fp32 internally by autocast, keeping the contrastive losses stable.
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                loss, logs = train_step(
+                    batch,
+                    model,
+                    w_itc=cfg.w_itc,
+                    w_itm=cfg.w_itm,
+                    w_itg=cfg.w_itg,
+                    w_ii=cfg.w_ii,
+                    w_ui=w_ui,
+                    tau_itc=cfg.tau_itc,
+                    tau_ii=cfg.tau_ii,
+                    tau_ui=tau_ui,
+                    debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
+                )
             loss.backward()
             opt.step()
 

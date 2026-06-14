@@ -108,7 +108,10 @@ run:
     # own text branch (no external BERT). Item-item contrastive (w_ii) is a
     # SigLLM-specific addition for co-watch collaborative signal.
     seed: 2025
-    batch_size: 256
+    # Bumped 256 -> 512 after bf16/TF32 freed GPU RAM. Halves steps/epoch and
+    # doubles in-batch negatives for the contrastive losses (faster convergence,
+    # fewer epochs needed). If ITM (3x batch concat) OOMs, drop back to 384/256.
+    batch_size: 512
     num_workers: 4
     embedding_size: ${model.rec_config.embedding_size}
     user_num: ${model.rec_config.user_num}

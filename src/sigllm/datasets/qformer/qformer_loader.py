@@ -52,12 +52,18 @@ def build_qformer_loader(
     dataset: Dataset = QFormerAlignmentDataset(filename=filename)
     if filter_fn is not None:
         dataset = filter_fn(dataset)
+    num_workers = int(cfg.num_workers)
     return DataLoader(
         dataset,
         batch_size=int(cfg.batch_size),
         shuffle=shuffle,
         collate_fn=qformer_collate,
-        num_workers=int(cfg.num_workers),
+        num_workers=num_workers,
+        # pin_memory enables the non_blocking H2D copies in the train loop;
+        # persistent_workers avoids re-spawning workers every epoch (matters
+        # when there are thousands of steps/epoch).
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
     )
 
 
