@@ -110,8 +110,25 @@ class QRecLLM(Rec2Base):
         lora_target_modules=("q_proj", "v_proj"),
         lora_dropout=0.05,
         tuning_step=None,
+        ranking_loss_weight=0.0,
+        ranking_loss_tau=1.0,
     ):
         super().__init__()
+
+        # uAUC-aligned auxiliary loss. weight=0.0 -> pure pointwise BCE (the
+        # original behavior, bit-for-bit). When >0, a per-user pairwise BPR term
+        # (a differentiable AUC surrogate) is added: L = BCE + weight * BPR.
+        # tau scales the score margin inside the surrogate. Opt-in via config
+        # (`model.ranking_loss.{weight,tau}`); no effect unless weight>0.
+        self.ranking_loss_weight = float(ranking_loss_weight)
+        self.ranking_loss_tau = float(ranking_loss_tau)
+        if self.ranking_loss_weight > 0.0:
+            log_step(
+                "uAUC ranking loss ACTIVE",
+                f"L = BCE + {self.ranking_loss_weight} * per-user BPR "
+                f"(tau={self.ranking_loss_tau}). Needs a user-grouped batch sampler "
+                f"to be effective.",
+            )
 
         self.proj_token_num = proj_token_num
         self._has_logged_trainable_stats = False
@@ -716,10 +733,47 @@ class QRecLLM(Rec2Base):
             dim=1,
         )
         labels = batch_data['label'].long()
-        
+
         loss = nn.functional.cross_entropy(binary_logits, labels)
-        
+
+        # uAUC-aligned auxiliary term (opt-in). Disabled by default so this is
+        # bit-for-bit the original BCE unless ranking_loss_weight > 0.
+        if self.ranking_loss_weight > 0.0 and 'UserID' in batch_data:
+            margin = binary_logits[:, 1] - binary_logits[:, 0]   # score s = logit(Yes) - logit(No)
+            bpr = self._per_user_pairwise_loss(margin, batch_data['UserID'], labels)
+            loss = loss + self.ranking_loss_weight * bpr
+
         return loss
+
+    def _per_user_pairwise_loss(self, scores, users, labels):
+        """Per-user pairwise BPR — a differentiable surrogate for uAUC.
+
+        For every (positive, negative) pair belonging to the SAME user inside
+        the batch, push s_pos above s_neg via -log sigmoid((s_pos - s_neg)/tau).
+        Returns a scalar; 0 (graph-preserving) when the batch holds no valid
+        same-user pos/neg pair, so it never NaNs on unlucky batches.
+
+        NOTE: effectiveness depends on batches containing multiple items per
+        user (mixed labels). With purely random batching same-user pairs are
+        rare — pair this with a user-grouped batch sampler.
+        """
+        users = users.view(-1)
+        labels = labels.view(-1).long()
+        pos_mask = labels == 1
+        neg_mask = labels == 0
+
+        # diff[i, j] = s_i - s_j ; valid when i is a positive and j a negative
+        # of the same user.
+        diff = scores.unsqueeze(1) - scores.unsqueeze(0)                  # [B, B]
+        same_user = users.unsqueeze(1) == users.unsqueeze(0)             # [B, B]
+        valid = same_user & pos_mask.unsqueeze(1) & neg_mask.unsqueeze(0)
+
+        if valid.sum() == 0:
+            return scores.sum() * 0.0  # no pairs this batch -> 0, keep the graph
+
+        # -log sigmoid(x) = softplus(-x), numerically stable.
+        pair_losses = nn.functional.softplus(-diff[valid] / self.ranking_loss_tau)
+        return pair_losses.mean()
 
     def recommendation_scores(self, outputs, label_tokens, ans_map):
         pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
@@ -901,6 +955,10 @@ class QRecLLM(Rec2Base):
         lora_dropout = float(lora_cfg.get("dropout", 0.05))
         tuning_step = cfg.get("tuning_step", None)
 
+        ranking_cfg = cfg.get("ranking_loss") or {}
+        ranking_loss_weight = float(ranking_cfg.get("weight", 0.0))
+        ranking_loss_tau = float(ranking_cfg.get("tau", 1.0))
+
         model = cls(
             rec_model=rec_model,
             rec_config=rec_config,
@@ -929,6 +987,8 @@ class QRecLLM(Rec2Base):
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
+            ranking_loss_weight=ranking_loss_weight,
+            ranking_loss_tau=ranking_loss_tau,
         )
 
         ckpt_path = cfg.get("ckpt", "")
