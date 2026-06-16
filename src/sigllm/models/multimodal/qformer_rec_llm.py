@@ -736,9 +736,11 @@ class QRecLLM(Rec2Base):
 
         loss = nn.functional.cross_entropy(binary_logits, labels)
 
-        # uAUC-aligned auxiliary term (opt-in). Disabled by default so this is
-        # bit-for-bit the original BCE unless ranking_loss_weight > 0.
-        if self.ranking_loss_weight > 0.0 and 'UserID' in batch_data:
+        # uAUC-aligned auxiliary term (opt-in, training only). Disabled by
+        # default so this is bit-for-bit the original BCE unless
+        # ranking_loss_weight > 0. Skipped at eval so val_loss stays comparable
+        # to the BCE baseline (eval batches aren't user-grouped anyway).
+        if self.training and self.ranking_loss_weight > 0.0 and 'UserID' in batch_data:
             margin = binary_logits[:, 1] - binary_logits[:, 0]   # score s = logit(Yes) - logit(No)
             bpr = self._per_user_pairwise_loss(margin, batch_data['UserID'], labels)
             loss = loss + self.ranking_loss_weight * bpr

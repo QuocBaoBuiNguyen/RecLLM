@@ -41,6 +41,14 @@ model:
   end_sym: "###"
   ans_type: "v2"
 
+  # uAUC-aligned objective for Stage 3. L = BCE + weight * per-user pairwise BPR
+  # (a differentiable AUC surrogate over the Yes/No margin). weight=0.0 -> the
+  # original pointwise BCE. Requires run.user_grouped_batch so batches contain
+  # same-user pos/neg pairs, otherwise the term has no pairs to act on.
+  ranking_loss:
+    weight: 0.5
+    tau: 1.0
+
   proj_token_num: ${model.qformer_config.num_queries}
 
   rec_model: "MF"
@@ -207,6 +215,16 @@ run:
   batch_size_eval: 64
   num_workers: 4
   warmup_steps: 200
+
+  # User-grouped batching for the per-user pairwise (uAUC) loss. When enabled,
+  # the train loader reorders samples so each batch holds `items_per_user`
+  # interactions per user with mixed labels -> many same-user (pos,neg) pairs.
+  # enabled=false -> original random/distributed sampling (no behavior change).
+  # Only affects map-style rec datasets (Stage 3); Stage 1/2 use their own loader.
+  user_grouped_batch:
+    enabled: true
+    items_per_user: 4
+    seed: 0
   
   # Workflow
   evaluate: False
