@@ -37,6 +37,10 @@ class UserGroupedSampler(Sampler):
         self.rank = int(rank)
         self.seed = int(seed)
         self.epoch = 0
+        # Incremented each __iter__ so we reshuffle every epoch even when the
+        # runner never calls set_epoch (single-process: IterLoader only calls it
+        # under distributed). Keeps batches fresh across epochs.
+        self._iter_count = 0
 
         user_ids = np.asarray(user_ids).reshape(-1)
         labels = np.asarray(labels).reshape(-1)
@@ -71,7 +75,10 @@ class UserGroupedSampler(Sampler):
         return out
 
     def __iter__(self):
-        rng = random.Random(self.seed + self.epoch)
+        # Tuple seed -> fresh, deterministic shuffle each epoch whether the
+        # variation comes from set_epoch (distributed) or _iter_count (single).
+        rng = random.Random((self.seed, self.epoch, self._iter_count))
+        self._iter_count += 1
         users = list(self._users)
         rng.shuffle(users)
         # Shard users across ranks (distributed); world_size==1 -> all users.

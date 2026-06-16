@@ -46,7 +46,9 @@ model:
   # original pointwise BCE. Requires run.user_grouped_batch so batches contain
   # same-user pos/neg pairs, otherwise the term has no pairs to act on.
   ranking_loss:
-    weight: 0.5
+    # weight 0.5 pulled uAUC below the BCE baseline on ML-1M (BPR over-weighted,
+    # eroding the BCE signal). 0.2 keeps BCE dominant with a gentle ranking nudge.
+    weight: 0.2
     tau: 1.0
 
   proj_token_num: ${model.qformer_config.num_queries}
