@@ -76,3 +76,7 @@ notes.txt
 /notebooks/
 # Third-party improvement bundle (zip + extracted source/checkpoints) — not part of the project
 /improvement/
+
+# Thesis raw materials — template zip + sample thesis (paste vào thesis/_raw/), không track
+*.zip
+/thesis/_raw/
