@@ -851,6 +851,12 @@ class QRecLLM(Rec2Base):
         Returns a scalar; 0 (graph-preserving) when the batch holds no valid
         same-user pos/neg pair, so it never NaNs on unlucky batches.
 
+        The aggregation is USER-WEIGHTED to match uAUC: pair losses are first
+        averaged within each user, then averaged across users. A flat mean over
+        all pairs would weight users by their pair count (users with many items
+        dominate the gradient), which optimises a pair-weighted objective ≈
+        global AUC rather than the user-weighted uAUC.
+
         NOTE: effectiveness depends on batches containing multiple items per
         user (mixed labels). With purely random batching same-user pairs are
         rare — pair this with a user-grouped batch sampler.
@@ -869,9 +875,27 @@ class QRecLLM(Rec2Base):
         if valid.sum() == 0:
             return scores.sum() * 0.0  # no pairs this batch -> 0, keep the graph
 
-        # -log sigmoid(x) = softplus(-x), numerically stable.
-        pair_losses = nn.functional.softplus(-diff[valid] / self.ranking_loss_tau)
-        return pair_losses.mean()
+        # -log sigmoid(x) = softplus(-x), numerically stable. Zero out the
+        # invalid entries so they contribute nothing to the per-user sums.
+        valid_f = valid.to(scores.dtype)
+        pair_losses = nn.functional.softplus(-diff / self.ranking_loss_tau) * valid_f
+
+        # Each pair (i, j) belongs to user users[i] (== users[j]). Collapse the
+        # neg axis, then scatter-add rows into their user bucket so every user
+        # gets its own (sum, count) -> within-user mean.
+        row_loss_sum = pair_losses.sum(dim=1)                            # [B]
+        row_pair_count = valid_f.sum(dim=1)                             # [B]
+
+        uniq_users, inv = torch.unique(users, return_inverse=True)
+        n_users = uniq_users.numel()
+        user_loss_sum = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
+        user_pair_count = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
+        user_loss_sum.scatter_add_(0, inv, row_loss_sum)
+        user_pair_count.scatter_add_(0, inv, row_pair_count)
+
+        has_pairs = user_pair_count > 0
+        per_user_mean = user_loss_sum[has_pairs] / user_pair_count[has_pairs]
+        return per_user_mean.mean()
 
     def recommendation_scores(self, outputs, label_tokens, ans_map):
         pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]

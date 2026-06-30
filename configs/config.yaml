@@ -264,7 +264,7 @@ run:
   # Only affects map-style rec datasets (Stage 3); Stage 1/2 use their own loader.
   user_grouped_batch:
     enabled: true
-    items_per_user: 4
+    items_per_user: 8
     seed: 0
   
   # Workflow
