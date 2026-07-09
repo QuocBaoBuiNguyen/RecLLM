@@ -103,7 +103,11 @@ model:
     user_num: 839
     item_num: 3256
     embedding_size: 256
-    pretrained_path: "/content/SigLLM/ckpt/mf/mf_model.pth"
+    # Dense CF teacher: MF pretrained on months 0-23 (train_ext_ood2.pkl), which
+    # lifted MF-alone warm-test uAUC 0.671 -> 0.715 (+0.044). Same id space, so
+    # user_num/item_num above are unchanged. To revert to the sparse baseline,
+    # set this back to ".../mf_model.pth".
+    pretrained_path: "/content/SigLLM/ckpt/mf/mf_ext_model.pth"
 
   # Warm-init checkpoint. Step 2 overrides this with the Step 1 LoRA ckpt;
   # Step 1 overrides it to null. Leave null at top level so a bare config
