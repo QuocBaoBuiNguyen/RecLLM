@@ -123,13 +123,18 @@ def train_baseline_model(
     need_train=True,
     warm_or_cold=None,
     seed=None,
+    train_file="train_ood2.pkl",
 ):
     # 1. Setup Environment
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     # 2. Load and Filter Data
-    train_data = pd.read_pickle(os.path.join(data_dir, "train_ood2.pkl"))[['uid','iid','label']].values
+    # `train_file` lets the MF teacher be pretrained on an extended window
+    # (e.g. train_ext_ood2.pkl = months 0-23) while valid/test stay on the
+    # untouched OOD split — isolating CF quality as the only changed variable.
+    log_step("MF train file", train_file)
+    train_data = pd.read_pickle(os.path.join(data_dir, train_file))[['uid','iid','label']].values
     valid_data = pd.read_pickle(os.path.join(data_dir, "valid_ood2.pkl"))[['uid','iid','label']].values
     test_data = pd.read_pickle(os.path.join(data_dir, "test_ood2.pkl"))[['uid','iid','label']].values
 
@@ -270,6 +275,9 @@ def main():
     need_train = bool(baseline_cfg["need_train"])
     warm_or_cold = baseline_cfg["warm_or_cold"]
     seed = int(baseline_cfg["seed"])
+    # Optional: pretrain MF on an extended window. Defaults to the original
+    # train_ood2.pkl so existing runs are unchanged.
+    train_file = baseline_cfg.get("train_file", "train_ood2.pkl")
 
     log_step("Loaded config", f"cfg_path={cfg.args.cfg_path}")
     log_step("Dataset dir", str(data_dir))
@@ -286,6 +294,7 @@ def main():
         need_train=need_train,
         warm_or_cold=warm_or_cold,
         seed=seed,
+        train_file=train_file,
     )
 
 if __name__ == "__main__":

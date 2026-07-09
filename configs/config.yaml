@@ -135,6 +135,12 @@ run:
     eval_epoch: 1
     patience: 100
     batch_size: 1024
+    # MF-pretraining pool. Default = the OOD train slice (months 14-23).
+    # Set to `train_ext_ood2.pkl` (built by scripts/build_ext_mf_data.py, months
+    # 0-23, no leakage) to test whether a denser CF teacher lifts uAUC. When
+    # doing so, ALSO point save_file at a NEW path (e.g. .../mf_ext_model.pth)
+    # so the baseline mf_model.pth is preserved for comparison.
+    train_file: train_ood2.pkl
   qformer_stage1:
     # BLIP-2 representation pretraining: ITC + ITM + ITG using the Q-Former's
     # own text branch (no external BERT). Item-item contrastive (w_ii) is a
