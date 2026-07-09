@@ -13,6 +13,7 @@ from sigllm.common.logging_utils import NotebookLogger
 from sigllm.common.registry import registry
 from sigllm.models.multimodal.base.rec_base_model import Rec2Base
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
+from sigllm.models.projection.collaborative_lora_injector import CollaborativeLoRAInjector
 
 LOGGER = NotebookLogger.rich_logger("sigllm.rec_base_model")
 
@@ -110,8 +111,28 @@ class QRecLLM(Rec2Base):
         lora_target_modules=("q_proj", "v_proj"),
         lora_dropout=0.05,
         tuning_step=None,
+        ranking_loss_weight=0.0,
+        ranking_loss_tau=1.0,
+        cf_injection_mode="soft_token",
+        cora_alpha=16.0,
+        cora_target_modules=("q_proj", "v_proj"),
     ):
         super().__init__()
+
+        # uAUC-aligned auxiliary loss. weight=0.0 -> pure pointwise BCE (the
+        # original behavior, bit-for-bit). When >0, a per-user pairwise BPR term
+        # (a differentiable AUC surrogate) is added: L = BCE + weight * BPR.
+        # tau scales the score margin inside the surrogate. Opt-in via config
+        # (`model.ranking_loss.{weight,tau}`); no effect unless weight>0.
+        self.ranking_loss_weight = float(ranking_loss_weight)
+        self.ranking_loss_tau = float(ranking_loss_tau)
+        if self.ranking_loss_weight > 0.0:
+            log_step(
+                "uAUC ranking loss ACTIVE",
+                f"L = BCE + {self.ranking_loss_weight} * per-user BPR "
+                f"(tau={self.ranking_loss_tau}). Needs a user-grouped batch sampler "
+                f"to be effective.",
+            )
 
         self.proj_token_num = proj_token_num
         self._has_logged_trainable_stats = False
@@ -137,6 +158,17 @@ class QRecLLM(Rec2Base):
         self.lora_dropout = float(lora_dropout)
         self.tuning_step = tuning_step
 
+        # CHANGE A: collaborative injection mode.
+        self.cf_injection_mode = str(cf_injection_mode or "soft_token").lower()
+        if self.cf_injection_mode not in ("soft_token", "lora_weight", "both"):
+            raise ValueError(
+                f"cf_injection_mode must be one of soft_token|lora_weight|both; "
+                f"got '{self.cf_injection_mode}'"
+            )
+        self.cora_alpha = float(cora_alpha)
+        self.cora_target_modules = tuple(cora_target_modules)
+        self.cf_injector = None
+
         log_step("Running MiniGPT4Rec_v2 initialization")
 
         self.rec_model_type = rec_model
@@ -158,6 +190,7 @@ class QRecLLM(Rec2Base):
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
+        self._init_cf_injection()
         self._apply_tuning_step_policy()
 
     def _init_rec_model(self, rec_model, rec_config, pretrained_rec, freeze_rec):
@@ -215,41 +248,45 @@ class QRecLLM(Rec2Base):
             self._soft_token_id = tok.unk_token_id
             return
 
-        skip_ids = {tok.eos_token_id, tok.pad_token_id, tok.bos_token_id}
-        skip_ids.discard(None)
-
-        hardcoded = (
-            "<|extra_0|>", "<|reserved_0|>", "<|fim_pad|>",
-            "<|object_ref_start|>", "<|object_ref_end|>",
-            "<|box_start|>", "<|box_end|>",
-            "<|quad_start|>", "<|quad_end|>",
-            "<|vision_start|>", "<|vision_end|>", "<|vision_pad|>",
-            "<|image_pad|>", "<|video_pad|>",
-            "<|im_start|>",
-        )
-        for candidate in hardcoded:
-            ids = tok(candidate, add_special_tokens=False).input_ids
-            if len(ids) == 1 and ids[0] not in skip_ids:
-                self._soft_token_str = candidate
-                self._soft_token_id = ids[0]
+        # No unk token (e.g. Qwen2). Register a DEDICATED reserved placeholder
+        # token that by construction cannot appear in the prompt body or the
+        # ChatML scaffolding. This is the standard BLIP-2/LLaVA approach and is
+        # collision-proof. The previous strategy scanned for an unused special
+        # token and, finding none on Qwen2-Instruct, fell back to eos_token
+        # (<|im_end|>) — which the chat template uses, so soft-slot matching
+        # also hit the scaffolding markers and the embedding-injection counts
+        # diverged (256 vs 288).
+        placeholder = "<|cf_slot|>"
+        try:
+            num_added = tok.add_tokens([placeholder], special_tokens=True)
+            new_id = tok.convert_tokens_to_ids(placeholder)
+            if new_id is not None and new_id != tok.unk_token_id:
+                emb = self.llm_model.get_input_embeddings()
+                emb_rows = emb.weight.size(0) if emb is not None else 0
+                if num_added > 0 and len(tok) > emb_rows:
+                    # Grow embeddings only when the new id exceeds existing rows
+                    # (Qwen2 already has spare rows, so this usually no-ops), then
+                    # re-freeze the (frozen base) embeddings.
+                    self.llm_model.resize_token_embeddings(len(tok))
+                    in_emb = self.llm_model.get_input_embeddings()
+                    if in_emb is not None:
+                        for p in in_emb.parameters():
+                            p.requires_grad = False
+                    out_emb = self.llm_model.get_output_embeddings()
+                    if out_emb is not None:
+                        for p in out_emb.parameters():
+                            p.requires_grad = False
+                self._soft_token_str = placeholder
+                self._soft_token_id = new_id
                 return
+        except Exception as exc:  # pragma: no cover - defensive
+            log_step("Soft-token placeholder add failed", str(exc))
 
-        added = getattr(tok, "added_tokens_decoder", None) or {}
-        for token_id, added_token in added.items():
-            if token_id in skip_ids:
-                continue
-            content = getattr(added_token, "content", str(added_token))
-            ids = tok(content, add_special_tokens=False).input_ids
-            if len(ids) == 1 and ids[0] == token_id:
-                self._soft_token_str = content
-                self._soft_token_id = token_id
-                return
-
+        # Last-resort fallback (should not be reached): eos.
         log_step(
             "Soft-token fallback",
-            "no unk_token and no safe single-token candidate; using eos_token "
-            "as soft-slot placeholder. Soft slots will COLLIDE with padding if "
-            "pad_token == eos_token — Step 2 may corrupt embeddings silently.",
+            "could not register a dedicated placeholder; using eos_token. Soft "
+            "slots may COLLIDE with chat/padding tokens and corrupt embeddings.",
         )
         self._soft_token_str = tok.eos_token
         self._soft_token_id = tok.eos_token_id
@@ -276,6 +313,38 @@ class QRecLLM(Rec2Base):
             f"trainable LoRA params={count_trainable_parameters(self.llm_model)}",
         )
 
+    def _cf_weight_enabled(self) -> bool:
+        """True when the CoRA-style weight delta is part of the CF pathway."""
+        return self.cf_injection_mode in ("lora_weight", "both")
+
+    def _init_cf_injection(self):
+        """CHANGE A: build and attach the collaborative weight injector.
+
+        No-op for the default ``soft_token`` mode. For ``lora_weight`` / ``both``
+        the Q-Former queries are turned into a per-sample low-rank delta on the
+        LLM's attention projections. The injector is attached AFTER LoRA so it
+        wraps the (possibly PEFT-wrapped) target modules.
+        """
+        if not self._cf_weight_enabled():
+            log_step("CF injection", f"mode={self.cf_injection_mode} (no weight injector)")
+            return
+
+        d_model = int(self.qformer.d_model)
+        self.cf_injector = CollaborativeLoRAInjector(
+            d_model=d_model,
+            target_modules=self.cora_target_modules,
+            alpha=self.cora_alpha,
+            num_queries=int(self.qformer.q.shape[-2]),
+        )
+        n = self.cf_injector.attach(self.llm_model)
+        self.cf_injector = self.cf_injector.to(self.device)
+        log_step(
+            "CF injection",
+            f"mode={self.cf_injection_mode}, hooked={n} modules, "
+            f"alpha={self.cora_alpha}, targets={list(self.cora_target_modules)}, "
+            f"trainable_params={count_trainable_parameters(self.cf_injector)}",
+        )
+
     def _apply_tuning_step_policy(self):
         step = self.tuning_step
         if step is None:
@@ -290,9 +359,14 @@ class QRecLLM(Rec2Base):
             self.qformer.train = disabled_train
             self.llm_proj.eval()
             self.llm_proj.train = disabled_train
+            if self.cf_injector is not None:
+                for p in self.cf_injector.parameters():
+                    p.requires_grad = False
+                self.cf_injector.eval()
+                self.cf_injector.train = disabled_train
             log_step(
                 "Tuning step 1",
-                "LoRA trainable; Q-Former, projection, MF and base LLM all frozen.",
+                "LoRA trainable; Q-Former, projection, CF-injector, MF and base LLM all frozen.",
             )
 
         elif int(step) == 2:
@@ -313,9 +387,13 @@ class QRecLLM(Rec2Base):
             for p in self.llm_proj.parameters():
                 p.requires_grad = True
             self.llm_proj.train()
+            if self.cf_injector is not None:
+                for p in self.cf_injector.parameters():
+                    p.requires_grad = True
+                self.cf_injector.train()
             log_step(
                 "Tuning step 2",
-                "Q-Former + projection trainable; LoRA, base LLM and MF frozen.",
+                "Q-Former + projection + CF-injector trainable; LoRA, base LLM and MF frozen.",
             )
 
         else:
@@ -516,6 +594,13 @@ class QRecLLM(Rec2Base):
                 if "lora_" in n and p.requires_grad:
                     return True
 
+        # CHANGE A: the CoRA weight-injection path can be the only trainable CF
+        # route when using a text-only prompt with cf_injection_mode=lora_weight.
+        if self.cf_injector is not None:
+            for p in self.cf_injector.parameters():
+                if p.requires_grad:
+                    return True
+
         return False
 
     def set_answer_type(self,mode):
@@ -588,6 +673,12 @@ class QRecLLM(Rec2Base):
 
             cf_q = self.qformer(user_cf, target_cf, history_cf, history_mask, ins_list)  # [B, Q, d_model]
             cf_llm = self.llm_proj(cf_q)                                                 # [B, Q, H]
+
+            # CHANGE A: feed the collaborative queries to the weight injector.
+            # These are the pre-projection Q-Former outputs (d_model), which the
+            # injector maps to per-sample low-rank deltas during the LLM forward.
+            if self._cf_weight_enabled() and self.cf_injector is not None:
+                self.cf_injector.set_queries(cf_q)
 
             if self.ablate_soft_tokens:
                 cf_llm = torch.zeros_like(cf_llm)
@@ -662,7 +753,17 @@ class QRecLLM(Rec2Base):
         replaced_idx = torch.nonzero(prompts_tokens.input_ids == unk_token_id)
 
         if "<CFTokens>" in prompt_ori and rec_embeds.get('merged_embs') is not None:
-            inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = rec_embeds['merged_embs'].to(inputs_embeds)
+            merged = rec_embeds['merged_embs']
+            n_slots = replaced_idx.shape[0]
+            if n_slots != merged.shape[0]:
+                raise RuntimeError(
+                    f"Soft-token slot/embedding mismatch: found {n_slots} "
+                    f"'{self._soft_token_str}' slots in the tokenized prompt but have "
+                    f"{merged.shape[0]} soft embeddings ({batch_size} x {self.proj_token_num}). "
+                    f"The soft-token placeholder (id={self._soft_token_id}) likely collides "
+                    f"with a token used elsewhere in the prompt/chat template."
+                )
+            inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = merged.to(inputs_embeds)
 
         if not self._has_logged_prompt_injection_stats:
             cf_soft_tokens = self.proj_token_num if "<CFTokens>" in prompt_ori else 0
@@ -699,6 +800,18 @@ class QRecLLM(Rec2Base):
 
     def execute_llm_forward(self, embeds, atts, targets):
         with self.maybe_autocast():
+            # CHANGE A: enable the CoRA-style weight delta only for this forward,
+            # then clear the stored queries so they cannot leak into a later
+            # call that has not set them.
+            if self._cf_weight_enabled() and self.cf_injector is not None:
+                with self.cf_injector.enabled():
+                    out = self.llm_model(
+                        inputs_embeds=embeds,
+                        attention_mask=atts,
+                        return_dict=True,
+                    )
+                self.cf_injector.clear()
+                return out
             return self.llm_model(
                 inputs_embeds=embeds,
                 attention_mask=atts,
@@ -716,10 +829,73 @@ class QRecLLM(Rec2Base):
             dim=1,
         )
         labels = batch_data['label'].long()
-        
+
         loss = nn.functional.cross_entropy(binary_logits, labels)
-        
+
+        # uAUC-aligned auxiliary term (opt-in, training only). Disabled by
+        # default so this is bit-for-bit the original BCE unless
+        # ranking_loss_weight > 0. Skipped at eval so val_loss stays comparable
+        # to the BCE baseline (eval batches aren't user-grouped anyway).
+        if self.training and self.ranking_loss_weight > 0.0 and 'UserID' in batch_data:
+            margin = binary_logits[:, 1] - binary_logits[:, 0]   # score s = logit(Yes) - logit(No)
+            bpr = self._per_user_pairwise_loss(margin, batch_data['UserID'], labels)
+            loss = loss + self.ranking_loss_weight * bpr
+
         return loss
+
+    def _per_user_pairwise_loss(self, scores, users, labels):
+        """Per-user pairwise BPR — a differentiable surrogate for uAUC.
+
+        For every (positive, negative) pair belonging to the SAME user inside
+        the batch, push s_pos above s_neg via -log sigmoid((s_pos - s_neg)/tau).
+        Returns a scalar; 0 (graph-preserving) when the batch holds no valid
+        same-user pos/neg pair, so it never NaNs on unlucky batches.
+
+        The aggregation is USER-WEIGHTED to match uAUC: pair losses are first
+        averaged within each user, then averaged across users. A flat mean over
+        all pairs would weight users by their pair count (users with many items
+        dominate the gradient), which optimises a pair-weighted objective ≈
+        global AUC rather than the user-weighted uAUC.
+
+        NOTE: effectiveness depends on batches containing multiple items per
+        user (mixed labels). With purely random batching same-user pairs are
+        rare — pair this with a user-grouped batch sampler.
+        """
+        users = users.view(-1)
+        labels = labels.view(-1).long()
+        pos_mask = labels == 1
+        neg_mask = labels == 0
+
+        # diff[i, j] = s_i - s_j ; valid when i is a positive and j a negative
+        # of the same user.
+        diff = scores.unsqueeze(1) - scores.unsqueeze(0)                  # [B, B]
+        same_user = users.unsqueeze(1) == users.unsqueeze(0)             # [B, B]
+        valid = same_user & pos_mask.unsqueeze(1) & neg_mask.unsqueeze(0)
+
+        if valid.sum() == 0:
+            return scores.sum() * 0.0  # no pairs this batch -> 0, keep the graph
+
+        # -log sigmoid(x) = softplus(-x), numerically stable. Zero out the
+        # invalid entries so they contribute nothing to the per-user sums.
+        valid_f = valid.to(scores.dtype)
+        pair_losses = nn.functional.softplus(-diff / self.ranking_loss_tau) * valid_f
+
+        # Each pair (i, j) belongs to user users[i] (== users[j]). Collapse the
+        # neg axis, then scatter-add rows into their user bucket so every user
+        # gets its own (sum, count) -> within-user mean.
+        row_loss_sum = pair_losses.sum(dim=1)                            # [B]
+        row_pair_count = valid_f.sum(dim=1)                             # [B]
+
+        uniq_users, inv = torch.unique(users, return_inverse=True)
+        n_users = uniq_users.numel()
+        user_loss_sum = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
+        user_pair_count = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
+        user_loss_sum.scatter_add_(0, inv, row_loss_sum)
+        user_pair_count.scatter_add_(0, inv, row_pair_count)
+
+        has_pairs = user_pair_count > 0
+        per_user_mean = user_loss_sum[has_pairs] / user_pair_count[has_pairs]
+        return per_user_mean.mean()
 
     def recommendation_scores(self, outputs, label_tokens, ans_map):
         pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
@@ -768,7 +944,7 @@ class QRecLLM(Rec2Base):
         feature_order = self.get_placeholder_order(prompt_template) if prompt_template else None
         batch_size = batch_data["UserID"].shape[0]
 
-        if not feature_order:
+        if not feature_order and not self._cf_weight_enabled():
             self._log_trainable_module_stats()
             rec_embeds = {
                 "CF_emb": None,
@@ -779,7 +955,7 @@ class QRecLLM(Rec2Base):
             instruction_list = self._build_qformer_instructions(batch_size)
             rec_embeds, rec_atts = self.encode_rec_features_to_llm_v2(
                 batch_data,
-                feature_order=feature_order,
+                feature_order=feature_order or [],
                 instruction_list=instruction_list,
             )
 
@@ -901,6 +1077,14 @@ class QRecLLM(Rec2Base):
         lora_dropout = float(lora_cfg.get("dropout", 0.05))
         tuning_step = cfg.get("tuning_step", None)
 
+        ranking_cfg = cfg.get("ranking_loss") or {}
+        ranking_loss_weight = float(ranking_cfg.get("weight", 0.0))
+        ranking_loss_tau = float(ranking_cfg.get("tau", 1.0))
+
+        cf_injection_mode = cfg.get("cf_injection_mode", "soft_token")
+        cora_alpha = float(cfg.get("cora_alpha", 16.0))
+        cora_target_modules = cfg.get("cora_target_modules", lora_target_modules)
+
         model = cls(
             rec_model=rec_model,
             rec_config=rec_config,
@@ -929,6 +1113,11 @@ class QRecLLM(Rec2Base):
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
+            ranking_loss_weight=ranking_loss_weight,
+            ranking_loss_tau=ranking_loss_tau,
+            cf_injection_mode=cf_injection_mode,
+            cora_alpha=cora_alpha,
+            cora_target_modules=cora_target_modules,
         )
 
         ckpt_path = cfg.get("ckpt", "")

@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from sigllm.common.dist_utils import get_world_size, get_rank
 from sigllm.common.data_utils import ChainDataset
 from sigllm.common.dataloader_utils import MultiIterLoader, PrefetchLoader, IterLoader
+from sigllm.common.user_grouped_sampler import UserGroupedSampler
 
 def build_dataloaders(datasets, config, train_splits, use_distributed, use_dist_eval_sampler):
     """
@@ -74,7 +75,8 @@ def build_dataloaders(datasets, config, train_splits, use_distributed, use_dist_
         is_trains=is_trains,
         collate_fns=collate_fns,
         use_distributed=use_distributed,
-        use_dist_eval_sampler=use_dist_eval_sampler
+        use_dist_eval_sampler=use_dist_eval_sampler,
+        user_group_cfg=config.run_cfg.get("user_grouped_batch") or {},
     )
 
     dataloaders = {k: v for k, v in zip(split_names, loaders)}
@@ -89,10 +91,12 @@ def create_loaders(
     use_distributed,
     use_dist_eval_sampler,
     dataset_ratios=None,
+    user_group_cfg=None,
 ):
     """
     Create dataloaders for training and validation.
     """
+    user_group_cfg = user_group_cfg or {}
 
     def _create_loader(dataset, num_workers, bsz, is_train, collate_fn):
         # create a single dataloader for each split
@@ -112,7 +116,34 @@ def create_loaders(
         else:
             # map-style dataset are concatenated together
             # setup distributed sampler
-            if use_distributed:
+            sampler = None
+            ug = user_group_cfg or {}
+            use_user_grouped = (
+                is_train
+                and bool(ug.get("enabled", False))
+                and hasattr(dataset, "annotation")
+                and "UserID" in getattr(dataset, "annotation").columns
+                and "label" in getattr(dataset, "annotation").columns
+            )
+            if use_user_grouped:
+                # User-grouped order so each batch holds same-user pos/neg pairs
+                # for the uAUC pairwise loss. Replaces the DistributedSampler;
+                # it shards users by rank internally. Only active when the run
+                # config opts in via `run.user_grouped_batch.enabled`.
+                sampler = UserGroupedSampler(
+                    user_ids=dataset.annotation["UserID"].to_numpy(),
+                    labels=dataset.annotation["label"].to_numpy(),
+                    batch_size=bsz,
+                    items_per_user=int(ug.get("items_per_user", 4)),
+                    num_replicas=get_world_size() if use_distributed else 1,
+                    rank=get_rank() if use_distributed else 0,
+                    seed=int(ug.get("seed", 0)),
+                )
+                logging.info(
+                    "UserGroupedSampler ACTIVE (train) | items_per_user=%s",
+                    ug.get("items_per_user", 4),
+                )
+            elif use_distributed:
                 sampler = DistributedSampler(
                     dataset,
                     shuffle=is_train,
@@ -122,8 +153,6 @@ def create_loaders(
                 if not use_dist_eval_sampler:
                     # e.g. retrieval evaluation
                     sampler = sampler if is_train else None
-            else:
-                sampler = None
 
             loader = DataLoader(
                 dataset,

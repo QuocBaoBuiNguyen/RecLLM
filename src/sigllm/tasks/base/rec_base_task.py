@@ -194,7 +194,11 @@ class RecBaseTask:
             )
             
             all_results = {
-            'agg_metrics': metrics.get('auc', -metric_logger.meters['loss'].global_avg),
+            # Select the best checkpoint by uAUC (the headline ranking metric),
+            # not global AUC. AUC and uAUC diverge here — AUC keeps climbing while
+            # uAUC plateaus — so selecting on AUC ships the wrong epoch. Fall back
+            # to -loss only when uauc is unavailable.
+            'agg_metrics': metrics.get('uauc', -metric_logger.meters['loss'].global_avg),
             'auc': metrics.get('auc', 0),
             'acc': val_acc,
             'loss': val_loss,

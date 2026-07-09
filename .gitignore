@@ -70,3 +70,13 @@ htmlcov/
 /docs/ROADMAP.md
 /copilot-instructions.md
 /.github/COPILOT_INSTRUCTIONS.md
+# CLAUDE.md
+notes.txt
+/data/raw/ml-1m
+/notebooks/
+# Third-party improvement bundle (zip + extracted source/checkpoints) — not part of the project
+/improvement/
+
+# Thesis raw materials — template zip + sample thesis (paste vào thesis/_raw/), không track
+*.zip
+/thesis/_raw/
