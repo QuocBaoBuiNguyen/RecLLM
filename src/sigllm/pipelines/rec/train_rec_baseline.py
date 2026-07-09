@@ -166,7 +166,10 @@ def train_baseline_model(
 
     model = MatrixFactorization(mf_config).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=train_config['lr'], weight_decay=train_config['wd'])
-    stopper = EarlyStopping(ref_metric='valid_auc', monitor_mode='max', patience=train_config['patience'])
+    # Select the MF teacher by valid uAUC (the headline ranking metric), matching
+    # the pipeline's agg_metrics=uauc. AUC and uAUC diverge, so selecting on AUC
+    # would save an MF checkpoint that is not the best per-user ranker.
+    stopper = EarlyStopping(ref_metric='valid_uauc', monitor_mode='max', patience=train_config['patience'])
     criterion = nn.BCEWithLogitsLoss()
 
     #4. Inference only
@@ -233,7 +236,7 @@ def train_baseline_model(
                 break
 
             if epoch > 500 and stopper.best_metric_val < 0.52:
-                log_step("Training fails to converge (Valid AUC < 0.52 at epoch 500)")
+                log_step("Training fails to converge (Valid uAUC < 0.52 at epoch 500)")
                 break
 
     # 6. Final Logging
