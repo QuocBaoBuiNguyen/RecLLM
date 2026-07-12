@@ -57,6 +57,10 @@ def apply_step2_overrides(cfg, slug):
     cfg.model_cfg.ckpt = os.path.join(step1_out, slug, best_name)
     cfg.run_cfg.output_dir = step2.output_dir
     cfg.run_cfg.init_lr = step2.init_lr
+    # min_lr must be overridden together with init_lr: the top-level min_lr
+    # (8e-5) exceeds step2 init_lr (3e-5), which inverts cosine_lr_schedule
+    # into a monotonically INCREASING schedule.
+    cfg.run_cfg.min_lr = step2.min_lr
     cfg.run_cfg.max_epoch = step2.max_epoch
 
 

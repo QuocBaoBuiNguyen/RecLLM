@@ -146,9 +146,9 @@ class QRecLLM(Rec2Base):
         if self.ablate_soft_tokens:
             log_step(
                 "ABLATION ACTIVE",
-                "ablate_soft_tokens=True → target_llm and interacted_llm_flat "
-                "will be zeroed before injection (Information flow log will show "
-                "target_llm mean/std=0).",
+                "ablate_soft_tokens=True → soft tokens zeroed AND CoRA "
+                "weight-delta queries withheld (full no-CF ablation, both "
+                "channels). Information flow log will show cf_llm mean/std=0.",
             )
 
         self.use_lora = bool(use_lora)
@@ -677,11 +677,14 @@ class QRecLLM(Rec2Base):
             # CHANGE A: feed the collaborative queries to the weight injector.
             # These are the pre-projection Q-Former outputs (d_model), which the
             # injector maps to per-sample low-rank deltas during the LLM forward.
-            if self._cf_weight_enabled() and self.cf_injector is not None:
-                self.cf_injector.set_queries(cf_q)
-
+            # Under ablation the queries are withheld as well (the injector hook
+            # is a no-op when no queries are set), so ablate_soft_tokens=True is
+            # a full no-CF ablation even in `both` injection mode — zeroing only
+            # cf_llm would leave CF flowing through the weight-delta path.
             if self.ablate_soft_tokens:
                 cf_llm = torch.zeros_like(cf_llm)
+            elif self._cf_weight_enabled() and self.cf_injector is not None:
+                self.cf_injector.set_queries(cf_q)
 
             merged_flat = None
             if feature_order and "<CFTokens>" in feature_order:

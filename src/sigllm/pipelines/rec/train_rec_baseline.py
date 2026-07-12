@@ -134,6 +134,15 @@ def train_baseline_model(
     # (e.g. train_ext_ood2.pkl = months 0-23) while valid/test stay on the
     # untouched OOD split — isolating CF quality as the only changed variable.
     log_step("MF train file", train_file)
+    # Guard the dense-teacher checkpoint: an "_ext" save path with a non-ext
+    # train pool would overwrite mf_ext_model.pth with a sparse-trained MF —
+    # silently poisoning every pipeline run that loads it as the CF teacher.
+    if save_file and "ext" in os.path.basename(save_file) and "ext" not in train_file:
+        raise ValueError(
+            f"save_file={save_file!r} looks like the extended-pool teacher but "
+            f"train_file={train_file!r} is not the extended pool. Refusing to "
+            "overwrite; set save_file and train_file together."
+        )
     train_data = pd.read_pickle(os.path.join(data_dir, train_file))[['uid','iid','label']].values
     valid_data = pd.read_pickle(os.path.join(data_dir, "valid_ood2.pkl"))[['uid','iid','label']].values
     test_data = pd.read_pickle(os.path.join(data_dir, "test_ood2.pkl"))[['uid','iid','label']].values
