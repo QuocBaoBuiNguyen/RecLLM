@@ -259,6 +259,42 @@ nhích nhẹ (+0.31 điểm). Cho thấy CF chủ yếu cải thiện khả năn
 Khoảng cách điểm pos–neg ở warm rộng hơn cold ~0.09 → củng cố nhận định warm dễ
 phân biệt hơn.
 
+### 3.4. Nghịch lý AUC↑ / uAUC↓ của cải tiến CoRA (quan trọng)
+
+Cấu hình đầy đủ (CoRA + đa-token CF, mode `both`) là biến thể có **AUC cao nhất
+trong tất cả các phiên bản SigLLM** — test **AUC 0.7508**, vượt cả CoLLM-MF
+(0.7357) và BinLLM (0.7417) trên cùng split. **Nhưng uAUC lại là thấp nhất:
+0.7041** — dưới cả Step-1 text-only (val uAUC 0.7057) và dưới vanilla Q-Former
+(test uAUC 0.7170). Hai metric đi **ngược chiều nhau**. Đây không phải nhiễu ngẫu
+nhiên đơn thuần mà là một hệ quả có cơ chế, cần giải thích rõ trong luận văn.
+
+**Cơ chế — bản chất khác nhau của AUC và uAUC.** uAUC chỉ đo thứ tự **trong cùng
+một user** và **bất biến với mọi phép biến đổi đơn điệu riêng theo từng user**
+(cộng một hằng số/bias cho mỗi user không làm đổi uAUC). Hệ quả: mọi tín hiệu
+**không biến thiên trong phạm vi một user** — độ "hot" chung của phim, mức hợp gu
+text trung bình, độ dễ tính của user — đều **vô hình với uAUC** dù chúng nâng AUC.
+CoRA tiêm CF qua **weight-delta trên toàn bộ `q_proj`/`v_proj`**, khuếch đại khả
+năng **phân biệt cross-user** (population-level) — đúng thứ AUC thưởng, nhưng trực
+giao (hoặc làm loãng) với **xếp hạng nội-user** mà uAUC đo.
+
+**Bằng chứng ngay trong số liệu của luận văn.** Chênh Step 1 → Step 2 (mục 3.1):
+**AUC +0.0364** nhưng **uAUC chỉ +0.0031** (gần như phẳng). Cùng một chữ ký:
+tín hiệu collaborative bơm vào chủ yếu chảy vào AUC, không vào uAUC. Trên test,
+uAUC tổng 0.7041 còn bị **cold kéo xuống** (0.6372, 51/224 user) trong khi warm
+vẫn giữ 0.7145.
+
+**Diễn giải trung thực (tránh overclaim).** Chênh uAUC −0.013 so với vanilla nằm
+**sát biên nhiễu seed (±0.01)** và đây là **một lần chạy đơn** trên nhánh khác.
+Kết luận đúng là: *"CoRA cải thiện AUC rõ rệt nhưng **không cải thiện** uAUC"* —
+**không** phải *"CoRA làm hại uAUC"*. Muốn khẳng định chiều nào cần chạy nhiều seed.
+
+**Hàm ý cho hướng cải tiến.** Nghịch lý này củng cố chẩn đoán cốt lõi: mọi cơ chế
+cross-user (CoRA, text prior, popularity) đều nâng được AUC nhưng **không chạm tới
+tín hiệu within-user** — vốn bị nghẹt ở đường nén Q-Former. Để tăng uAUC cần một
+mục tiêu **nhắm thẳng vào thứ tự nội-user** ở tầng căn chỉnh (loss
+rank-preserving collaborative alignment, nhánh `feat/rank-preserving-alignment`),
+chứ không phải thêm tín hiệu cross-user.
+
 ---
 
 ## 4. So sánh với các công trình liên quan
