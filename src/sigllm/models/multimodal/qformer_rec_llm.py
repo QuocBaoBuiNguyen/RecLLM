@@ -113,6 +113,8 @@ class QRecLLM(Rec2Base):
         tuning_step=None,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
+        align_rank_loss_weight=0.0,
+        align_rank_loss_tau=1.0,
         cf_injection_mode="soft_token",
         cora_alpha=16.0,
         cora_target_modules=("q_proj", "v_proj"),
@@ -133,6 +135,17 @@ class QRecLLM(Rec2Base):
                 f"(tau={self.ranking_loss_tau}). Needs a user-grouped batch sampler "
                 f"to be effective.",
             )
+
+        # Rank-preserving ALIGNMENT loss (opt-in). Distinct from ranking_loss
+        # above: that BPR shapes the LLM's OUTPUT logit; this one reads a scalar
+        # off the ALIGNED CF soft tokens (pre-LLM) and imposes per-user BPR on
+        # THEM, forcing the collaborative alignment itself to preserve
+        # within-user ordering (the quantity uAUC measures). weight=0.0 ->
+        # bit-for-bit unchanged. The head is built in `_init_align_rank_head`
+        # (needs the LLM hidden size, so after `_init_llm_model`).
+        self.align_rank_loss_weight = float(align_rank_loss_weight)
+        self.align_rank_loss_tau = float(align_rank_loss_tau)
+        self.align_rank_head = None
 
         self.proj_token_num = proj_token_num
         self._has_logged_trainable_stats = False
@@ -191,6 +204,7 @@ class QRecLLM(Rec2Base):
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
         self._init_cf_injection()
+        self._init_align_rank_head()
         self._apply_tuning_step_policy()
 
     def _init_rec_model(self, rec_model, rec_config, pretrained_rec, freeze_rec):
@@ -343,6 +357,29 @@ class QRecLLM(Rec2Base):
             f"mode={self.cf_injection_mode}, hooked={n} modules, "
             f"alpha={self.cora_alpha}, targets={list(self.cora_target_modules)}, "
             f"trainable_params={count_trainable_parameters(self.cf_injector)}",
+        )
+
+    def _init_align_rank_head(self):
+        """Build the auxiliary head for the rank-preserving alignment loss.
+
+        Reads a scalar CTR-like score off the aligned CF soft tokens
+        (``CF_emb``, ``[B, Q, H]`` pooled over queries) so a per-user BPR term
+        can force the ALIGNED representation to preserve within-user ordering.
+        Only built when the loss is enabled; a fresh ``nn.Linear`` is trainable
+        by default, and the step-2 policy already leaves non-LoRA modules
+        unfrozen, so it co-trains with the Q-Former/projection at Step 2. Kept
+        in fp32 so the ranking score is tie-free.
+        """
+        if self.align_rank_loss_weight <= 0.0:
+            self.align_rank_head = None
+            return
+        H = int(self.llm_model.config.hidden_size)
+        self.align_rank_head = nn.Linear(H, 1)
+        log_step(
+            "Rank-preserving alignment loss ACTIVE",
+            f"aux per-user BPR on the aligned CF tokens "
+            f"(weight={self.align_rank_loss_weight}, tau={self.align_rank_loss_tau}). "
+            f"Needs a user-grouped batch sampler, same as ranking_loss.",
         )
 
     def _apply_tuning_step_policy(self):
@@ -821,7 +858,7 @@ class QRecLLM(Rec2Base):
                 return_dict=True,
             )
 
-    def calculate_recommendation_loss(self, outputs, label_tokens, batch_data, ans_map):
+    def calculate_recommendation_loss(self, outputs, label_tokens, batch_data, ans_map, cf_emb=None):
         pos_id = self.llm_tokenizer(ans_map[1], add_special_tokens=False).input_ids[0]
         neg_id = self.llm_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
         label_seq_len = label_tokens.input_ids.shape[-1]
@@ -844,9 +881,26 @@ class QRecLLM(Rec2Base):
             bpr = self._per_user_pairwise_loss(margin, batch_data['UserID'], labels)
             loss = loss + self.ranking_loss_weight * bpr
 
+        # Rank-preserving ALIGNMENT term (opt-in, training only). Reads a scalar
+        # off the aligned CF soft tokens (cf_emb: [B, Q, H], pooled over queries)
+        # and imposes the SAME per-user BPR on THEM — so the collaborative
+        # alignment itself, not just the LLM's Yes/No verdict, is pushed to
+        # preserve within-user ordering. Targets uAUC at the alignment level.
+        # fp32 score keeps the ranking tie-free; needs a user-grouped sampler.
+        if (self.training and self.align_rank_loss_weight > 0.0
+                and self.align_rank_head is not None and cf_emb is not None
+                and 'UserID' in batch_data):
+            pooled = cf_emb.mean(dim=1).float()                       # [B, Q, H] -> [B, H]
+            align_score = self.align_rank_head(pooled).squeeze(-1)    # [B]
+            align_bpr = self._per_user_pairwise_loss(
+                align_score, batch_data['UserID'], labels,
+                tau=self.align_rank_loss_tau,
+            )
+            loss = loss + self.align_rank_loss_weight * align_bpr
+
         return loss
 
-    def _per_user_pairwise_loss(self, scores, users, labels):
+    def _per_user_pairwise_loss(self, scores, users, labels, tau=None):
         """Per-user pairwise BPR — a differentiable surrogate for uAUC.
 
         For every (positive, negative) pair belonging to the SAME user inside
@@ -881,7 +935,8 @@ class QRecLLM(Rec2Base):
         # -log sigmoid(x) = softplus(-x), numerically stable. Zero out the
         # invalid entries so they contribute nothing to the per-user sums.
         valid_f = valid.to(scores.dtype)
-        pair_losses = nn.functional.softplus(-diff / self.ranking_loss_tau) * valid_f
+        tau = self.ranking_loss_tau if tau is None else tau
+        pair_losses = nn.functional.softplus(-diff / tau) * valid_f
 
         # Each pair (i, j) belongs to user users[i] (== users[j]). Collapse the
         # neg axis, then scatter-add rows into their user bucket so every user
@@ -963,11 +1018,14 @@ class QRecLLM(Rec2Base):
             )
 
         llm_embeds, llm_atts = self.wrap_prompt_with_soft_tokens_v2(rec_embeds, rec_atts, batch_data, prompt_template)
-        return llm_embeds, llm_atts
+        # Also surface the aligned CF soft tokens (pre-LLM) for the
+        # rank-preserving alignment loss; None in text-only / no-CF paths.
+        cf_emb = rec_embeds.get("CF_emb") if isinstance(rec_embeds, dict) else None
+        return llm_embeds, llm_atts, cf_emb
 
     def generate_for_samples(self, samples, return_all=False):
         prompt = self.prompt_list[0]
-        input_embeds, input_atts = self.build_llm_inputs_from_prompt_v2(prompt, samples)
+        input_embeds, input_atts, cf_emb = self.build_llm_inputs_from_prompt_v2(prompt, samples)
         label_embeds, label_tokens, ans_map = self.build_llm_outputs_from_labels(samples)
 
         full_embeds, full_atts = self.assemble_llm_sequences(
@@ -977,7 +1035,7 @@ class QRecLLM(Rec2Base):
         targets = self.prepare_llm_targets(input_atts, label_tokens)
 
         outputs = self.execute_llm_forward(full_embeds, full_atts, targets)
-        loss = self.calculate_recommendation_loss(outputs, label_tokens, samples, ans_map)
+        loss = self.calculate_recommendation_loss(outputs, label_tokens, samples, ans_map, cf_emb=cf_emb)
 
         logits = self.recommendation_scores(outputs, label_tokens, ans_map)
 
@@ -1028,7 +1086,7 @@ class QRecLLM(Rec2Base):
 
     def forward_v2(self, batch_data):
         prompt = self._sample_prompt()
-        input_embeds, input_atts = self.build_llm_inputs_from_prompt_v2(prompt, batch_data)
+        input_embeds, input_atts, cf_emb = self.build_llm_inputs_from_prompt_v2(prompt, batch_data)
         label_embeds, label_tokens, ans_map = self.build_llm_outputs_from_labels(batch_data)
 
         full_embeds, full_atts = self.assemble_llm_sequences(
@@ -1038,7 +1096,7 @@ class QRecLLM(Rec2Base):
         targets = self.prepare_llm_targets(input_atts, label_tokens)
         
         outputs = self.execute_llm_forward(full_embeds, full_atts, targets)
-        loss = self.calculate_recommendation_loss(outputs, label_tokens, batch_data, ans_map)
+        loss = self.calculate_recommendation_loss(outputs, label_tokens, batch_data, ans_map, cf_emb=cf_emb)
 
         return {"loss": loss}
 
@@ -1084,6 +1142,10 @@ class QRecLLM(Rec2Base):
         ranking_loss_weight = float(ranking_cfg.get("weight", 0.0))
         ranking_loss_tau = float(ranking_cfg.get("tau", 1.0))
 
+        align_rank_cfg = cfg.get("align_rank_loss") or {}
+        align_rank_loss_weight = float(align_rank_cfg.get("weight", 0.0))
+        align_rank_loss_tau = float(align_rank_cfg.get("tau", 1.0))
+
         cf_injection_mode = cfg.get("cf_injection_mode", "soft_token")
         cora_alpha = float(cfg.get("cora_alpha", 16.0))
         cora_target_modules = cfg.get("cora_target_modules", lora_target_modules)
@@ -1118,6 +1180,8 @@ class QRecLLM(Rec2Base):
             tuning_step=tuning_step,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
+            align_rank_loss_weight=align_rank_loss_weight,
+            align_rank_loss_tau=align_rank_loss_tau,
             cf_injection_mode=cf_injection_mode,
             cora_alpha=cora_alpha,
             cora_target_modules=cora_target_modules,

@@ -62,6 +62,18 @@ model:
     weight: 0.2
     tau: 1.0
 
+  # Rank-preserving collaborative-ALIGNMENT loss. Unlike ranking_loss (which
+  # shapes the LLM's Yes/No output margin), this reads a scalar off the ALIGNED
+  # CF soft tokens (pre-LLM) and imposes a per-user BPR on THEM, so the
+  # collaborative alignment itself preserves within-user ordering — the thesis
+  # contribution targeting uAUC. Teacher = ground-truth CTR labels (NOT the MF
+  # dot: standard-split MF uAUC ~0.626 is weaker than the pipeline, so distilling
+  # it would hurt). weight=0.0 -> disabled, bit-for-bit unchanged. Requires
+  # run.user_grouped_batch (same as ranking_loss). Set weight ~0.2 to activate.
+  align_rank_loss:
+    weight: 0.0
+    tau: 1.0
+
   proj_token_num: ${model.qformer_config.num_queries}
 
   # CHANGE A: CoRA-style collaborative injection. Controls how the Q-Former's
