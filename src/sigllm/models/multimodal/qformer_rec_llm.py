@@ -887,7 +887,14 @@ class QRecLLM(Rec2Base):
         # alignment itself, not just the LLM's Yes/No verdict, is pushed to
         # preserve within-user ordering. Targets uAUC at the alignment level.
         # fp32 score keeps the ranking tie-free; needs a user-grouped sampler.
-        if (self.training and self.align_rank_loss_weight > 0.0
+        # Only at Step 2 (CIE): that is where the Q-Former + projection (the
+        # alignment) are trainable. At Step 1 the prompt is text-only and those
+        # modules are frozen, yet cf_emb is still populated when
+        # cf_injection_mode carries a weight-delta path ("both"/"lora_weight"),
+        # so this guard is required — without it the loss fires on the frozen
+        # Step-1 alignment and is both meaningless and error-prone.
+        if (self.training and self.tuning_step == 2
+                and self.align_rank_loss_weight > 0.0
                 and self.align_rank_head is not None and cf_emb is not None
                 and 'UserID' in batch_data):
             pooled = cf_emb.mean(dim=1).float()                       # [B, Q, H] -> [B, H]
@@ -946,10 +953,16 @@ class QRecLLM(Rec2Base):
 
         uniq_users, inv = torch.unique(users, return_inverse=True)
         n_users = uniq_users.numel()
-        user_loss_sum = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
-        user_pair_count = torch.zeros(n_users, dtype=scores.dtype, device=scores.device)
-        user_loss_sum.scatter_add_(0, inv, row_loss_sum)
-        user_pair_count.scatter_add_(0, inv, row_pair_count)
+        # scatter_add_ requires self, index and src to share device and (for
+        # self/src) dtype. `inv` follows `users`, `row_*` follow `scores`; force
+        # all three onto the accumulator's device/dtype so a device_map-placed
+        # head (fp32, possibly off the batch device) can't break the scatter.
+        acc_device, acc_dtype = scores.device, scores.dtype
+        inv = inv.to(acc_device)
+        user_loss_sum = torch.zeros(n_users, dtype=acc_dtype, device=acc_device)
+        user_pair_count = torch.zeros(n_users, dtype=acc_dtype, device=acc_device)
+        user_loss_sum.scatter_add_(0, inv, row_loss_sum.to(device=acc_device, dtype=acc_dtype))
+        user_pair_count.scatter_add_(0, inv, row_pair_count.to(device=acc_device, dtype=acc_dtype))
 
         has_pairs = user_pair_count > 0
         per_user_mean = user_loss_sum[has_pairs] / user_pair_count[has_pairs]
