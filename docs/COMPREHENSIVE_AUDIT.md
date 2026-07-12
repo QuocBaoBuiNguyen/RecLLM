@@ -724,10 +724,15 @@ Source: `ABLATION_RESULTS.md:258-277` (verified from SellaRec paper Table 1).
 | **SigLLM Vanilla** | Q-Former + LoRA | **0.7325** | **0.7170** | This work |
 | **SigLLM Instruction-aware** | Q-Former + LoRA + instruction | 0.7322 | 0.7131 | This work |
 | **SigLLM User soft tokens** | Q-Former + user channel + LoRA | 0.7336 | 0.7145 | This work |
+| **SigLLM + CoRA (bundle)** | Q-Former + multi-token CF + CoRA weight-delta + Qwen2-Instruct | **0.7508** | 0.7041 | This work (cai-tien-va-ket-qua.md) |
 
 → **Cùng split, cùng test set** (CoLLM/BinLLM/SellaRec dùng cùng OOD2 split).
 
-→ **SigLLM tied với CoLLM-MF**, below BinLLM (-0.011 uAUC) và SellaRec (-0.033 uAUC).
+→ **SigLLM Vanilla tied với CoLLM-MF** (uAUC 0.7170 vs 0.7179), below BinLLM (-0.011 uAUC) và SellaRec (-0.033 uAUC).
+
+→ **CoRA bundle: AUC cao nhất trong các biến thể SigLLM (0.7508, +0.018 vs Vanilla, trên cả CoLLM-MF và BinLLM về AUC) nhưng uAUC lại THẤP nhất (0.7041, −0.013 vs Vanilla).** AUC↑ uAUC↓ là dấu hiệu CoRA khuếch đại phân biệt cross-user (population-level) chứ không phải xếp hạng nội-user. Warm/cold breakdown (`cai-tien-va-ket-qua.md`): test_warm AUC 0.7830 / uAUC 0.7145; test_cold AUC 0.7039 / uAUC 0.6372 — uAUC tổng bị cold (51/224 user) kéo xuống.
+
+⚠️ **Lưu ý so sánh:** CoRA bundle là lần chạy đơn (single run) trên nhánh khác, và uAUC có seed-noise ±0.01 — chênh −0.013 so với Vanilla nằm sát mép nhiễu, KHÔNG nên kết luận "CoRA làm hại uAUC" mà chỉ "không cải thiện uAUC". Để so công bằng cần chạy nhiều seed.
 
 **No MLP-bridge baseline implemented on SigLLM internally** — chỉ có CoLLM-MF từ paper.
 
