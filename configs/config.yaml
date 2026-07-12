@@ -71,7 +71,7 @@ model:
   # it would hurt). weight=0.0 -> disabled, bit-for-bit unchanged. Requires
   # run.user_grouped_batch (same as ranking_loss). Set weight ~0.2 to activate.
   align_rank_loss:
-    weight: 0.0
+    weight: 0.2
     tau: 1.0
 
   proj_token_num: ${model.qformer_config.num_queries}
