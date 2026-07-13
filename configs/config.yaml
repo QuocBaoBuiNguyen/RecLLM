@@ -59,7 +59,11 @@ model:
   ranking_loss:
     # weight 0.5 pulled uAUC below the BCE baseline on ML-1M (BPR over-weighted,
     # eroding the BCE signal). 0.2 keeps BCE dominant with a gentle ranking nudge.
-    weight: 0.2
+    # Set to 0.0 to ISOLATE the rank-preserving alignment loss below: running
+    # both at 0.2 (0.4 total ranking pressure) regressed test uAUC 0.7170 ->
+    # 0.6915, matching the documented over-weighting effect. This run tests the
+    # alignment loss alone.
+    weight: 0.0
     tau: 1.0
 
   # Rank-preserving collaborative-ALIGNMENT loss. Unlike ranking_loss (which
