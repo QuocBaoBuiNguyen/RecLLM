@@ -111,6 +111,8 @@ class QRecLLM(Rec2Base):
         lora_dropout=0.05,
         tuning_step=None,
         user_conditioned=False,
+        warm_token=False,
+        pretrained_item_llm_emb=None,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -142,6 +144,10 @@ class QRecLLM(Rec2Base):
         self.lora_dropout = float(lora_dropout)
         self.tuning_step = tuning_step
         self.user_conditioned = bool(user_conditioned)
+        self.warm_token = bool(warm_token)
+        self.embed_placeholders = list(self.PLACEHOLDERS_FOR_EMBED)
+        if self.warm_token and "<Warm_ID" not in self.embed_placeholders:
+            self.embed_placeholders = ["<ItemIdList>", "<Warm_ID>", "<TargetItemID>"]
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
         # Yes/No margin; align_rank_loss shapes the aligned CF soft tokens. Both
@@ -190,6 +196,7 @@ class QRecLLM(Rec2Base):
             d_user=rec_config.embedding_size,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
+        self._init_warm_token(pretrained_item_llm_emb)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
         self._apply_tuning_step_policy()
         # Built after the LLM (reads hidden_size) and after the step policy so it
@@ -326,9 +333,14 @@ class QRecLLM(Rec2Base):
             self.qformer.train = disabled_train
             self.llm_proj.eval()
             self.llm_proj.train = disabled_train
+            if getattr(self, "warm_proj", None) is not None:
+                for p in self.warm_proj.parameters():
+                    p.requires_grad = False
+                self.warm_proj.eval()
+                self.warm_proj.train = disabled_train
             log_step(
                 "Tuning step 1",
-                "LoRA trainable; Q-Former, projection, MF and base LLM all frozen.",
+                "LoRA trainable; Q-Former, projection, warm_proj, MF and base LLM all frozen.",
             )
 
         elif int(step) == 2:
@@ -349,9 +361,13 @@ class QRecLLM(Rec2Base):
             for p in self.llm_proj.parameters():
                 p.requires_grad = True
             self.llm_proj.train()
+            if getattr(self, "warm_proj", None) is not None:
+                for p in self.warm_proj.parameters():
+                    p.requires_grad = True
+                self.warm_proj.train()
             log_step(
                 "Tuning step 2",
-                "Q-Former + projection trainable; LoRA, base LLM and MF frozen.",
+                "Q-Former + projection + warm_proj trainable; LoRA, base LLM and MF frozen.",
             )
 
         else:
@@ -481,6 +497,35 @@ class QRecLLM(Rec2Base):
         log_step("Loading Projection Done",
                 f"d_q={d_q}, H={H}, Q={self.proj_token_num}")
 
+    def _init_warm_token(self, pretrained_item_llm_emb):
+        if not self.warm_token:
+            self.item_llm_emb = None
+            self.warm_proj = None
+            return
+
+        if not pretrained_item_llm_emb or not os.path.exists(pretrained_item_llm_emb):
+            raise FileNotFoundError(f"warm_token=True but pretrained_item_llm_emb not found: {pretrained_item_llm_emb}")
+
+        H = int(self.llm_model.config.hidden_size)
+        blob = torch.load(pretrained_item_llm_emb, map_location="cpu")
+        table = blob["item_llm_emb"] if isinstance(blob, dict) else blob
+        table = table.float()
+
+        if table.size(-1) != H:
+            raise ValueError(f"pretrained_item_llm_emb has hidden size {table.size(-1)}, expected {H}")
+
+        self.register_buffer("item_llm_emb", table.to(self.device), persistent=False)
+        self.warm_proj = nn.Sequential(nn.Linear(H, H), nn.LayerNorm(H)).to(self.device)
+        nn.init.normal_(self.warm_proj[0].weight, std=0.02)
+        nn.init.zeros_(self.warm_proj[0].bias)
+        nn.init.constant_(self.warm_proj[1].weight, H ** -0.5)
+        nn.init.zeros_(self.warm_proj[1].bias)
+        log_step(
+            "Warm token active", 
+            f"<Warm_ID> injects warm_proj(e^L_item) [table={tuple(table.shape)}] into LLM embedding space. "
+            f"Carries LLM semantic knowledge for cold-start items."
+        )
+
     def _log_trainable_module_stats(self):
         if self._has_logged_trainable_stats:
             return
@@ -593,7 +638,9 @@ class QRecLLM(Rec2Base):
         self.rec_encoder.to("cpu")
         self.rec_encoder.float()
     
-    def get_placeholder_order(self, prompt: str, placeholders=PLACEHOLDERS_FOR_EMBED):
+    def get_placeholder_order(self, prompt: str, placeholders=None):
+        if placeholders is None:
+            placeholders = getattr(self, "embed_placeholders", self.PLACEHOLDERS_FOR_EMBED)
         positions = []
         for ph in placeholders:
             pos = prompt.find(ph)
@@ -669,6 +716,13 @@ class QRecLLM(Rec2Base):
             if self.ablate_soft_tokens:
                 target_llm = torch.zeros_like(target_llm)
 
+            warm_llm = None
+            if self.warm_token and self.warm_proj is not None:
+                warm_cf = self.item_llm_emb[batch_data["TargetItemID"]]  # [B,H]
+                warm_llm = self.warm_proj(warm_cf).unsqueeze(1)
+                if self.ablate_soft_tokens:
+                    warm_llm = torch.zeros_like(warm_llm)
+
             interacted_llm_flat = None
             merged_flat = None
 
@@ -721,6 +775,9 @@ class QRecLLM(Rec2Base):
                     "<ItemIDList>": item_mask_q,
                     "<TargetItemID>": ones_q
                 }
+                if self.warm_token and warm_llm is not None:
+                    ph2emb["<Warm_ID>"] = warm_llm
+                    ph2mask["<Warm_ID>"] = torch.ones((B, 1), device=device, dtype=item_mask.dtype)
 
                 merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, L*Q + Q, H]
                 full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)       # [B, L*Q + Q]
@@ -732,6 +789,7 @@ class QRecLLM(Rec2Base):
                 "User_emb": user_llm,                 # None while TEMP_DISABLED_USER_CF is active
                 "TargetItem_emb": target_llm,         # [B,Q,H]
                 "InteractedItems_embs": interacted_llm_flat,  # [B,L*Q,H] or None
+                "Warm_emb": warm_llm,                  # [B,1,H] or None
                 "merged_embs": merged_flat,             # [N,H] or None
             }
             self._log_information_flow(user_q, target_q, user_llm, target_llm, merged_flat)
@@ -755,6 +813,11 @@ class QRecLLM(Rec2Base):
         prompt_template = prompt_template.replace("<UserID>", "")
         prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
         # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
+
+        if self.warm_token:
+            prompt_template = prompt_template.replace("<Warm_ID>", unk_token)
+        else:
+            prompt_template = prompt_template.replace("<Warm_ID>", "")
 
         prompt_list = []
         for k in range(batch_size):
@@ -1180,6 +1243,8 @@ class QRecLLM(Rec2Base):
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
+        warm_token = bool(qformer_config.get("warm_token", False))
+        pretrained_item_llm_emb = qformer_config.get("item_llm_emb_path", None)
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1226,6 +1291,8 @@ class QRecLLM(Rec2Base):
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
             user_conditioned=user_conditioned,
+            warm_token=warm_token,
+            pretrained_item_llm_emb=pretrained_item_llm_emb,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,

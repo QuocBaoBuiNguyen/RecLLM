@@ -147,9 +147,11 @@ def train_step(
     w_itg: float = 1.0,
     w_ii: float = 1.0,
     w_ui: float = 0.0,
+    w_llm: float = 0.0,
     tau_itc: float = 0.07,
     tau_ii: float = 0.07,
     tau_ui: float = 0.07,
+    tau_llm: float = 0.07,
     debug_batch: bool = False,
 ):
     """BLIP-2 stage-1 step: ITC + ITM + ITG on item-text samples, plus the
@@ -167,11 +169,13 @@ def train_step(
         "L_itg": zero,
         "L_ii": zero,
         "L_ui": zero,
+        "L_llm": zero,
         "itc_top1": zero.detach(),
         "itm_acc": zero.detach(),
         "itg_acc": zero.detach(),
         "ii_top1": zero.detach(),
         "ui_top1": zero.detach(),
+        "llm_top1": zero.detach(),
     }
     losses = []
 
@@ -197,6 +201,12 @@ def train_step(
             logs["L_itg"] = loss_itg
             logs["itg_acc"] = itg_acc.detach()
             losses.append(w_itg * loss_itg)
+
+        if w_llm > 0.00 and getattr(model, "has_llm_align", False):
+            loss_llm, llm_top1 = model.loss_llm_align(item_ids, tau=tau_llm)
+            logs["L_llm"] = loss_llm
+            logs["llm_top1"] = llm_top1.detach()
+            losses.append(w_llm * loss_llm)
 
     item_item_idx = _indices_for_type(batch, "item_item", device)
     if w_ii > 0.0 and item_item_idx.numel() >= 2:
@@ -230,9 +240,11 @@ def evaluate_loss(
     w_itg=1.0,
     w_ii=1.0,
     w_ui=0.0,
+    w_llm=0.0,
     tau_itc=0.07,
     tau_ii=0.07,
     tau_ui=0.07,
+    tau_llm=0.07,
 ):
     model.eval()
     device = next(model.parameters()).device
@@ -243,11 +255,13 @@ def evaluate_loss(
         "L_itg": 0.0,
         "L_ii": 0.0,
         "L_ui": 0.0,
+        "L_llm": 0.0,
         "itc_top1": 0.0,
         "itm_acc": 0.0,
         "itg_acc": 0.0,
         "ii_top1": 0.0,
         "ui_top1": 0.0,
+        "llm_top1": 0.0,
     }
     steps = 0
 
@@ -262,9 +276,11 @@ def evaluate_loss(
                 w_itg=w_itg,
                 w_ii=w_ii,
                 w_ui=w_ui,
+                w_llm=w_llm,
                 tau_itc=tau_itc,
                 tau_ii=tau_ii,
                 tau_ui=tau_ui,
+                tau_llm=tau_llm,
             )
             totals["loss"] += loss.item()
             for key in logs:
@@ -312,7 +328,26 @@ def train_qformer_stage1_representation(cfg):
     qformer_d_model = int(cfg.get("qformer_d_model", 768))
     qformer = _init_qformer(cfg, qformer_d_model, device)
 
-    model = QRecInstructAlignmentModel(mf, qformer).to(device)
+    w_llm = float(cfg.get("w_llm", 0.0))
+    tau_llm = float(cfg.get("tau_llm", 0.07))
+    item_llm_emb = None
+    d_llm = None
+    item_llm_emb_path = cfg.get("item_llm_emb_path", None)
+    if w_llm > 0.0:
+        if not item_llm_emb_path or not os.path.exists(item_llm_emb_path):
+            raise FileNotFoundError(f"item_llm_emb_path is required and must exist when w_llm > 0.0, but got: {item_llm_emb_path}")
+        blob = torch.load(item_llm_emb_path, map_location="cpu")
+        item_llm_emb = blob["item_llm_emb"] if isinstance(blob, dict) else blob
+        d_llm = int(item_llm_emb.size(-1))
+        log_step("Loaded item LLM embeddings", f"path={item_llm_emb_path}, shape={tuple(item_llm_emb.shape)}")
+
+    model = QRecInstructAlignmentModel(
+        mf=mf,
+        qformer=qformer,
+        item_llm_emb=item_llm_emb,
+        d_llm=d_llm,
+    ).to(device)
+
     opt = _init_optimizer(model, cfg.lr, weight_decay=cfg.weight_decay)
 
     outdir = cfg.output_dir
@@ -338,11 +373,13 @@ def train_qformer_stage1_representation(cfg):
             "L_itg": 0.0,
             "L_ii": 0.0,
             "L_ui": 0.0,
+            "L_llm": 0.0,
             "itc_top1": 0.0,
             "itm_acc": 0.0,
             "itg_acc": 0.0,
             "ii_top1": 0.0,
             "ui_top1": 0.0,
+            "llm_top1": 0.0,
         }
         train_steps = 0
         for batch in train_loader:
@@ -357,9 +394,11 @@ def train_qformer_stage1_representation(cfg):
                 w_itg=cfg.w_itg,
                 w_ii=cfg.w_ii,
                 w_ui=w_ui,
+                w_llm=w_llm,
                 tau_itc=cfg.tau_itc,
                 tau_ii=cfg.tau_ii,
                 tau_ui=tau_ui,
+                tau_llm=tau_llm,
                 debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
             )
             loss.backward()
@@ -383,28 +422,30 @@ def train_qformer_stage1_representation(cfg):
                 w_itg=cfg.w_itg,
                 w_ii=cfg.w_ii,
                 w_ui=w_ui,
+                w_llm=w_llm,
                 tau_itc=cfg.tau_itc,
                 tau_ii=cfg.tau_ii,
                 tau_ui=tau_ui,
+                tau_llm=tau_llm,
             )
             print(
                 f"epoch {epoch+1} | "
                 f"Train Loss={avg_train['loss']:.4f} "
                 f"L_itc={avg_train['L_itc']:.4f} L_itm={avg_train['L_itm']:.4f} "
                 f"L_itg={avg_train['L_itg']:.4f} L_ii={avg_train['L_ii']:.4f} "
-                f"L_ui={avg_train['L_ui']:.4f} "
+                f"L_ui={avg_train['L_ui']:.4f} L_llm={avg_train['L_llm']:.4f} "
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
                 f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} "
-                f"UI@1={avg_train['ui_top1']:.4f} | "
+                f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} | "
                 f"Val Loss={val_logs['loss']:.4f} "
                 f"L_itc={val_logs['L_itc']:.4f} L_itm={val_logs['L_itm']:.4f} "
                 f"L_itg={val_logs['L_itg']:.4f} L_ii={val_logs['L_ii']:.4f} "
-                f"L_ui={val_logs['L_ui']:.4f} "
+                f"L_ui={val_logs['L_ui']:.4f} L_llm={val_logs['L_llm']:.4f} "
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
                 f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
-                f"UI@1={val_logs['ui_top1']:.4f} | "
+                f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
-                f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} "
+                f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f}"
             )
 
@@ -464,8 +505,12 @@ def train_qformer_stage1_representation(cfg):
         w_itm=cfg.w_itm,
         w_itg=cfg.w_itg,
         w_ii=cfg.w_ii,
+        w_ui=w_ui,
+        w_llm=w_llm,
         tau_itc=cfg.tau_itc,
         tau_ii=cfg.tau_ii,
+        tau_ui=tau_ui,
+        tau_llm=tau_llm,
     )
     log_step(
         "Test results",

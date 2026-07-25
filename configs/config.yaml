@@ -80,6 +80,8 @@ model:
     num_heads: 8
     num_layers: 4
     user_conditioned: True
+    warm_token: True
+    item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
 
   rec_config:
     user_num: 839
@@ -144,9 +146,12 @@ run:
     w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
+    w_llm: 1.0
     tau_itc: 0.07
     tau_ii: 0.05
     tau_ui: 0.07
+    tau_llm: 0.07
+    item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
     weight_decay: 1e-3
     debug_batch: True
     debug_batch_max_steps: 10

@@ -26,7 +26,7 @@ class QRecInstructAlignmentModel(nn.Module):
     as a SigLLM-specific addition on top of the BLIP-2 head set.
     """
 
-    def __init__(self, mf, qformer) -> None:
+    def __init__(self, mf, qformer, item_llm_emb=None, d_llm=None) -> None:
         super().__init__()
         self.mf = mf
         self.qformer = qformer
@@ -37,6 +37,22 @@ class QRecInstructAlignmentModel(nn.Module):
         self.itm_head = nn.Linear(d_model, 2)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.lm_head.weight = qformer.text_word_embeddings.weight
+
+        self.has_llm_align = item_llm_emb is not None
+        if self.has_llm_align:
+            emb = item_llm_emb if isinstance(item_llm_emb, torch.Tensor) else item_llm_emb.weight
+            emb = emb.float
+            d_llm = int(d_llm) if d_llm is not None else int(emb.size(-1))
+            if emb.size(-1) != d_llm:
+                raise ValueError(
+                    f"Item LLM embedding dimension {emb.size(-1)} does not match "
+                    f"specified d_llm={d_llm}"
+                )
+            self.registerr_buffer("item_llm_emb", emb, persistent=False)
+            self.llm_align_proj = nn.Linear(d_model, d_llm)
+        else:
+            self.item_llm_emb = None
+            self.llm_align_proj = None
 
     @staticmethod
     def l2norm(x: torch.Tensor) -> torch.Tensor:
@@ -229,4 +245,26 @@ class QRecInstructAlignmentModel(nn.Module):
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
+        return loss, accuracy
+
+    def loss_llm_align(self, item_ids: torch.Tensor, tau: float = 0.07, symmetric: bool = True):
+        if not self.has_llm_align:
+            raise RuntimeError("LLM alignment loss requested but no LLM embeddings provided")
+
+        query_hidden = self.encode_item_queries(item_ids)
+        pooled = query_hidden.mean(dim=1)
+        q_vec = self.llm_align_proj(pooled)
+        t_vec = self.item_llm_emb[item_ids].to(q_vec.device)
+
+        q_norm = self.l2norm(q_vec)
+        t_norm = self.l2norm(t_vec)
+        sim_matrix = (q_norm @ t_norm.T) / tau
+        labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
+        loss_q2t = F.cross_entropy(sim_matrix, labels)
+        if symmetric:
+            loss_t2q = F.cross_entropy(sim_matrix.T, labels)
+            loss = (loss_q2t + loss_t2q) / 2.0
+        else:
+            loss = loss_q2t
+        accuracy = (sim_matrix.argmax(dim=1) == labels).float().mean()
         return loss, accuracy
