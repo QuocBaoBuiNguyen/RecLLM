@@ -52,6 +52,9 @@ def apply_step1_overrides(cfg):
     cfg.run_cfg.output_dir = step1.output_dir
     cfg.run_cfg.init_lr = step1.init_lr
     cfg.run_cfg.max_epoch = step1.max_epoch
+    if cfg.model_cfg.get("qformer_config") is not None:
+        cfg.model_cfg.qformer_config.warm_token = False
+        cfg.model_cfg.qformer_config.item_llm_emb_path = None
 
 
 @record
