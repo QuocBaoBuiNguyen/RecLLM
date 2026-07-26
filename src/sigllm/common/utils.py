@@ -48,5 +48,9 @@ def resolve_hf_model_path(path: str) -> tuple[str, bool]:
     """Return a resolved model path and whether it should be loaded locally."""
     candidate = Path(path).expanduser()
     if candidate.exists():
+        # When using local model directories, ensure HF hub stays offline
+        # to avoid treating the path as a repo id and triggering validation.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         return str(candidate), True
     return path, False
