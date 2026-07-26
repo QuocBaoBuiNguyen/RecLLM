@@ -887,7 +887,21 @@ class QRecLLM(Rec2Base):
             # emb_to_inject = torch.cat([rec_embeds['User_emb'], rec_embeds['TargetItem_emb']], dim=1)
             emb_to_inject = rec_embeds['TargetItem_emb']
             emb_to_inject = emb_to_inject.reshape(-1, emb_to_inject.shape[-1])
-            inputs_embeds[replaced_idx[:, 0], replaced_idx[:, 1]] = emb_to_inject.to(inputs_embeds.dtype)
+
+            # The prompt can contain both history and target placeholder tokens.
+            # Inject the target embeddings only into the final Q soft-token slots
+            # for each sample, which correspond to the target placeholder.
+            target_count = self.proj_token_num
+            for b in range(batch_size):
+                sample_positions = torch.nonzero(prompts_tokens.input_ids[b] == unk_token_id, as_tuple=False).squeeze(-1)
+                if sample_positions.numel() < target_count:
+                    continue
+                start = sample_positions.numel() - target_count
+                target_positions = sample_positions[start:]
+                if target_positions.numel() == 0:
+                    continue
+                src = emb_to_inject[b * target_count:(b + 1) * target_count].to(inputs_embeds.dtype)
+                inputs_embeds[b, target_positions] = src
 
         elif "<DCNFeature>" in prompt_ori:
             raise NotImplementedError("<DCNFeature> is not implemented in this version")
