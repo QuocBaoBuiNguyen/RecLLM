@@ -45,12 +45,31 @@ def get_abs_path(rel_path):
 
 
 def resolve_hf_model_path(path: str) -> tuple[str, bool]:
-    """Return a resolved model path and whether it should be loaded locally."""
+    """Return a resolved model path and whether it should be loaded locally.
+
+    Heuristics:
+    - If the string starts with '/', '~', './' or '../' treat it as a local
+      filesystem path (useful in Colab/containers where absolute paths point
+      to model dirs).
+    - If the expanded path exists, treat as local.
+
+    When a path is considered local we set offline env vars so the HF hub
+    and Transformers avoid remote validation/download attempts.
+    """
     candidate = Path(path).expanduser()
+
+    looks_like_local = False
+    if str(path).startswith(("~", "/", "./", "../")):
+        looks_like_local = True
+
+    resolved = str(candidate) if looks_like_local else path
     if candidate.exists():
-        # When using local model directories, ensure HF hub stays offline
-        # to avoid treating the path as a repo id and triggering validation.
+        looks_like_local = True
+        resolved = str(candidate)
+
+    if looks_like_local:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-        return str(candidate), True
+        return resolved, True
+
     return path, False
