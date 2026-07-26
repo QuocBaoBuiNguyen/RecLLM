@@ -118,7 +118,7 @@ def _load_finetuned_recllm(args):
     if step1 is not None and step1.get("prompt_path"):
         model_cfg.prompt_path = step1.prompt_path
 
-    user_num, item_num = _derive_user_item_num(args.data.pkl, args.item_num)
+    user_num, item_num = _derive_user_item_num(args.data_pkl, args.item_num)
     model_cfg.rec_config.user_num = int(user_num)
     model_cfg.rec_config.item_num = int(item_num)
 
