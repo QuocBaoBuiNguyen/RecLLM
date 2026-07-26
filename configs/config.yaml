@@ -34,7 +34,7 @@ model:
     # quality is (now addressed by 8 layers + user-item contrastive).
     r: 8
     alpha: 16
-    target_modules: [q_proj, v_proj]
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
     dropout: 0.05
 
   max_txt_len: 1024
@@ -98,6 +98,8 @@ datasets:
   movie_ood:
     path: "/content/SigLLM/data/processed/ml-1m/"
     data_type: default
+    min_positive_history: 2
+    warm_definition: "not_cold"
     build_info:
       storage: "/content/SigLLM/data/processed/ml-1m/"
 
@@ -204,7 +206,7 @@ run:
     prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie_text_only.txt"
     output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_lora_qwen2/"
     best_ckpt_name: "checkpoint_best.pth"
-    init_lr: 2e-4
+    init_lr: 8e-5
     max_epoch: 5
 
   qformer_stage3_step2:

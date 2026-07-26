@@ -33,10 +33,38 @@ class MovieOODDataset(RecBaseDataset):
 			raise ValueError(f"Annotation path {ann_path} does not exist.")
 		
 		df = pd.read_pickle(ann_path.with_suffix(".pkl")).reset_index(drop=True)
+
+		min_positive_history = 2
+
+		if hasattr(dataset_config, "get"):
+			try:
+				min_positive_history = int(dataset_config.get("min_positive_history", 2))
+			except Exception:
+				min_positive_history = 2
+
+		if min_positive_history > 1 and "his" in df.columns:
+			before = len(df)
+			df = df[df["his"].map(len) >= min_positive_history].reset_index(drop=True)
+			log_step(
+				"SeLLa-parity history filter",
+				f"kept {len(df)/{before}} rows (min_positive_history={min_positive_history})"
+			)
+
 		self.annotation = df.copy()
 
+		warm_definition = "not_cold"
+
+		if hasattr(dataset_config, "get"):
+			try:
+				warm_definition = str(dataset_config.get("warm_definition", "not_cold"))
+			except Exception:
+				warm_definition = "not_cold"
+
 		if subset == "warm":
-			self.annotation = df[df['warm'].isin([1])].copy()
+			if warm_definition == "threshold" and "warm" in df.columns:
+				self.annotation = df[df['warm'].isin([1])].copy()
+			else:
+				self.annotation = df[df['not_cold'].isin([1])].copy()
 
 		if subset == "cold":
 			self.annotation = df[df['not_cold'].isin([0])].copy()
