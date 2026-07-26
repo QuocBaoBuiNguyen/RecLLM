@@ -1,5 +1,6 @@
 
 import logging
+import profile
 import random
 from typing import Optional
 
@@ -61,7 +62,8 @@ class QRecLLM(Rec2Base):
     
     # TEMP_DISABLED_USER_CF: old prompt order included a user soft-token slot.
     # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
-    PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
+    # PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
+    PLACEHOLDERS_FOR_EMBED = ["<UserProfile>", "<TargetItemID>"]
 
     # Item-text instructions for the Q-Former. Must match the distribution
     # the Q-Former was trained on in stage 1 (see
@@ -134,8 +136,8 @@ class QRecLLM(Rec2Base):
         if self.ablate_soft_tokens:
             log_step(
                 "ABLATION ACTIVE",
-                "ablate_soft_tokens=True → target_llm and interacted_llm_flat "
-                "will be zeroed before injection (Information flow log will show "
+                "ablate_soft_tokens=True → target_llm and the <UserProfile> "
+                "hisotry-pooled tokens will be zeroed before injection (Information flow log will show "
                 "target_llm mean/std=0).",
             )
 
@@ -148,8 +150,8 @@ class QRecLLM(Rec2Base):
         self.user_conditioned = bool(user_conditioned)
         self.warm_token = bool(warm_token)
         self.embed_placeholders = list(self.PLACEHOLDERS_FOR_EMBED)
-        if self.warm_token and "<Warm_ID" not in self.embed_placeholders:
-            self.embed_placeholders = ["<ItemIdList>", "<Warm_ID>", "<TargetItemID>"]
+        if self.warm_token and "<Warm_ID>" not in self.embed_placeholders:
+            self.embed_placeholders = ["<UserProfile>", "<Warm_ID>", "<TargetItemID>"]
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
         # Yes/No margin; align_rank_loss shapes the aligned CF soft tokens. Both
@@ -587,7 +589,7 @@ class QRecLLM(Rec2Base):
             # but do not sample them while user CF is disabled.
             filted_prompts = [
                 raw_prompt for raw_prompt in raw_prompts
-                if raw_prompt.strip() and not raw_prompt.lstrip().startswith("# DISABLED_USER_CF")
+                if raw_prompt.strip() and not raw_prompt.lstrip().startswith("#")
             ]
             self.prompt_list = [prompt_template.format(p) for p in filted_prompts]
             log_step(f"Load {len(self.prompt_list)} training prompts")
@@ -611,7 +613,7 @@ class QRecLLM(Rec2Base):
     def to_be_trained(self):
         # TEMP_DISABLED_USER_CF: old trainable placeholders included "<UserID>".
         # id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
-        id_terms = ["<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
+        id_terms = ["<UserProfile>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
         for prompt in self.prompt_list:
             for id_term in id_terms:
                 if id_term in prompt:
@@ -665,13 +667,13 @@ class QRecLLM(Rec2Base):
                 - 'UserID': (B,)
                 - 'TargetItemID': (B,)
                 - 'InteractedItemIDs_pad': (B, L)
-            feature_order (list): Order of features, e.g., ["<ItemIDList>", "<TargetItemID>"]
+            feature_order (list): Order of features, e.g., ["<UserProfile>", "<TargetItemID>"]
             
         Returns:
             rec_embeds (dict):
                 - 'User_emb': None while TEMP_DISABLED_USER_CF is active
                 - 'TargetItem_emb': (B, 1, H) - Individual target item representation
-                - 'InteractedItems_embs': (B, L, H) - Historical items (includes padding)
+                - 'UserProfile_emb': (B, L, H) - Historical items (includes padding)
                 - 'merged_embs': (N, H) - Flattened & filtered valid tokens for LLM input
             rec_atts: None (Placeholder for future attention masks)
         """
@@ -730,64 +732,51 @@ class QRecLLM(Rec2Base):
                 if self.ablate_soft_tokens:
                     warm_llm = torch.zeros_like(warm_llm)
 
-            interacted_llm_flat = None
+            profile_llm = None
             merged_flat = None
 
             has_interacted = "InteractedItemIDs_pad" in batch_data
             need_merge = (
                 has_interacted
                 and feature_order is not None
-                and "<ItemIDList>" in feature_order
+                and "<UserProfile>" in feature_order
                 and "<TargetItemID>" in feature_order
             )
 
             if need_merge:
                 ids = batch_data["InteractedItemIDs_pad"]  # [B,L]
-                L = ids.shape[1]
+                hist_cf = self.rec_encoder.item_encoder(ids)                   # [B*L,Q,H]
+                hist_mask = (ids != self.rec_encoder.padding_index)              # [B,L]
 
-                inter_cf = self.rec_encoder.item_encoder(ids)                              # [B,L,d_cf]
-                inter_cf_flat = inter_cf.reshape(B * L, -1)                               # [B*L,d_cf]
-                inter_ins_list = [ins for ins in ins_list for _ in range(L)]               # len B*L
+                profile_q = self.qformer(
+                    hist_cf, ins_list, user_cf=user_cf_for_q, source_mask=hist_mask
+                )
 
-                # Repeat each user's CF L times so every history item in the flat
-                # batch sees its owning user's conditioning vector.
-                user_cf_flat_for_q = None
-                if self.user_conditioned and user_cf_for_q is not None:
-                    user_cf_flat_for_q = (
-                        user_cf_for_q.unsqueeze(1).expand(-1, L, -1).reshape(B * L, -1)
-                    )
-
-                inter_q_flat = self.qformer(
-                    inter_cf_flat, inter_ins_list, user_cf=user_cf_flat_for_q,
-                )                                                                          # [B*L,Q,d_model]
-                inter_llm_flat2 = self.llm_proj(inter_q_flat)                         # [B*L,Q,H]
+                profile_llm = self.llm_proj(profile_q)                          # [B,L,Q,H]
+                
                 if self.ablate_soft_tokens:
-                    inter_llm_flat2 = torch.zeros_like(inter_llm_flat2)
-                inter_llm = inter_llm_flat2.reshape(B, L, Q, H)                       # [B,L,Q,H]
-                interacted_llm_flat = inter_llm.reshape(B, L * Q, H)                  # [B,L*Q,H]
+                    profile_llm = torch.zeros_like(profile_llm)
 
                 # mask expand theo Q
-                item_mask = (ids != self.rec_encoder.padding_index).long()                # [B,L]
-                item_mask_q = item_mask.unsqueeze(-1).repeat(1, 1, Q).reshape(B, L * Q)   # [B,L*Q]
-                ones_q = torch.ones((B, Q), device=device, dtype=item_mask.dtype)         # [B,Q]
+                ones_q = torch.ones((B, Q), device=device, dtype=torch.long)
 
                 ph2emb = {
                     # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llm.
                     # "<UserID>": user_llm,                 # [B,Q,H]
-                    "<ItemIDList>": interacted_llm_flat,  # [B,L*Q,H]
+                    "<UserProfile>": profile_llm,  # [B,L*Q,H]
                     "<TargetItemID>": target_llm          # [B,Q,H]
                 }
                 ph2mask = {
                     # "<UserID>": ones_q,
-                    "<ItemIDList>": item_mask_q,
+                    "<UserProfile>": ones_q,
                     "<TargetItemID>": ones_q
                 }
                 if self.warm_token and warm_llm is not None:
-                    ph2emb["<Warm_ID>"] = warm_llm
-                    ph2mask["<Warm_ID>"] = torch.ones((B, 1), device=device, dtype=item_mask.dtype)
+                    ph2emb["<Warm_ID>"] = warm_llm          # [B,1,H]
+                    ph2mask["<Warm_ID>"] = torch.ones((B, 1), device=device, dtype=torch.long)
 
-                merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, L*Q + Q, H]
-                full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)       # [B, L*Q + Q]
+                merged_embeds = torch.cat([ph2emb[ph] for ph in feature_order], dim=1)    # [B, sum_slots, H]
+                full_mask = torch.cat([ph2mask[ph] for ph in feature_order], dim=1)       # [B, sum_slots]
 
                 idx = torch.nonzero(full_mask, as_tuple=False)                            # [N,2]
                 merged_flat = merged_embeds[idx[:, 0], idx[:, 1]]                         # [N,H]
@@ -795,7 +784,7 @@ class QRecLLM(Rec2Base):
             rec_embeds = {
                 "User_emb": user_llm,                 # None while TEMP_DISABLED_USER_CF is active
                 "TargetItem_emb": target_llm,         # [B,Q,H]
-                "InteractedItems_embs": interacted_llm_flat,  # [B,L*Q,H] or None
+                "UserProfile_emb": profile_llm,  # [B,L*Q,H] or None
                 "Warm_emb": warm_llm,                  # [B,1,H] or None
                 "merged_embs": merged_flat,             # [N,H] or None
             }
@@ -819,6 +808,7 @@ class QRecLLM(Rec2Base):
         # prompt_template = prompt_template.replace("<UserID>", unk_seq)
         prompt_template = prompt_template.replace("<UserID>", "")
         prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
+        prompt_template = prompt_template.replace("<UserProfile>", unk_seq)
         # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
 
         if self.warm_token:
@@ -845,11 +835,11 @@ class QRecLLM(Rec2Base):
         
         if not self.has_print_prompt:
             preview_parts = []
-            if "<ItemIDList>" in prompt_ori and 'InteractedItemIDs_pad' in batch_data:
+            if "<UserProfile>" in prompt_ori and 'InteractedItemIDs_pad' in batch_data:
                 history_ids = batch_data['InteractedItemIDs_pad'][0].detach().cpu().tolist()
                 history_ids = [int(i) for i in history_ids if int(i) != self.rec_encoder.padding_index]
                 preview_parts.append(
-                    f"[ItemIDList ids={history_ids} soft_tokens={len(history_ids) * self.proj_token_num}]",
+                    f"[UserProfile pooled_over={len(history_ids)} history items soft_tokens={len(history_ids) * self.proj_token_num}]",
                 )
             if "<TargetItemID>" in prompt_ori and 'TargetItemID' in batch_data:
                 target_id = int(batch_data['TargetItemID'][0].detach().cpu().item())
@@ -876,7 +866,7 @@ class QRecLLM(Rec2Base):
 
         replaced_idx = torch.nonzero(prompts_tokens.input_ids == unk_token_id)
 
-        has_history_placeholder = "<ItemIDList>" in prompt_ori
+        has_history_placeholder = "<UserProfile>" in prompt_ori
         has_target_placeholder = "<TargetItemID>" in prompt_ori
 
         if has_history_placeholder and has_target_placeholder and rec_embeds.get('merged_embs') is not None:
@@ -914,8 +904,9 @@ class QRecLLM(Rec2Base):
                 )
 
             target_soft_tokens = self.proj_token_num if "<TargetItemID>" in prompt_ori else 0
-            history_soft_tokens = valid_history_items * self.proj_token_num if "<ItemIDList>" in prompt_ori else 0
-            total_soft_tokens = target_soft_tokens + history_soft_tokens
+            history_soft_tokens = self.proj_token_num if "<UserProfile>" in prompt_ori else 0
+            warm_soft_tokens = 1 if (self.warm_token and "<Warm_ID>" in prompt_ori) else 0
+            total_soft_tokens = target_soft_tokens + history_soft_tokens + warm_soft_tokens
             sample_unk_slots = int((prompts_tokens.input_ids[0] == unk_token_id).sum().item())
 
             log_step(
@@ -1050,7 +1041,7 @@ class QRecLLM(Rec2Base):
         binary_logits = torch.stack(
             [prediction_logits[:, neg_id], prediction_logits[:, pos_id]],
             dim=1,
-        )
+        ).float()
         labels = batch_data['label'].long()
 
         loss = nn.functional.cross_entropy(binary_logits, labels)

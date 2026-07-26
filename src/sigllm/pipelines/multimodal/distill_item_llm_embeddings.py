@@ -1,22 +1,26 @@
 import argparse
 import os
-from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import torch
-from sigllm.datasets.data_preprocessing import LOGGER
+from sigllm.common.utils import resolve_hf_model_path
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from sigllm.common.logging_utils import NotebookLogger
-from sigllm.common.utils import resolve_hf_model_path
 
 DISTILL_TEMPLATE = (
     "The movie is described by the following metadata. {item_text} "
-    "Summarize the movie's characteristics for the purpose of recommending it to a user."
+    "Summarize the movie's characteristics for recommendation."
 )
+
+LOGGER = NotebookLogger.rich_logger("sigllm.distill_item_llm")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Distill per-item LLM semantic embeddings")
+    parser.add_argument("--rec-cfg", default=None, help="Path to the recommendation config file (YAML).")
+    parser.add_argument("--rec-ckpt", default=None, help="Stage-3 Step-1 runner checkpoint ")
+    parser.add_argument("--options", nargs="+", default=None)
     parser.add_argument("--llm-model", required=True, help="HF path/dir of the base LLM")
     parser.add_argument("--data-pkl", required=True, help="Preprocessed pickle with columns iid,title,genres (e.g. training_ood2.pkl).")
     parser.add_argument("--item-num", type=int, required=True, help="Number of items to process (for testing).")
@@ -52,65 +56,141 @@ def build_item_texts(data_pkl: str, item_num: int, padding_index: int) -> dict[i
     LOGGER.info(f"Build item texts: %d/%d item id covered (missing ids get zero vector).", len(covered), item_num)
     return item_texts
 
-@torch.no_grad()
-def distill(args) -> None:
-    model_path, local_files_only = resolve_hf_model_path(args.llm_model)
+def _load_base_or_adapter(args):
+
+    if not args.llm_model:
+        raise ValueError("Missing --llm-model argument.")
     tokenizer = AutoTokenizer.from_pretrained(
-        model_path,
-        use_fast=True,
+        args.llm_model,
+        use_fast=False,
         trust_remote_code=True,
-        local_files_only=local_files_only,
     )
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     tokenizer.padding_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_path,
+        args.llm_model,
         device_map="auto",
         torch_dtype=torch.float16,
         trust_remote_code=True,
-        output_hidden_states=True,
-        local_files_only=local_files_only,
     )
+
+    source = "base"
+
     if args.lora_adapter_dir:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, args.lora_adapter_dir)
+        source = "adapter"
         LOGGER.info("Loaded LoRA adapter from %s", args.lora_adapter_dir)
     model.eval()
+    return model, tokenizer, source
+
+def _derive_user_item_num(data_pkl: str, item_num: int):
+    data_dir = os.path.dirname(os.path.abspath(data_pkl))
+    users, items = 0, item_num
+    for name in ("train_ood2.pkl", "valid_ood2.pkl", "test_ood2.pkl"):
+        p = os.path.join(data_dir, name)
+        if os.path.isfile(p):
+            df = pd.read_pickle(p)
+            users = max(users, int(df["uid"].max()) + 1)
+            items = max(items, int(df["iid"].max()) + 1)
+    return max(users, 1), max(items, item_num)
+
+def _load_finetuned_recllm(args):
+
+    from sigllm.common.config import Config
+    from sigllm.models.multimodal.qformer_rec_llm import QRecLLM
+
+    cfg = Config(SimpleNamespace(cfg_path=args.rec_cfg, options=args.options))
+    model_cfg = cfg.model_cfg
+
+    model_cfg.tuning_step = 1
+    model_cfg.ckpt = args.rec_ckpt
+
+    if model_cfg.get("qformer_config") is not None:
+        model_cfg.qformer_config.warm_token = False
+        model_cfg.qformer_config.item_llm_emb_path = None
+
+    step1 = cfg.run_cfg.get("qformer_stage3_step1") if cfg.run_cfg is not None else None
+    if step1 is not None and step1.get("prompt_path"):
+        model_cfg.prompt_path = step1.prompt_path
+
+    user_num, item_num = _derive_user_item_num(args.data.pkl, args.item_num)
+    model_cfg.rec_config.user_num = int(user_num)
+    model_cfg.rec_config.item_num = int(item_num)
+
+    model = QRecLLM.from_config(model_cfg)
+    model.eval()
+
+    LOGGER.info(
+        "Build fine-tuned RecLLM for distillation (LoRA loaded from %s).", args.rec_ckpt
+    )
+    return model.llm_model, model.llm_tokenizer, "finetuned"
+
+@torch.no_grad()
+def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_length, padding_index):
+    tokenizer.padding_size = "right"
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     hidden_size = int(model.config.hidden_size)
     device = next(model.parameters()).device
 
-    item_texts = build_item_texts(args.data_pkl, args.item_num, args.padding_index)
-    table = torch.zeros(args.item_num, hidden_size, dtype=torch.float32)
+    table = torch.zeros(item_num, hidden_size, dtype=torch.float32)
 
     ids = sorted(item_texts)
 
-    for start in range(0, len(ids), args.batch_size):
-        batch_ids = ids[start:start + args.batch_size]
-        prompts = [DISTILL_TEMPLATE.format(item_text=item_texts[iid]) for iid in batch_ids]
+    for start in range(0, len(ids), batch_size):
+        batch_ids = ids[start:start + batch_size]
+        prompts = [DISTILL_TEMPLATE.format(item_text=item_texts[i]) for i in batch_ids]
         tokens = tokenizer(
             prompts,
             return_tensors="pt",
             padding="longest",
             truncation=True,
-            max_length=args.max_length,
+            max_length=max_length,
             add_special_tokens=True,
         ).to(device)
 
         outputs = model(**tokens, output_hidden_states=True, return_dict=True)
-        last_hidden = outputs.hidden_states[-1]
-        last_idx = tokens.attention_mask.sum(dim=1) - 1
+        last_hidden = outputs.hidden_states[-1] # [B, T, H]
+        last_idx = tokens.attention_mask.sum(dim=1) - 1 # [B]
         batch_idx = torch.arange(last_hidden.size(0), device=device)
-        pooled = last_hidden[batch_idx, last_idx].float().cpu()
+        pooled = last_hidden[batch_idx, last_idx].float().cpu() # [B, H]
 
         for row, iid in enumerate(batch_ids):
             table[iid] = pooled[row]
 
         if (start // args.batch_size) % 20 == 0:
-            LOGGER.info("Distilled %d/%d items...", min(start + args.batch_size, len(ids)), len(ids))
+            LOGGER.info("Distilled %d/%d items...", min(start + batch_size, len(ids)), len(ids))
+    return table, hidden_size
+
+def distill(args) -> None:
+
+    finetuned = bool(args.rec_cfg and args.rec_ckpt)
+
+    if finetuned:
+        model, tokenizer, source = _load_finetuned_recllm(args)
+        llm_name = args.rec_ckpt
+    else:
+        if bool(args.rec_cfg) != bool(args.rec_ckpt):
+            raise ValueError("--rec-cfg and --rec-ckpt must be given together.")
+        model, tokenizer, source = _load_base_or_adapter(args)
+        llm_name = args.llm_model
+
+        if source == "base":
+            LOGGER.warning(
+                "Distilling from Base LLM. SeLLa distills from the Step-1 finetuned models"
+            )
+
+    item_texts = build_item_texts(args.data_pkl, args.item_num, args.padding_index)
+    table, hidden_size = _distill_table(
+        model, tokenizer, item_texts, args.item_num, args.batch_size, args.max_length, args.padding_index
+    )
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     torch.save(
@@ -118,7 +198,8 @@ def distill(args) -> None:
             "item_llm_emb": table,
             "item_num": args.item_num,
             "hidden_size": hidden_size,
-            "llm_model": args.llm_model,
+            "llm_model": llm_name,
+            "source": source,
             "normalized": False,
         },
         args.output,

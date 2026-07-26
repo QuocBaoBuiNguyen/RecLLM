@@ -232,13 +232,28 @@ class HFQFormerAdapter(nn.Module):
         )
         return tokens.input_ids.to(device), tokens.attention_mask.to(device)
 
-    def _project_cf(self, cf_vec: torch.Tensor):
-        if cf_vec.dim() != 2:
-            raise ValueError(f"Expected cf_vec to have shape [B, d_cf], got {tuple(cf_vec.shape)}")
-        encoder_hidden_states = self.proj_cf(cf_vec).unsqueeze(1)
-        encoder_attention_mask = torch.ones(
-            cf_vec.size(0), 1, dtype=torch.long, device=cf_vec.device
-        )
+    def _project_cf(self, cf_vec: torch.Tensor, source_mask: Optional[torch.Tensor] = None):
+        if cf_vec.dim() == 2:
+            cf_seq = cf_vec.unsqueeze(1)
+        elif cf_vec.dim() == 3:
+            cf_seq = cf_vec
+        else:
+            raise ValueError(f"Expected cf_vec shape [B, d_cf] or [B, 1, d_cf], got {tuple(cf_vec.shape)}")
+        encoder_hidden_states = self.proj_cf(cf_seq)
+        S = encoder_hidden_states.size(1)
+        if source_mask is None:
+            encoder_attention_mask = torch.ones(cf_vec.size(0), S, dtype=torch.long, device=cf_vec.device)
+        else:
+            if tuple(source_mask.shape) != (cf_vec.size(0), S):
+                raise ValueError(
+                    f"Expected source_mask shape [B, S] where S={S}, got {tuple(source_mask.shape)}"
+                )
+            source_mask = source_mask.long()
+            empty_rows = source_mask.sum(dim=1) == 0
+            if empty_rows.any():
+                source_mask = source_mask.clone()
+                source_mask[empty_rows, 0] = 1
+            encoder_attention_mask = source_mask
         return encoder_hidden_states, encoder_attention_mask
 
     def _build_query_tokens(
@@ -296,6 +311,7 @@ class HFQFormerAdapter(nn.Module):
         self,
         cf_vec: torch.Tensor,
         user_cf: Optional[torch.Tensor] = None,
+        source_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Queries-only forward over a CF (collaborative filtering) vector.
 
@@ -310,7 +326,7 @@ class HFQFormerAdapter(nn.Module):
         query_attention_mask = torch.ones(
             batch_size, query_tokens.size(1), dtype=torch.long, device=cf_vec.device
         )
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec)
+        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec, source_mask)
 
         outputs = self.qformer(
             input_ids=None,
@@ -357,6 +373,7 @@ class HFQFormerAdapter(nn.Module):
         causal_text: bool = False,
         max_text_length: Optional[int] = None,
         user_cf: Optional[torch.Tensor] = None,
+        source_mask: Optional[torch.Tensor] = None,
     ):
         """Joint forward returning ``(query_hidden, text_hidden, text_ids, text_mask)``.
 
@@ -364,8 +381,8 @@ class HFQFormerAdapter(nn.Module):
         block (used by ITG); the default is bidirectional (used by ITM and by
         the LLM-feeding ``forward``).
         """
-        if cf_vec.dim() != 2:
-            raise ValueError(f"Expected cf_vec to have shape [B, d_cf], got {tuple(cf_vec.shape)}")
+        if cf_vec.dim() not in (2, 3):
+            raise ValueError(f"Expected cf_vec shape [B, d_cf] or [B, 1, d_cf], got {tuple(cf_vec.shape)}")
 
         batch_size = cf_vec.size(0)
         text_list = self._normalize_text_input(text, batch_size)
@@ -408,12 +425,13 @@ class HFQFormerAdapter(nn.Module):
         cf_vec: torch.Tensor,
         instruction,
         user_cf: Optional[torch.Tensor] = None,
+        source_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """LLM-feeding mode: queries cross-attend to ``cf_vec`` while the text
         stream consumes ``instruction``. Returns query hidden states with
         ``out_proj`` applied: ``[B, num_queries, output_dim]``."""
 
         query_hidden, _, _, _ = self.forward_multimodal(
-            cf_vec, instruction, causal_text=False, user_cf=user_cf
+            cf_vec, instruction, causal_text=False, user_cf=user_cf, source_mask=source_mask
         )
         return self.out_proj(query_hidden)
