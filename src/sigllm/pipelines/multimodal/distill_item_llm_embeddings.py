@@ -12,7 +12,7 @@ from sigllm.common.utils import resolve_hf_model_path
 
 DISTILL_TEMPLATE = (
     "The movie is described by the following metadata. {item_text} "
-    "Summarize the movie's characteristics for the purpose of recommending it to a user. "
+    "Summarize the movie's characteristics for the purpose of recommending it to a user."
 )
 
 def parse_args():
@@ -103,7 +103,7 @@ def distill(args) -> None:
         outputs = model(**tokens, output_hidden_states=True, return_dict=True)
         last_hidden = outputs.hidden_states[-1]
         last_idx = tokens.attention_mask.sum(dim=1) - 1
-        batch_idx = torch.arrange(last_hidden.size(0), device=device)
+        batch_idx = torch.arange(last_hidden.size(0), device=device)
         pooled = last_hidden[batch_idx, last_idx].float().cpu()
 
         for row, iid in enumerate(batch_ids):
