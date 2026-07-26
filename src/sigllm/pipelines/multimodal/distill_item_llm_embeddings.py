@@ -38,7 +38,8 @@ def build_item_texts(data_pkl: str, item_num: int, padding_index: int) -> dict[i
         raise KeyError(f"Missing required columns in {data_pkl}: {missing}")
 
     item_texts: dict[int, str] = {}
-    for iid, title, genres in df["iid", "title", "genres"].drop_duplicates("iid").itertuples(index=False):
+    # Select columns with a list (avoid KeyError from using a tuple key)
+    for iid, title, genres in df[["iid", "title", "genres"]].drop_duplicates(subset="iid").itertuples(index=False):
         iid = int(iid)
         if iid == padding_index:
             continue
