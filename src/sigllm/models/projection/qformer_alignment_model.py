@@ -41,14 +41,14 @@ class QRecInstructAlignmentModel(nn.Module):
         self.has_llm_align = item_llm_emb is not None
         if self.has_llm_align:
             emb = item_llm_emb if isinstance(item_llm_emb, torch.Tensor) else item_llm_emb.weight
-            emb = emb.float
+            emb = emb.float()
             d_llm = int(d_llm) if d_llm is not None else int(emb.size(-1))
             if emb.size(-1) != d_llm:
                 raise ValueError(
                     f"Item LLM embedding dimension {emb.size(-1)} does not match "
                     f"specified d_llm={d_llm}"
                 )
-            self.registerr_buffer("item_llm_emb", emb, persistent=False)
+            self.register_buffer("item_llm_emb", emb, persistent=False)
             self.llm_align_proj = nn.Linear(d_model, d_llm)
         else:
             self.item_llm_emb = None
