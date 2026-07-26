@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 import pandas as pd
 import torch
@@ -7,6 +8,7 @@ from sigllm.datasets.data_preprocessing import LOGGER
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from sigllm.common.logging_utils import NotebookLogger
+from sigllm.common.utils import resolve_hf_model_path
 
 DISTILL_TEMPLATE = {
     "The movie is described by the following metadata. {item_text} "
@@ -51,17 +53,26 @@ def build_item_texts(data_pkl: str, item_num: int, padding_index: int) -> dict[i
 
 @torch.no_grad()
 def distill(args) -> None:
-    tokenizer = AutoTokenizer.from_pretrained(args.llm_model, use_fast=True, trust_remote_code=True)
+    model_path, local_files_only = resolve_hf_model_path(args.llm_model)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path,
+        use_fast=True,
+        trust_remote_code=True,
+        local_files_only=local_files_only,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     tokenizer.padding_side = "right"
 
-    model = AutoModelForCausalLM.from_pretrained(args.llm_model, 
-                                                 device_map="auto",
-                                                 torch_dtype=torch.float16,
-                                                 trust_remote_code=True,
-                                                 output_hidden_states=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        device_map="auto",
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
+        output_hidden_states=True,
+        local_files_only=local_files_only,
+    )
     if args.lora_adapter_dir:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, args.lora_adapter_dir)

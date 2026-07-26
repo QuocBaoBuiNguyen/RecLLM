@@ -31,6 +31,7 @@ from torch.utils.data import Subset
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizer
 
 from sigllm.common import EarlyStopping, NotebookLogger
+from sigllm.common.utils import resolve_hf_model_path
 from sigllm.common.config import Config
 from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
 from sigllm.datasets.qformer.qformer_loader import build_qformer_loader
@@ -110,7 +111,13 @@ def _init_qformer(cfg, device):
 
 
 def _init_llm(model_path, device):
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
+    model_path, local_files_only = resolve_hf_model_path(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path,
+        use_fast=False,
+        trust_remote_code=True,
+        local_files_only=local_files_only,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     llm = AutoModelForCausalLM.from_pretrained(
@@ -118,6 +125,7 @@ def _init_llm(model_path, device):
         device_map="auto",
         torch_dtype=torch.float16,
         trust_remote_code=True,
+        local_files_only=local_files_only,
     )
     for p in llm.parameters():
         p.requires_grad = False

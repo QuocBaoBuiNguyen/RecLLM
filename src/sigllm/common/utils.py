@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 import os
 from urllib.parse import urlparse
 
@@ -41,3 +42,11 @@ def is_url(url_or_filename):
 
 def get_abs_path(rel_path):
     return os.path.join(registry.get_path("library_root"), rel_path)
+
+
+def resolve_hf_model_path(path: str) -> tuple[str, bool]:
+    """Return a resolved model path and whether it should be loaded locally."""
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return str(candidate), True
+    return path, False

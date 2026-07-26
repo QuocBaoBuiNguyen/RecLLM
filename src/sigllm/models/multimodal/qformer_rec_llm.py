@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from sigllm.common.utils import resolve_hf_model_path
+
 import os
 
 from sigllm.common.logging_utils import NotebookLogger
@@ -223,9 +225,13 @@ class QRecLLM(Rec2Base):
     def _init_llm_model(self, llm_path):
         log_step(f"Loading LLM: {llm_path}")
         model_path = llm_path if llm_path else "./content/ckpt/llm/base"
+        model_path, local_files_only = resolve_hf_model_path(model_path)
 
         self.llm_tokenizer = AutoTokenizer.from_pretrained(
-            model_path, use_fast=False, trust_remote_code=True,
+            model_path,
+            use_fast=False,
+            trust_remote_code=True,
+            local_files_only=local_files_only,
         )
         if self.llm_tokenizer.pad_token is None:
             self.llm_tokenizer.pad_token = self.llm_tokenizer.eos_token
@@ -235,6 +241,7 @@ class QRecLLM(Rec2Base):
             device_map="auto",
             torch_dtype=torch.float16,
             trust_remote_code=True,
+            local_files_only=local_files_only,
         )
 
         for name, param in self.llm_model.named_parameters():
