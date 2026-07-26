@@ -47,7 +47,7 @@ class MovieOODDataset(RecBaseDataset):
 			df = df[df["his"].map(len) >= min_positive_history].reset_index(drop=True)
 			log_step(
 				"SeLLa-parity history filter",
-				f"kept {len(df)/{before}} rows (min_positive_history={min_positive_history})"
+				f"kept {len(df) / before:.4f} rows (min_positive_history={min_positive_history})"
 			)
 
 		self.annotation = df.copy()
