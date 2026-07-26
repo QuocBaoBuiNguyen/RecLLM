@@ -10,10 +10,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from sigllm.common.logging_utils import NotebookLogger
 from sigllm.common.utils import resolve_hf_model_path
 
-DISTILL_TEMPLATE = {
+DISTILL_TEMPLATE = (
     "The movie is described by the following metadata. {item_text} "
     "Summarize the movie's characteristics for the purpose of recommending it to a user. "
-}
+)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Distill per-item LLM semantic embeddings")
