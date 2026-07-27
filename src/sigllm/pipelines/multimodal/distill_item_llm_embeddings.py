@@ -165,7 +165,7 @@ def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_lengt
         for row, iid in enumerate(batch_ids):
             table[iid] = pooled[row]
 
-        if (start // args.batch_size) % 20 == 0:
+        if (start // batch_size) % 20 == 0:
             LOGGER.info("Distilled %d/%d items...", min(start + batch_size, len(ids)), len(ids))
     return table, hidden_size
 
