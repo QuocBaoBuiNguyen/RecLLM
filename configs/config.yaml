@@ -45,9 +45,12 @@ model:
   # (a differentiable AUC surrogate over the Yes/No margin). weight=0.0 -> the
   # original pointwise BCE. Requires run.user_grouped_batch so batches contain
   # same-user pos/neg pairs, otherwise the term has no pairs to act on.
-  # Kept at 0.0 here to ISOLATE the rank-preserving alignment loss below.
+  # ON: the eval metric is uAUC but pointwise BCE never asks for within-user
+  # ordering — nothing in the objective rewarded the soft tokens for carrying
+  # per-candidate signal. 0.5 keeps BCE primary (both terms start ~ln 2);
+  # tune 0.3–1.0.
   ranking_loss:
-    weight: 0.0
+    weight: 0.5
     tau: 1.0
 
   # Rank-preserving collaborative-ALIGNMENT loss. Unlike ranking_loss (which
@@ -58,8 +61,11 @@ model:
   # mode: the additive per-user shift cancels in uAUC but adds cross-user AUC
   # noise; this loss makes the shift earn within-user discrimination instead.
   # Gated to Step 2 (where Q-Former/proj are trainable). weight=0.0 -> disabled.
+  # ON (small): makes the ALIGNED soft tokens themselves — not just the LLM's
+  # Yes/No margin — preserve within-user ordering, so the channel carries
+  # per-candidate signal even where the frozen LLM under-attends it.
   align_rank_loss:
-    weight: 0.0
+    weight: 0.1
     tau: 1.0
 
   proj_token_num: ${model.qformer_config.num_queries}
@@ -300,12 +306,22 @@ run:
     early_stopping_min_delta: 1e-4
 
   qformer_stage3_step1:
-    # CoLLM Step 1 — train LoRA only on text-only prompts (no `<ItemIDList>` /
-    # `<TargetItemID>` placeholders). Q-Former + projection are frozen here;
-    # they will be unfrozen in Step 2. Only Step 1-specific overrides live
-    # here — everything else (optimizer schedule, warmup, batch sizes) is
-    # inherited from the top-level `run.*` defaults.
-    prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie_text_only.txt"
+    # CoLLM Step 1 — train LoRA with Q-Former + projection FROZEN (they are
+    # unfrozen in Step 2). Only Step 1-specific overrides live here —
+    # everything else (optimizer schedule, warmup, batch sizes) is inherited
+    # from the top-level `run.*` defaults.
+    #
+    # FULL prompt, not the text-only one. CoLLM used text-only here because
+    # its soft tokens were untrained at Step 1; ours come out of Stage 2
+    # already grounded in the LLM's reading space (w_align), so they carry
+    # signal from step 0. Training LoRA WITHOUT the soft-token slots taught it
+    # to answer from <ItemTitleList>/<TargetItemTitle> alone — then Step 2
+    # froze LoRA and could only rewrite a channel the adapted model had
+    # learned to ignore (the flat Step-2 uAUC). With the full prompt, LoRA
+    # learns to READ the channel in Step 1, and Step 2 improves what is
+    # written into it. Fall back to qformer_prompt_movie_text_only.txt to
+    # reproduce the original CoLLM recipe.
+    prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
     output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_lora_qwen2/"
     best_ckpt_name: "checkpoint_best.pth"
     init_lr: 8e-5
@@ -349,8 +365,11 @@ run:
   # (pos,neg) pairs for ranking_loss / align_rank_loss to act on.
   # enabled=false -> original random/distributed sampling (no behavior change).
   # Only affects map-style rec datasets (Stage 3); Stage 1/2 use their own loader.
+  # ON: required for ranking_loss / align_rank_loss above — with random
+  # batching, same-user (pos, neg) pairs are rare and both BPR terms silently
+  # return 0 on most batches.
   user_grouped_batch:
-    enabled: false
+    enabled: true
     items_per_user: 8
     seed: 0
 
