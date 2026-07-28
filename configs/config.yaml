@@ -126,7 +126,16 @@ run:
     # own text branch (no external BERT). Item-item contrastive (w_ii) is a
     # SigLLM-specific addition for co-watch collaborative signal.
     seed: 2025
-    batch_size: 256
+    # 1024, not 256. The three item_text objectives share one in-batch negative
+    # pool, and item_text is only ~5.9% of the flat sample list (item_item ~59%,
+    # user_item ~35%), so batch_size=256 gave n_item_text=15. At 15 candidates
+    # ITC saturates (@1 hit 0.79), ITM has almost no genuinely hard negative to
+    # mine from its 15x15 similarity matrix and sat at its trivial 2/3 baseline,
+    # and L_llm had 15 targets to separate and still stalled. 1024 puts
+    # n_item_text ~60 without touching the pkl composition (that would need a
+    # build_qformer_dataset rerun). Drop back to 256 if the item_item forward
+    # (~600 pairs/batch through encode_cf) does not fit the GPU.
+    batch_size: 1024
     num_workers: 4
     embedding_size: ${model.rec_config.embedding_size}
     user_num: ${model.rec_config.user_num}
@@ -142,9 +151,27 @@ run:
     max_item_item_pairs: null
     max_user_item_pairs: null
     include_user_item: True
-    lr: 5e-5
+    # Fixed permutation for val/test so their batches carry the same
+    # sample-type mix as shuffled train batches. Without it the builder's
+    # contiguous per-type blocks give eval batches ~250 item_text rows vs
+    # train's ~15, and since in-batch contrastive chance is 1/n, train and val
+    # retrieval numbers differ ~17x for purely mechanical reasons. Set to null
+    # to restore the old block ordering.
+    eval_permute_seed: 0
+    # sqrt-scaled with the 4x batch_size bump (5e-5 -> 1e-4). Steps per epoch
+    # drop 4x, so if L_repr now improves too slowly per epoch, raise `epoch`
+    # rather than pushing lr further.
+    lr: 1e-4
     w_itc: 1.0
-    w_itm: 1.0
+    # 0.2, not 1.0. ITM_acc was 0.689 train / 0.605-0.647 val against a trivial
+    # 0.667 baseline (its label mix is 1 positive : 2 negatives, so predicting
+    # all-negative scores 2/3) — i.e. no discriminative signal, and below trivial
+    # on val. It was also driving ~76% of the epoch-to-epoch L_repr delta while
+    # L_itc silently degraded, so it was steering checkpoint selection with pure
+    # noise. Keep it non-zero: it is cheap (reuses the ITC similarity matrix) and
+    # should recover once n_item_text is large enough for hard-negative mining to
+    # find real negatives. Raise back toward 1.0 once ITM_acc clears ~0.75.
+    w_itm: 0.2
     w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
@@ -158,8 +185,14 @@ run:
     tau_ui: 0.07
     # Softer than the other contrastives: even after centering, input-space
     # targets keep residual correlation (shared genres), and tau=0.07 was
-    # too sharp — LLM@1 sat at chance (~0.003) while ITC@1 learned.
-    tau_llm: 0.15
+    # too sharp — LLM@1 sat at chance (~0.003) while ITC@1 learned. 0.15 got
+    # LLM@1 to 3-5x chance but L_llm still plateaued ~0.33 nats below ln(n);
+    # 0.20 pairs with llm_emb_normalize=whiten below.
+    tau_llm: 0.20
+    # How the frozen item_llm_emb targets are conditioned before the cosine
+    # InfoNCE: none | center | whiten. See QRecInstructAlignmentModel.__init__
+    # for why centering alone left L_llm unable to fit even the train targets.
+    llm_emb_normalize: whiten
     # Must be distilled with --space input (LLM input-embedding space — the
     # space soft tokens are injected into). The last-hidden file stays on
     # model.qformer_config.item_llm_emb_path for the warm token.
@@ -205,6 +238,9 @@ run:
     # weighted low so the LM loss stays primary. Set 0.0 to disable.
     w_llm: 0.1
     tau_llm: ${run.qformer_stage1.tau_llm}
+    # Must stay tied to Stage 1: the keep-alive and the warm-started llm_proj
+    # have to reference the same target geometry.
+    llm_emb_normalize: ${run.qformer_stage1.llm_emb_normalize}
     item_llm_emb_path: ${run.qformer_stage1.item_llm_emb_path}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"

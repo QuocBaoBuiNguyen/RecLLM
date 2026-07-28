@@ -3,6 +3,65 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+LLM_EMB_NORMALIZERS = ("none", "center", "whiten")
+
+
+def normalize_item_llm_emb(emb: torch.Tensor, mode: str = "center") -> torch.Tensor:
+    """Condition the frozen item-LLM embedding bank for the cosine InfoNCE.
+
+    Shared by Stage 1 (``loss_llm_align``) and Stage 2 (the ``w_llm`` alignment
+    keep-alive). They MUST use the same mode: Stage 2 warm-starts ``llm_proj``
+    from Stage 1's ``llm_align_proj``, so if the two stages condition the bank
+    differently the keep-alive pulls the projection toward a different geometry
+    than the one Stage 1 aligned to and actively undoes the alignment.
+
+    ``center`` removes the common component. Mask-mean input embeddings share a
+    large one (prompt scaffold + genre tokens; off-diag cosine ~0.88 measured on
+    ml-1m), which collapses all targets into a narrow cone and leaves the
+    contrastive nothing to discriminate.
+
+    ``whiten`` additionally rescales each dimension to unit variance. Centering
+    alone was not enough on ml-1m: L_llm plateaued ~0.33 nats below ln(n) on
+    BOTH train and val — it could not fit even the training targets, so this is
+    target geometry rather than model capacity — while ITC on the same queries
+    reached ~2.3 nats. Residual per-dim variance is very uneven, so a handful of
+    high-variance dims decide the cosine and the rest carry no discriminative
+    budget. Full ZCA would also decorrelate, but needs a ``d_llm x d_llm``
+    eigendecomposition estimated from ~3k covered items, which is not reliably
+    conditioned.
+
+    Trade-off: every mode except ``none`` moves the target off the raw LLM
+    input-embedding direction, and Stage 2/3 inherit that geometry through
+    ``llm_align_proj`` -> ``llm_proj``. The loss only constrains direction (both
+    sides are l2-normalized) so scale is free, but fall back to ``center`` if
+    soft tokens regress at Stage 3.
+
+    Uncovered items (zero rows) are excluded from the statistics and stay zero,
+    so they remain distinguishable as "no text available".
+
+    Returns a new tensor; ``emb`` is not modified in place.
+    """
+    if mode not in LLM_EMB_NORMALIZERS:
+        raise ValueError(f"mode must be one of {LLM_EMB_NORMALIZERS}, got {mode!r}")
+
+    out = emb.float().clone()
+    if mode == "none":
+        return out
+
+    covered = out.norm(dim=-1) > 0
+    if not bool(covered.any()):
+        return out
+
+    centered = out[covered] - out[covered].mean(dim=0, keepdim=True)
+    # Needs >=2 covered rows: torch's std is Bessel-corrected, so a single row
+    # yields nan and would silently poison every target. One covered item is
+    # already all-zero after centering, so there is nothing to rescale anyway.
+    if mode == "whiten" and centered.size(0) >= 2:
+        centered = centered / centered.std(dim=0, keepdim=True).clamp(min=1e-6)
+    out[covered] = centered
+    return out
+
+
 class QRecInstructAlignmentModel(nn.Module):
     """Stage-1 Q-Former alignment with BLIP-2 ITC + ITM + ITG objectives,
     adapted for recommendation. The "I" in ITC/ITM/ITG stands for **item**:
@@ -26,7 +85,9 @@ class QRecInstructAlignmentModel(nn.Module):
     as a SigLLM-specific addition on top of the BLIP-2 head set.
     """
 
-    def __init__(self, mf, qformer, item_llm_emb=None, d_llm=None) -> None:
+    def __init__(
+        self, mf, qformer, item_llm_emb=None, d_llm=None, llm_emb_normalize="center"
+    ) -> None:
         super().__init__()
         self.mf = mf
         self.qformer = qformer
@@ -39,18 +100,12 @@ class QRecInstructAlignmentModel(nn.Module):
         self.lm_head.weight = qformer.text_word_embeddings.weight
 
         self.has_llm_align = item_llm_emb is not None
+        self.llm_emb_normalize = llm_emb_normalize
         if self.has_llm_align:
             emb = item_llm_emb if isinstance(item_llm_emb, torch.Tensor) else item_llm_emb.weight
-            emb = emb.float().clone()
-            # Center over covered items before the cosine InfoNCE: mask-mean
-            # input embeddings share a large common component (prompt scaffold
-            # + genre tokens; off-diag cosine ~0.88 measured on ml-1m), which
-            # collapses all targets into a narrow cone and leaves the
-            # contrastive nothing to discriminate. Uncovered items (zero rows)
-            # are excluded from the mean and stay zero.
-            covered = emb.norm(dim=-1) > 0
-            if covered.any():
-                emb[covered] = emb[covered] - emb[covered].mean(dim=0, keepdim=True)
+            # Stage 2's keep-alive must condition the bank identically — see
+            # normalize_item_llm_emb for why, and for the mode trade-offs.
+            emb = normalize_item_llm_emb(emb, llm_emb_normalize)
             d_llm = int(d_llm) if d_llm is not None else int(emb.size(-1))
             if emb.size(-1) != d_llm:
                 raise ValueError(

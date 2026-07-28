@@ -39,6 +39,7 @@ from sigllm.common.utils import resolve_hf_model_path
 from sigllm.common.config import Config
 from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
 from sigllm.datasets.qformer.qformer_loader import build_qformer_loader
+from sigllm.models.projection.qformer_alignment_model import normalize_item_llm_emb
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
 from sigllm.models.rec.matrix_factorization import MatrixFactorization
 
@@ -346,6 +347,10 @@ def train_qformer_stage2_generative(cfg):
 
     w_llm = float(cfg.get("w_llm", 0.0))
     tau_llm = float(cfg.get("tau_llm", 0.07))
+    # Must match run.qformer_stage1.llm_emb_normalize — the config wires both
+    # from one key. A mismatch makes the keep-alive pull llm_proj toward a
+    # different target geometry than the one Stage 1 aligned it to.
+    llm_emb_normalize = str(cfg.get("llm_emb_normalize", "center"))
     align_bank = None
     if w_llm > 0.0:
         emb_path = cfg.get("item_llm_emb_path")
@@ -360,15 +365,13 @@ def train_qformer_stage2_generative(cfg):
                 f"item_llm_emb hidden size {align_bank.size(-1)} != LLM hidden size {hidden_size}; "
                 "distill with --space input against the same LLM."
             )
-        # Same centering as Stage 1's alignment model: remove the common
-        # component (scaffold/genre tokens) so the cosine InfoNCE targets are
-        # separable. Uncovered items (zero rows) stay zero.
-        covered = align_bank.norm(dim=-1) > 0
-        if covered.any():
-            align_bank[covered] = align_bank[covered] - align_bank[covered].mean(dim=0, keepdim=True)
+        # Exactly the transform Stage 1's alignment model applied to the same
+        # bank — shared helper so the two stages cannot drift apart.
+        align_bank = normalize_item_llm_emb(align_bank, llm_emb_normalize)
         log_step(
             "Alignment keep-alive active",
-            f"w_llm={w_llm}, tau_llm={tau_llm}, bank={tuple(align_bank.shape)} from {emb_path}",
+            f"w_llm={w_llm}, tau_llm={tau_llm}, norm={llm_emb_normalize}, "
+            f"bank={tuple(align_bank.shape)} from {emb_path}",
         )
 
     trainable_params = [

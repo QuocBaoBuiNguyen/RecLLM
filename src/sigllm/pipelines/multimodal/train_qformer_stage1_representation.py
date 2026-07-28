@@ -1,4 +1,5 @@
 import argparse
+import math
 import random
 import torch
 from torch.optim import Adam
@@ -153,6 +154,23 @@ METRIC_GROUPS = {
 
 SAMPLE_TYPES = ("item_text", "item_item", "user_item")
 
+# In-batch retrieval terms and the sample type whose row count sets their chance
+# level. Used to derive ``gain_*`` (nats earned over a uniform predictor).
+RETRIEVAL_TERMS = (
+    ("itc", "item_text"),
+    ("llm", "item_text"),
+    ("ii", "item_item"),
+    ("ui", "user_item"),
+)
+
+# Terms summed into the selection metric L_repr.
+REPR_TERMS = ("L_itc", "L_itm", "L_itg", "L_llm")
+
+
+def _selection_weights(w_itc, w_itm, w_itg, w_llm):
+    """Weights applied to the ``L_repr`` selection metric."""
+    return {"L_itc": float(w_itc), "L_itm": float(w_itm), "L_itg": float(w_itg), "L_llm": float(w_llm)}
+
 
 class MetricAccumulator:
     """Average each metric over the batches where its sample type was present.
@@ -171,13 +189,16 @@ class MetricAccumulator:
     read at all.
     """
 
-    def __init__(self):
+    def __init__(self, weights=None):
         self.loss_total = 0.0
         self.steps = 0
         self.sums = {key: 0.0 for key in METRIC_GROUPS}
         self.active = {key: 0 for key in METRIC_GROUPS}
         self.n_sums = {group: 0.0 for group in SAMPLE_TYPES}
         self.n_active = {group: 0 for group in SAMPLE_TYPES}
+        # Weights for the L_repr selection metric. Default 1.0 per term keeps the
+        # old unweighted sum for callers that do not pass anything.
+        self.weights = dict(weights or {})
 
     def update(self, loss, logs, counts):
         self.loss_total += float(loss.item())
@@ -201,13 +222,27 @@ class MetricAccumulator:
             )
             out[f"frac_{group}"] = self.n_active[group] / self.steps if self.steps else 0.0
 
+        # Nats earned over a uniform predictor. An in-batch InfoNCE with n
+        # candidates scores ln(n) at chance, so ``ln(n) - L`` is the part of the
+        # loss the model actually produced. Unlike raw L_*, this is comparable
+        # across splits with different batch composition: train shuffles to ~15
+        # item_text rows per batch while a block-ordered eval loader gives ~250,
+        # and that alone moves L_itc by ~2.8 nats at identical model quality.
+        for key, group in RETRIEVAL_TERMS:
+            n = out[f"n_{group}"]
+            out[f"gain_{key}"] = math.log(n) - out[f"L_{key}"] if n > 1.0 else 0.0
+
         # Undiluted sum over the item_text objectives — exactly the terms whose
         # result Stage 2/3 inherit through the Q-Former body and the aligned
-        # projection. ``loss`` is NOT comparable to this: it stays averaged over
+        # projection. Weighted rather than raw so that damping a term in the loss
+        # also damps its vote here: w_itm < 1 exists because ITM can sit at its
+        # trivial 2/3 baseline, and an unweighted L_repr let that dead term drive
+        # most of the epoch-to-epoch delta while L_itc quietly degraded.
+        # ``loss`` is NOT comparable to this: it stays averaged over
         # every batch, so each term is implicitly weighted by how often its
         # sample type appears, which is an artifact of builder ordering rather
         # than a design choice.
-        out["L_repr"] = out["L_itc"] + out["L_itm"] + out["L_itg"] + out["L_llm"]
+        out["L_repr"] = sum(self.weights.get(key, 1.0) * out[key] for key in REPR_TERMS)
         return out
 
 
@@ -325,7 +360,7 @@ def evaluate_loss(
 ):
     model.eval()
     device = next(model.parameters()).device
-    accumulator = MetricAccumulator()
+    accumulator = MetricAccumulator(weights=_selection_weights(w_itc, w_itm, w_itg, w_llm))
 
     with torch.no_grad():
         for batch in loader:
@@ -387,6 +422,7 @@ def train_qformer_stage1_representation(cfg):
 
     w_llm = float(cfg.get("w_llm", 0.0))
     tau_llm = float(cfg.get("tau_llm", 0.07))
+    llm_emb_normalize = str(cfg.get("llm_emb_normalize", "center"))
     item_llm_emb = None
     d_llm = None
     item_llm_emb_path = cfg.get("item_llm_emb_path", None)
@@ -403,6 +439,7 @@ def train_qformer_stage1_representation(cfg):
         qformer=qformer,
         item_llm_emb=item_llm_emb,
         d_llm=d_llm,
+        llm_emb_normalize=llm_emb_normalize,
     ).to(device)
 
     opt = _init_optimizer(model, cfg.lr, weight_decay=cfg.weight_decay)
@@ -435,7 +472,9 @@ def train_qformer_stage1_representation(cfg):
 
     for epoch in range(cfg.epoch):
         model.train()
-        accumulator = MetricAccumulator()
+        accumulator = MetricAccumulator(
+            weights=_selection_weights(cfg.w_itc, cfg.w_itm, cfg.w_itg, w_llm)
+        )
         train_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
@@ -487,6 +526,8 @@ def train_qformer_stage1_representation(cfg):
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
                 f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} "
                 f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} "
+                f"g_itc={avg_train['gain_itc']:+.3f} g_llm={avg_train['gain_llm']:+.3f} "
+                f"g_ii={avg_train['gain_ii']:+.3f} g_ui={avg_train['gain_ui']:+.3f} "
                 f"n_it={avg_train['n_item_text']:.1f}(chance={1.0 / max(avg_train['n_item_text'], 1.0):.4f}) "
                 f"n_ii={avg_train['n_item_item']:.1f} n_ui={avg_train['n_user_item']:.1f} | "
                 f"Val Loss={val_logs['loss']:.4f} "
@@ -496,12 +537,15 @@ def train_qformer_stage1_representation(cfg):
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
                 f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
                 f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} "
+                f"g_itc={val_logs['gain_itc']:+.3f} g_llm={val_logs['gain_llm']:+.3f} "
+                f"g_ii={val_logs['gain_ii']:+.3f} g_ui={val_logs['gain_ui']:+.3f} "
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
                 f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} "
                 f"[SELECT] L_repr={val_logs['L_repr']:.4f} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
-                f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f}"
+                f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f} "
+                f"tau_llm={tau_llm:.3f} llm_emb_norm={llm_emb_normalize}"
             )
 
             metrics = {
