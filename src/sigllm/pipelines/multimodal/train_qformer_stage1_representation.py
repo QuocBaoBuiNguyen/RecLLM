@@ -200,6 +200,14 @@ class MetricAccumulator:
                 self.n_sums[group] / self.n_active[group] if self.n_active[group] else 0.0
             )
             out[f"frac_{group}"] = self.n_active[group] / self.steps if self.steps else 0.0
+
+        # Undiluted sum over the item_text objectives — exactly the terms whose
+        # result Stage 2/3 inherit through the Q-Former body and the aligned
+        # projection. ``loss`` is NOT comparable to this: it stays averaged over
+        # every batch, so each term is implicitly weighted by how often its
+        # sample type appears, which is an artifact of builder ordering rather
+        # than a design choice.
+        out["L_repr"] = out["L_itc"] + out["L_itm"] + out["L_itg"] + out["L_llm"]
         return out
 
 
@@ -402,13 +410,25 @@ def train_qformer_stage1_representation(cfg):
     outdir = cfg.output_dir
     os.makedirs(outdir, exist_ok=True)
     best_checkpoint_path = os.path.join(outdir, cfg.best_checkpoint_name)
+    # Select on the item_text objectives (L_itc + L_itm + L_itg + L_llm) rather
+    # than the full composite. The collaborative contrastives converge within
+    # ~5 epochs and then drift upward on validation, which vetoes later epochs
+    # that are still improving on text grounding and LLM alignment — the two
+    # things Stage 2/3 actually consume. Set selection_metric=val_loss to
+    # restore the old behaviour.
+    selection_metric = cfg.get("selection_metric", "val_L_repr")
+    selection_mode = cfg.get("selection_mode", "min")
     stopper = EarlyStopping(
-        ref_metric="val_loss",
-        monitor_mode="min",
+        ref_metric=selection_metric,
+        monitor_mode=selection_mode,
         patience=cfg.early_stopping_patience,
         min_delta=cfg.early_stopping_min_delta,
     )
-    log_step("Training setup", f"seed={cfg.seed}, output_dir={outdir}")
+    log_step(
+        "Training setup",
+        f"seed={cfg.seed}, output_dir={outdir}, "
+        f"selection={selection_metric} ({selection_mode})",
+    )
 
     w_ui = float(cfg.get("w_ui", 0.0))
     tau_ui = float(cfg.get("tau_ui", 0.07))
@@ -477,7 +497,8 @@ def train_qformer_stage1_representation(cfg):
                 f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
                 f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} "
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
-                f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} | "
+                f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} "
+                f"[SELECT] L_repr={val_logs['L_repr']:.4f} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f}"
@@ -501,18 +522,20 @@ def train_qformer_stage1_representation(cfg):
                 log_step("Saved new best checkpoint", f"epoch={epoch + 1}, path={best_checkpoint_path}")
             else:
                 best_epoch = stopper.best_full_metric["epoch"] if stopper.best_full_metric is not None else "n/a"
-                best_val_loss = stopper.best_metric_val
+                best_selected = stopper.best_metric_val
                 log_step(
                     "No validation improvement",
-                    f"counter={stopper.counter}, best_epoch={best_epoch}, best_val_loss={best_val_loss:.4f}",
+                    f"counter={stopper.counter}, best_epoch={best_epoch}, "
+                    f"best_{selection_metric}={best_selected:.4f}",
                 )
 
             if stopper.should_stop:
                 best_epoch = stopper.best_full_metric["epoch"] if stopper.best_full_metric is not None else "n/a"
-                best_val_loss = stopper.best_metric_val
+                best_selected = stopper.best_metric_val
                 log_step(
                     "Early stopping triggered",
-                    f"epoch={epoch + 1}, best_epoch={best_epoch}, best_val_loss={best_val_loss:.4f}",
+                    f"epoch={epoch + 1}, best_epoch={best_epoch}, "
+                    f"best_{selection_metric}={best_selected:.4f}",
                 )
                 break
 

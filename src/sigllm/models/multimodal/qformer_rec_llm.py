@@ -672,8 +672,9 @@ class QRecLLM(Rec2Base):
         Returns:
             rec_embeds (dict):
                 - 'User_emb': None while TEMP_DISABLED_USER_CF is active
-                - 'TargetItem_emb': (B, 1, H) - Individual target item representation
-                - 'UserProfile_emb': (B, L, H) - Historical items (includes padding)
+                - 'TargetItem_emb': (B, Q, H) - Target item read out by Q queries
+                - 'UserProfile_emb': (B, Q, H) - History POOLED into Q queries
+                  (padding excluded via source_mask), or None
                 - 'merged_embs': (N, H) - Flattened & filtered valid tokens for LLM input
             rec_atts: None (Placeholder for future attention masks)
         """
@@ -744,15 +745,19 @@ class QRecLLM(Rec2Base):
             )
 
             if need_merge:
+                # The whole history is POOLED into Q soft tokens, not L*Q: the
+                # L item vectors are the cross-attention source sequence, and
+                # the Q learned queries read them out. hist_mask keeps padded
+                # slots out of that attention.
                 ids = batch_data["InteractedItemIDs_pad"]  # [B,L]
-                hist_cf = self.rec_encoder.item_encoder(ids)                   # [B*L,Q,H]
+                hist_cf = self.rec_encoder.item_encoder(ids)                   # [B,L,d_cf]
                 hist_mask = (ids != self.rec_encoder.padding_index)              # [B,L]
 
                 profile_q = self.qformer(
                     hist_cf, ins_list, user_cf=user_cf_for_q, source_mask=hist_mask
                 )
 
-                profile_llm = self.llm_proj(profile_q)                          # [B,L,Q,H]
+                profile_llm = self.llm_proj(profile_q)                          # [B,Q,H]
                 
                 if self.ablate_soft_tokens:
                     profile_llm = torch.zeros_like(profile_llm)
@@ -763,7 +768,7 @@ class QRecLLM(Rec2Base):
                 ph2emb = {
                     # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llm.
                     # "<UserID>": user_llm,                 # [B,Q,H]
-                    "<UserProfile>": profile_llm,  # [B,L*Q,H]
+                    "<UserProfile>": profile_llm,  # [B,Q,H] — history pooled into Q tokens
                     "<TargetItemID>": target_llm          # [B,Q,H]
                 }
                 ph2mask = {
@@ -784,7 +789,7 @@ class QRecLLM(Rec2Base):
             rec_embeds = {
                 "User_emb": user_llm,                 # None while TEMP_DISABLED_USER_CF is active
                 "TargetItem_emb": target_llm,         # [B,Q,H]
-                "UserProfile_emb": profile_llm,  # [B,L*Q,H] or None
+                "UserProfile_emb": profile_llm,  # [B,Q,H] or None
                 "Warm_emb": warm_llm,                  # [B,1,H] or None
                 "merged_embs": merged_flat,             # [N,H] or None
             }
@@ -839,7 +844,9 @@ class QRecLLM(Rec2Base):
                 history_ids = batch_data['InteractedItemIDs_pad'][0].detach().cpu().tolist()
                 history_ids = [int(i) for i in history_ids if int(i) != self.rec_encoder.padding_index]
                 preview_parts.append(
-                    f"[UserProfile pooled_over={len(history_ids)} history items soft_tokens={len(history_ids) * self.proj_token_num}]",
+                    # soft_tokens is Q regardless of history length: the L items
+                    # are pooled by the Q queries, NOT expanded to L*Q slots.
+                    f"[UserProfile pooled_over={len(history_ids)} history items soft_tokens={self.proj_token_num}]",
                 )
             if "<TargetItemID>" in prompt_ori and 'TargetItemID' in batch_data:
                 target_id = int(batch_data['TargetItemID'][0].detach().cpu().item())

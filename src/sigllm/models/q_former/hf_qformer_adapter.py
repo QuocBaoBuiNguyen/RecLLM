@@ -380,6 +380,10 @@ class HFQFormerAdapter(nn.Module):
         ``causal_text=True`` enables a causal mask on the text→text attention
         block (used by ITG); the default is bidirectional (used by ITM and by
         the LLM-feeding ``forward``).
+
+        ``source_mask`` ([B, S]) marks the valid cross-attention sources; pass
+        it whenever ``cf_vec`` is a padded sequence. ``None`` means "all valid",
+        which is correct for the single-vector (S=1) callers.
         """
         if cf_vec.dim() not in (2, 3):
             raise ValueError(f"Expected cf_vec shape [B, d_cf] or [B, 1, d_cf], got {tuple(cf_vec.shape)}")
@@ -394,7 +398,13 @@ class HFQFormerAdapter(nn.Module):
             text_list, max_text_length or self.max_instruction_length, cf_vec.device
         )
 
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec)
+        # ``source_mask`` MUST be forwarded here: when cf_vec is a padded
+        # history sequence ([B, L, d_cf]) the padded slots are not neutral —
+        # ``proj_cf`` has a bias, so a zero pad embedding maps to ``proj_cf.bias``
+        # and becomes a valid cross-attention key. Dropping the mask let those
+        # slots absorb attention mass proportional to the padding count, i.e.
+        # leaked history length into the pooled profile token.
+        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec, source_mask)
         query_attention_mask = torch.ones(
             batch_size, query_count, dtype=torch.long, device=cf_vec.device
         )
