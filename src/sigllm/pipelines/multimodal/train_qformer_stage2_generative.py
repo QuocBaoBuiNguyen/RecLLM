@@ -7,7 +7,11 @@ Q-Former + projection with next-token language modeling on item-text
 captions while keeping the LLM fully frozen. An optional alignment
 keep-alive term (``w_llm`` > 0) applies the Stage-1 InfoNCE between
 mean-pooled soft tokens and distilled input-space item embeddings, so the
-generative objective does not wash out the SeLLa alignment. The Q-Former runs uni-modal here (queries cross-attend
+generative objective does not wash out the SeLLa alignment. A second,
+discriminative term (``w_align`` > 0) aligns the same soft tokens to the
+frozen LLM's own last-hidden caption representations via in-batch InfoNCE,
+computed on the fly — grounding the exact ``llm_proj`` output Stage 3
+injects in the semantic space the LLM reads from. The Q-Former runs uni-modal here (queries cross-attend
 to the CF vector only, no text input on the Q-Former text branch) —
 instruction-awareness is reserved for Stage 3, matching BLIP-2's stage-2
 design. This produces a checkpoint usable as the starting point for
@@ -228,6 +232,70 @@ def _move_batch_to_device(batch, device):
     return batch
 
 
+@torch.no_grad()
+def _llm_caption_targets(captions, tokenizer, llm, max_caption_length: int):
+    """Discriminative alignment targets from the frozen base LLM itself.
+
+    Tokenizes the raw captions (NO soft tokens), runs the frozen LLM and
+    pools the last hidden layer at the last non-pad token of each caption —
+    the causal position that has seen the whole caption. Returns ``[B, H]``
+    in float32 (fp16 saturates the cosine similarities downstream)."""
+    device = next(llm.parameters()).device
+    tokenizer.padding_side = "right"
+    tokens = tokenizer(
+        captions,
+        return_tensors="pt",
+        padding="longest",
+        truncation=True,
+        max_length=max_caption_length,
+        add_special_tokens=False,
+    ).to(device)
+    decoder = llm.get_decoder() if hasattr(llm, "get_decoder") else None
+    with torch.amp.autocast("cuda", dtype=torch.float16):
+        if decoder is not None:
+            # Trunk-only forward: skips the lm_head logits ([B, T, vocab]),
+            # which are pure waste here.
+            hidden = decoder(
+                input_ids=tokens.input_ids,
+                attention_mask=tokens.attention_mask,
+                return_dict=True,
+            ).last_hidden_state                                          # [B, T, H]
+        else:
+            hidden = llm(
+                input_ids=tokens.input_ids,
+                attention_mask=tokens.attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            ).hidden_states[-1]                                          # [B, T, H]
+    last_idx = (tokens.attention_mask.sum(dim=1) - 1).clamp(min=0)       # [B]
+    rows = torch.arange(hidden.size(0), device=hidden.device)
+    return hidden[rows, last_idx].float()                                # [B, H]
+
+
+def _llm_space_align_loss(soft_tokens, target, tau: float):
+    """Discriminative LLM-space alignment: symmetric in-batch InfoNCE between
+    mean-pooled soft tokens (post ``llm_proj`` — the exact vectors Stage 3
+    injects) and the frozen LLM's own caption representations. Unlike the
+    generative caption loss, this forces the injected representation to be
+    linearly separable in the space the LLM *reads from*, so the frozen LLM
+    can discriminate items from the soft tokens alone. Returns
+    ``(loss, align@1)``. Everything is upcast to float32 before
+    normalize/softmax."""
+    q_vec = soft_tokens.float().mean(dim=1)                      # [B, H]
+    t_vec = target.to(q_vec.device).float()                      # [B, H]
+    q_norm = q_vec / (q_vec.norm(dim=-1, keepdim=True) + 1e-12)
+    t_norm = t_vec / (t_vec.norm(dim=-1, keepdim=True) + 1e-12)
+    sim = (q_norm @ t_norm.T) / tau
+    labels = torch.arange(sim.size(0), device=sim.device)
+    loss = (
+        nn.functional.cross_entropy(sim, labels)
+        + nn.functional.cross_entropy(sim.T, labels)
+    ) / 2.0
+    with torch.no_grad():
+        top1 = (sim.argmax(dim=1) == labels).float().mean()
+    return loss, top1
+
+
 def _align_loss(soft_tokens, item_ids, align_bank, tau: float):
     """Alignment keep-alive: symmetric InfoNCE between mean-pooled soft tokens
     (post ``llm_proj``, the exact vectors the LLM reads) and the distilled
@@ -253,6 +321,8 @@ def forward_stage2(
     align_bank=None,
     w_llm: float = 0.0,
     tau_llm: float = 0.07,
+    w_align: float = 0.0,
+    tau_align: float = 0.07,
 ):
     item_ids = batch["i_left"]
     captions = batch["text"]
@@ -288,34 +358,64 @@ def forward_stage2(
         )
 
     lm_loss = outputs.loss
+    total = lm_loss
+
+    keepalive = None
     if align_bank is not None and w_llm > 0.0:
-        align = _align_loss(soft_tokens, item_ids, align_bank, tau_llm)
-        return lm_loss + w_llm * align, lm_loss.detach(), align.detach()
-    return lm_loss, lm_loss.detach(), None
+        keepalive = _align_loss(soft_tokens, item_ids, align_bank, tau_llm)
+        total = total + w_llm * keepalive
+
+    llm_align = None
+    align_top1 = None
+    if w_align > 0.0:
+        # Second frozen-LLM forward (no_grad) on the plain captions: the
+        # discriminative target lives in the same space Stage 3 injects into.
+        target = _llm_caption_targets(captions, tokenizer, llm, max_caption_length)
+        llm_align, align_top1 = _llm_space_align_loss(soft_tokens, target, tau_align)
+        total = total + w_align * llm_align
+
+    parts = {
+        "lm": lm_loss.detach(),
+        "keepalive": keepalive.detach() if keepalive is not None else None,
+        "llm_align": llm_align.detach() if llm_align is not None else None,
+        "align_top1": align_top1,
+    }
+    return total, parts
 
 
 def evaluate(
     loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int,
     align_bank=None, w_llm: float = 0.0, tau_llm: float = 0.07,
+    w_align: float = 0.0, tau_align: float = 0.07,
 ):
     qformer.eval()
     llm_proj.eval()
     total = 0.0
+    total_align = 0.0
+    total_top1 = 0.0
     steps = 0
+    align_steps = 0
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
-            loss, _, _ = forward_stage2(
+            loss, parts = forward_stage2(
                 batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
+                w_align=w_align, tau_align=tau_align,
             )
             total += float(loss.item())
+            if parts["llm_align"] is not None:
+                total_align += float(parts["llm_align"].item())
+                total_top1 += float(parts["align_top1"].item())
+                align_steps += 1
             steps += 1
     qformer.train()
     llm_proj.train()
-    if steps == 0:
-        return 0.0
-    return total / steps
+    return {
+        "val_loss": total / max(steps, 1),
+        "val_llm_align": total_align / max(align_steps, 1),
+        "val_align_top1": total_top1 / max(align_steps, 1),
+    }
 
 
 def train_qformer_stage2_generative(cfg):
@@ -347,6 +447,18 @@ def train_qformer_stage2_generative(cfg):
 
     w_llm = float(cfg.get("w_llm", 0.0))
     tau_llm = float(cfg.get("tau_llm", 0.07))
+    # Discriminative LLM-space alignment: InfoNCE between the injected soft
+    # tokens (post llm_proj) and the frozen LLM's own last-hidden caption
+    # representations, computed on the fly. 0.0 = exact legacy behavior
+    # (no extra LLM forward, loss unchanged).
+    w_align = float(cfg.get("w_align", 0.0))
+    tau_align = float(cfg.get("tau_align", 0.07))
+    if w_align > 0.0:
+        log_step(
+            "Discriminative LLM-space alignment active",
+            f"w_align={w_align}, tau_align={tau_align} "
+            f"(InfoNCE vs frozen-LLM last-hidden caption targets)",
+        )
     # Must match run.qformer_stage1.llm_emb_normalize — the config wires both
     # from one key. A mismatch makes the keep-alive pull llm_proj toward a
     # different target geometry than the one Stage 1 aligned it to.
@@ -408,37 +520,53 @@ def train_qformer_stage2_generative(cfg):
         llm_proj.train()
         train_total = 0.0
         train_lm = 0.0
-        train_align = 0.0
+        train_keepalive = 0.0
+        train_llm_align = 0.0
+        train_align_top1 = 0.0
         train_steps = 0
+        align_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
             optimizer.zero_grad()
-            loss, lm_loss, align_loss = forward_stage2(
+            loss, parts = forward_stage2(
                 batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
+                w_align=w_align, tau_align=tau_align,
             )
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             train_total += float(loss.item())
-            train_lm += float(lm_loss.item())
-            if align_loss is not None:
-                train_align += float(align_loss.item())
+            train_lm += float(parts["lm"].item())
+            if parts["keepalive"] is not None:
+                train_keepalive += float(parts["keepalive"].item())
+            if parts["llm_align"] is not None:
+                train_llm_align += float(parts["llm_align"].item())
+                train_align_top1 += float(parts["align_top1"].item())
+                align_steps += 1
             train_steps += 1
 
         avg_train_loss = train_total / max(train_steps, 1)
         avg_train_lm = train_lm / max(train_steps, 1)
-        avg_train_align = train_align / max(train_steps, 1)
+        avg_train_keepalive = train_keepalive / max(train_steps, 1)
+        avg_train_llm_align = train_llm_align / max(align_steps, 1)
+        avg_train_align_top1 = train_align_top1 / max(align_steps, 1)
         if (epoch + 1) % log_epoch != 0:
             continue
 
-        val_loss = evaluate(
+        val_metrics = evaluate(
             valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length,
             align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
+            w_align=w_align, tau_align=tau_align,
         )
+        val_loss = val_metrics["val_loss"]
         print(
             f"epoch {epoch + 1} | train_loss={avg_train_loss:.4f} "
-            f"(lm={avg_train_lm:.4f}, align={avg_train_align:.4f}) | val_loss={val_loss:.4f}"
+            f"(lm={avg_train_lm:.4f}, keepalive={avg_train_keepalive:.4f}, "
+            f"llm_align={avg_train_llm_align:.4f}, align@1={avg_train_align_top1:.4f}) "
+            f"| val_loss={val_loss:.4f} "
+            f"(llm_align={val_metrics['val_llm_align']:.4f}, "
+            f"align@1={val_metrics['val_align_top1']:.4f})"
         )
 
         improved = stopper.update({"epoch": epoch + 1, "val_loss": val_loss})

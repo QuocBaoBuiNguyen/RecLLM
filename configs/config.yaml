@@ -80,7 +80,11 @@ model:
     num_heads: 8
     num_layers: 4
     user_conditioned: True
-    warm_token: True
+    # Disabled for the clean attribution run: isolates the Q-Former→LLM
+    # alignment (w_align) as the contribution and removes the warm-token
+    # distill dependency (item_llm_emb.pt from the fine-tuned LLM). The
+    # prompt's <Warm_ID> is stripped when False (wrap_prompt_with_soft_tokens_v2).
+    warm_token: False
     item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
 
   rec_config:
@@ -238,6 +242,16 @@ run:
     # weighted low so the LM loss stays primary. Set 0.0 to disable.
     w_llm: 0.1
     tau_llm: ${run.qformer_stage1.tau_llm}
+    # Discriminative LLM-space alignment (the load-bearing Q-Former→LLM
+    # grounding): on-the-fly symmetric InfoNCE between mean-pooled
+    # llm_proj(soft tokens) — the EXACT vectors Stage 3 injects — and the
+    # frozen base LLM's last-hidden representation of the same captions.
+    # Unlike w_llm (input-space distilled targets, keep-alive), this aligns
+    # to the space the LLM reads at inference, so the frozen LLM can
+    # discriminate items from soft tokens alone. Tune 0.5–2.0; 0.0 = exact
+    # legacy behavior (no extra LLM forward).
+    w_align: 1.0
+    tau_align: 0.07
     # Must stay tied to Stage 1: the keep-alive and the warm-started llm_proj
     # have to reference the same target geometry.
     llm_emb_normalize: ${run.qformer_stage1.llm_emb_normalize}
