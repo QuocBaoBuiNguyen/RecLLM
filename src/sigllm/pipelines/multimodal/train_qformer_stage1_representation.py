@@ -67,7 +67,7 @@ def _init_rec_model(cfg, device):
     return mf
 
 
-def _init_qformer(cfg, d_model, device):
+def _init_qformer(cfg, d_model, device, d_sem=None):
     """
     Initializes the Q-Former model.
     """
@@ -84,6 +84,11 @@ def _init_qformer(cfg, d_model, device):
         output_dim=int(qformer_output_dim),
         qformer_text_model_name=cfg.qformer_text_model_name,
         max_instruction_length=cfg.get("max_instruction_length", 48),
+        # Build (and pretrain) the conditioning path here so user_proj does not
+        # sit at its zero init through all of Stage 1 and reach Stage 3 blind.
+        user_conditioned=bool(cfg.get("user_conditioned", False)),
+        d_user=int(cfg.embedding_size),
+        d_sem=d_sem,
     ).to(device)
 
 
@@ -146,7 +151,7 @@ def _indices_for_type(batch, sample_type: str, device):
 METRIC_GROUPS = {
     "L_itc": "item_text", "itc_top1": "item_text",
     "L_itm": "item_text", "itm_acc": "item_text",
-    "L_itg": "item_text", "itg_acc": "item_text",
+    "L_itg": "item_text", "itg_acc": "item_text", "itg_title_acc": "item_text",
     "L_llm": "item_text", "llm_top1": "item_text",
     "L_ii": "item_item", "ii_top1": "item_item",
     "L_ui": "user_item", "ui_top1": "user_item",
@@ -163,13 +168,26 @@ RETRIEVAL_TERMS = (
     ("ui", "user_item"),
 )
 
-# Terms summed into the selection metric L_repr.
-REPR_TERMS = ("L_itc", "L_itm", "L_itg", "L_llm")
+# Terms summed into the selection metric L_repr. Includes the collaborative
+# contrastives (L_ii, L_ui): Stage 3 consumes the Q-Former body for CF
+# encoding too, and a selection metric blind to the collaborative terms can
+# pick a checkpoint whose collaborative representation has already degraded.
+# They previously were excluded because they converge in ~5 epochs and then
+# drift up on validation, vetoing epochs still improving on text grounding —
+# damp that via w_ii / w_ui rather than by dropping the terms entirely.
+REPR_TERMS = ("L_itc", "L_itm", "L_itg", "L_llm", "L_ii", "L_ui")
 
 
-def _selection_weights(w_itc, w_itm, w_itg, w_llm):
+def _selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii=0.0, w_ui=0.0):
     """Weights applied to the ``L_repr`` selection metric."""
-    return {"L_itc": float(w_itc), "L_itm": float(w_itm), "L_itg": float(w_itg), "L_llm": float(w_llm)}
+    return {
+        "L_itc": float(w_itc),
+        "L_itm": float(w_itm),
+        "L_itg": float(w_itg),
+        "L_llm": float(w_llm),
+        "L_ii": float(w_ii),
+        "L_ui": float(w_ui),
+    }
 
 
 class MetricAccumulator:
@@ -259,10 +277,15 @@ def train_step(
     tau_ii: float = 0.07,
     tau_ui: float = 0.07,
     tau_llm: float = 0.07,
+    ui_condition_on_item: bool = False,
     debug_batch: bool = False,
 ):
     """BLIP-2 stage-1 step: ITC + ITM + ITG on item-text samples, plus the
-    SigLLM-specific item-item and (ILM-style) user-item contrastives."""
+    SigLLM-specific item-item and (ILM-style) user-item contrastives.
+
+    ``ui_condition_on_item=True`` switches the user-item term to the DIN-style
+    candidate-conditioned BPR that pretrains ``user_proj`` (see
+    ``QRecInstructAlignmentModel.loss_user_item``)."""
 
     device = batch["i_left"].device
 
@@ -280,6 +303,7 @@ def train_step(
         "itc_top1": zero.detach(),
         "itm_acc": zero.detach(),
         "itg_acc": zero.detach(),
+        "itg_title_acc": zero.detach(),
         "ii_top1": zero.detach(),
         "ui_top1": zero.detach(),
         "llm_top1": zero.detach(),
@@ -304,9 +328,10 @@ def train_step(
             losses.append(w_itm * loss_itm)
 
         if w_itg > 0.0:
-            loss_itg, itg_acc = model.loss_itg(item_ids, text_list)
+            loss_itg, itg_acc, itg_title_acc = model.loss_itg(item_ids, text_list)
             logs["L_itg"] = loss_itg
             logs["itg_acc"] = itg_acc.detach()
+            logs["itg_title_acc"] = itg_title_acc.detach()
             losses.append(w_itg * loss_itg)
 
         if w_llm > 0.00 and getattr(model, "has_llm_align", False):
@@ -329,7 +354,10 @@ def train_step(
     if w_ui > 0.0 and user_item_idx.numel() >= 2:
         user_item_batch = _subset_batch(batch, user_item_idx)
         loss_ui, ui_top1 = model.loss_user_item(
-            user_item_batch["u"], user_item_batch["i_left"], tau=tau_ui
+            user_item_batch["u"],
+            user_item_batch["i_left"],
+            tau=tau_ui,
+            condition_on_item=ui_condition_on_item,
         )
         logs["L_ui"] = loss_ui
         logs["ui_top1"] = ui_top1.detach()
@@ -357,10 +385,13 @@ def evaluate_loss(
     tau_ii=0.07,
     tau_ui=0.07,
     tau_llm=0.07,
+    ui_condition_on_item=False,
 ):
     model.eval()
     device = next(model.parameters()).device
-    accumulator = MetricAccumulator(weights=_selection_weights(w_itc, w_itm, w_itg, w_llm))
+    accumulator = MetricAccumulator(
+        weights=_selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii, w_ui)
+    )
 
     with torch.no_grad():
         for batch in loader:
@@ -378,6 +409,7 @@ def evaluate_loss(
                 tau_ii=tau_ii,
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
+                ui_condition_on_item=ui_condition_on_item,
             )
             accumulator.update(loss, logs, counts)
 
@@ -415,32 +447,57 @@ def train_qformer_stage1_representation(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, val_loader, test_loader = build_qformer_loaders(cfg, data_dir=cfg.data_dir)
-    
+
     mf = _init_rec_model(cfg, device)
     qformer_d_model = int(cfg.get("qformer_d_model", 768))
-    qformer = _init_qformer(cfg, qformer_d_model, device)
 
     w_llm = float(cfg.get("w_llm", 0.0))
     tau_llm = float(cfg.get("tau_llm", 0.07))
     llm_emb_normalize = str(cfg.get("llm_emb_normalize", "center"))
+    sem_source = bool(cfg.get("sem_source", False))
+    sem_dropout = float(cfg.get("sem_source_dropout", 0.5))
     item_llm_emb = None
     d_llm = None
     item_llm_emb_path = cfg.get("item_llm_emb_path", None)
-    if w_llm > 0.0:
+    if w_llm > 0.0 or sem_source:
         if not item_llm_emb_path or not os.path.exists(item_llm_emb_path):
-            raise FileNotFoundError(f"item_llm_emb_path is required and must exist when w_llm > 0.0, but got: {item_llm_emb_path}")
+            raise FileNotFoundError(
+                "item_llm_emb_path is required and must exist when w_llm > 0.0 "
+                f"or sem_source is enabled, but got: {item_llm_emb_path}"
+            )
         blob = torch.load(item_llm_emb_path, map_location="cpu")
         item_llm_emb = blob["item_llm_emb"] if isinstance(blob, dict) else blob
         d_llm = int(item_llm_emb.size(-1))
         log_step("Loaded item LLM embeddings", f"path={item_llm_emb_path}, shape={tuple(item_llm_emb.shape)}")
 
+    qformer = _init_qformer(
+        cfg, qformer_d_model, device, d_sem=d_llm if sem_source else None
+    )
+    if sem_source:
+        log_step(
+            "Semantic cross-attention source active",
+            f"d_sem={d_llm}, sem_source_dropout={sem_dropout}",
+        )
+
     model = QRecInstructAlignmentModel(
         mf=mf,
         qformer=qformer,
-        item_llm_emb=item_llm_emb,
-        d_llm=d_llm,
+        item_llm_emb=item_llm_emb if w_llm > 0.0 else None,
+        d_llm=d_llm if w_llm > 0.0 else None,
         llm_emb_normalize=llm_emb_normalize,
+        item_sem_emb=item_llm_emb if sem_source else None,
+        sem_dropout=sem_dropout,
     ).to(device)
+
+    # DIN-style pretraining of the candidate-conditioning path: only possible
+    # when the adapter was built with the conditioning projection.
+    ui_condition_on_item = bool(qformer.user_conditioned)
+    if ui_condition_on_item:
+        log_step(
+            "user_proj pretraining active",
+            "loss_user_item runs as candidate-conditioned pairwise BPR "
+            "(ui_top1 chance level is 0.5, not 1/n).",
+        )
 
     opt = _init_optimizer(model, cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -473,7 +530,7 @@ def train_qformer_stage1_representation(cfg):
     for epoch in range(cfg.epoch):
         model.train()
         accumulator = MetricAccumulator(
-            weights=_selection_weights(cfg.w_itc, cfg.w_itm, cfg.w_itg, w_llm)
+            weights=_selection_weights(cfg.w_itc, cfg.w_itm, cfg.w_itg, w_llm, cfg.w_ii, w_ui)
         )
         train_steps = 0
         for batch in train_loader:
@@ -493,6 +550,7 @@ def train_qformer_stage1_representation(cfg):
                 tau_ii=cfg.tau_ii,
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
+                ui_condition_on_item=ui_condition_on_item,
                 debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
             )
             loss.backward()
@@ -516,6 +574,7 @@ def train_qformer_stage1_representation(cfg):
                 tau_ii=cfg.tau_ii,
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
+                ui_condition_on_item=ui_condition_on_item,
             )
             print(
                 f"epoch {epoch+1} | "
@@ -524,7 +583,8 @@ def train_qformer_stage1_representation(cfg):
                 f"L_itg={avg_train['L_itg']:.4f} L_ii={avg_train['L_ii']:.4f} "
                 f"L_ui={avg_train['L_ui']:.4f} L_llm={avg_train['L_llm']:.4f} "
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
-                f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} "
+                f"ITG_acc={avg_train['itg_acc']:.4f} ITG_title={avg_train['itg_title_acc']:.4f} "
+                f"II@1={avg_train['ii_top1']:.4f} "
                 f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} "
                 f"g_itc={avg_train['gain_itc']:+.3f} g_llm={avg_train['gain_llm']:+.3f} "
                 f"g_ii={avg_train['gain_ii']:+.3f} g_ui={avg_train['gain_ui']:+.3f} "
@@ -535,7 +595,8 @@ def train_qformer_stage1_representation(cfg):
                 f"L_itg={val_logs['L_itg']:.4f} L_ii={val_logs['L_ii']:.4f} "
                 f"L_ui={val_logs['L_ui']:.4f} L_llm={val_logs['L_llm']:.4f} "
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
-                f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
+                f"ITG_acc={val_logs['itg_acc']:.4f} ITG_title={val_logs['itg_title_acc']:.4f} "
+                f"II@1={val_logs['ii_top1']:.4f} "
                 f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} "
                 f"g_itc={val_logs['gain_itc']:+.3f} g_llm={val_logs['gain_llm']:+.3f} "
                 f"g_ii={val_logs['gain_ii']:+.3f} g_ui={val_logs['gain_ui']:+.3f} "
@@ -612,6 +673,7 @@ def train_qformer_stage1_representation(cfg):
         tau_ii=cfg.tau_ii,
         tau_ui=tau_ui,
         tau_llm=tau_llm,
+        ui_condition_on_item=ui_condition_on_item,
     )
     log_step(
         "Test results",
@@ -621,6 +683,7 @@ def train_qformer_stage1_representation(cfg):
             f"l_ii={test_logs['L_ii']:.4f}, l_llm={test_logs['L_llm']:.4f}, "
             f"itc@1={test_logs['itc_top1']:.4f}, "
             f"itm_acc={test_logs['itm_acc']:.4f}, itg_acc={test_logs['itg_acc']:.4f}, "
+            f"itg_title={test_logs['itg_title_acc']:.4f}, "
             f"ii@1={test_logs['ii_top1']:.4f}, llm@1={test_logs['llm_top1']:.4f}, "
             f"n_it={test_logs['n_item_text']:.1f}"
         ),

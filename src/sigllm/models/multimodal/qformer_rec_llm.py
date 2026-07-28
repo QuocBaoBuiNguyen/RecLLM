@@ -121,6 +121,9 @@ class QRecLLM(Rec2Base):
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
         align_rank_loss_tau=1.0,
+        sem_source=False,
+        item_sem_emb_path=None,
+        sem_source_dropout=0.5,
     ):
         super().__init__()
 
@@ -172,10 +175,12 @@ class QRecLLM(Rec2Base):
 
         if self.user_conditioned:
             log_step(
-                "USER-CONDITIONED MODE",
-                "user_conditioned=True → Q-Former queries are shifted per-user by "
-                "user_proj(user_cf) before forward, so the same Q tokens encode "
-                "different aspects of an item depending on which user is asking.",
+                "CANDIDATE-CONDITIONED MODE",
+                "user_conditioned=True → the <UserProfile> history pooling is "
+                "conditioned on the TARGET ITEM's CF vector (user_proj(target_cf) "
+                "shifts the Q tokens), so the pooled profile varies per candidate "
+                "and can move uAUC. A per-user shift would be constant across a "
+                "user's candidates and cancel in uAUC.",
             )
 
         log_step("Running MiniGPT4Rec_v2 initialization")
@@ -185,6 +190,7 @@ class QRecLLM(Rec2Base):
         # Initialize components
         self._init_rec_model(rec_model, rec_config, pretrained_rec, freeze_rec)
         self._init_llm_model(llm_model)
+        self._init_sem_source(sem_source, item_sem_emb_path, sem_source_dropout)
         self._init_qformer(
             d_cf=rec_config.embedding_size,
             d_model=qformer_d_model,
@@ -198,6 +204,7 @@ class QRecLLM(Rec2Base):
             max_instruction_length=max_instruction_length,
             user_conditioned=self.user_conditioned,
             d_user=rec_config.embedding_size,
+            d_sem=self.item_sem_emb.size(-1) if self.item_sem_emb is not None else None,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_warm_token(pretrained_item_llm_emb)
@@ -382,6 +389,43 @@ class QRecLLM(Rec2Base):
         else:
             log_step("Tuning step", f"unrecognized value '{step}', no policy applied")
 
+    def _init_sem_source(self, sem_source, item_sem_emb_path, sem_source_dropout):
+        """Frozen semantic item embeddings used as the SECOND cross-attention
+        source next to CF (see HFQFormerAdapter.d_sem). Loaded RAW: the bank
+        goes through the adapter's trainable proj_sem, so no normalization is
+        applied here. Must be the SAME bank Stage 1/2 trained proj_sem on
+        (input-space distill), not the last-hidden warm-token bank."""
+        self.sem_source_dropout = float(sem_source_dropout)
+        if not sem_source:
+            self.item_sem_emb = None
+            return
+        if not item_sem_emb_path or not os.path.exists(item_sem_emb_path):
+            raise FileNotFoundError(
+                f"sem_source=True but item_sem_emb_path not found: {item_sem_emb_path}"
+            )
+        blob = torch.load(item_sem_emb_path, map_location="cpu")
+        bank = (blob["item_llm_emb"] if isinstance(blob, dict) else blob).float()
+        self.register_buffer("item_sem_emb", bank.to(self.device), persistent=False)
+        log_step(
+            "Semantic cross-attention source active",
+            f"bank={tuple(bank.shape)} from {item_sem_emb_path}, "
+            f"dropout={self.sem_source_dropout} (training only)",
+        )
+
+    def _sem_for_items(self, item_ids):
+        """Semantic rows for ``item_ids`` (any leading shape). Training-time
+        row dropout zeroes whole rows; the adapter masks zero rows out, so a
+        dropped row falls back to CF-only cross-attention."""
+        if self.item_sem_emb is None:
+            return None
+        sem = self.item_sem_emb[item_ids]
+        if self.training and self.sem_source_dropout > 0.0:
+            keep = (
+                torch.rand(sem.shape[:-1], device=sem.device) >= self.sem_source_dropout
+            ).to(sem.dtype).unsqueeze(-1)
+            sem = sem * keep
+        return sem
+
     def _init_qformer(
         self,
         d_cf,
@@ -396,6 +440,7 @@ class QRecLLM(Rec2Base):
         max_instruction_length: int,
         user_conditioned: bool = False,
         d_user: int = None,
+        d_sem: int = None,
     ):
         log_step("Loading QFormer")
         log_step(
@@ -415,6 +460,7 @@ class QRecLLM(Rec2Base):
             init_from_pretrained_text=False,
             user_conditioned=user_conditioned,
             d_user=d_user,
+            d_sem=d_sem,
         ).to(self.device)
 
         if pretrained_qformer and pretrained_qformer != "not_have":
@@ -707,17 +753,20 @@ class QRecLLM(Rec2Base):
             user_q = None
             user_llm = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
+            target_sem = self._sem_for_items(batch_data["TargetItemID"])           # [B,d_sem] or None
 
-            # User-conditioned queries: user_cf shifts the base Q tokens so the
-            # same queries extract per-user-relevant aspects of each item. Pulled
-            # ONLY when the flag is on so the vanilla path stays untouched.
-            user_cf_for_q = None
-            if self.user_conditioned:
-                user_cf_for_q = self.rec_encoder.user_encoder(batch_data["UserID"])  # [B,d_cf]
+            # Candidate conditioning (DIN-style): the TARGET item's CF vector
+            # shifts the Q tokens when pooling the history below, so the same
+            # history yields a different <UserProfile> per candidate. The old
+            # per-USER conditioning made profile_q constant across a user's
+            # candidates — it cancelled in uAUC and only added cross-user noise.
+            target_cond = target_cf if self.user_conditioned else None
 
-            # 2) QFormer outputs (instruction-conditioned)
+            # 2) QFormer outputs (instruction-conditioned). The target encode is
+            # NOT conditioned on itself; its candidate signal already enters as
+            # the cross-attention source.
             # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
-            target_q = self.qformer(target_cf, ins_list, user_cf=user_cf_for_q)  # [B,Q,d_model]
+            target_q = self.qformer(target_cf, ins_list, sem_vec=target_sem)  # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
             # user_llm = self.llm_proj(user_q)               # [B,Q,H]
@@ -752,9 +801,14 @@ class QRecLLM(Rec2Base):
                 ids = batch_data["InteractedItemIDs_pad"]  # [B,L]
                 hist_cf = self.rec_encoder.item_encoder(ids)                   # [B,L,d_cf]
                 hist_mask = (ids != self.rec_encoder.padding_index)              # [B,L]
+                hist_sem = self._sem_for_items(ids)                              # [B,L,d_sem] or None
 
+                # Conditioned on the CANDIDATE (target_cond), not the user:
+                # this is what makes <UserProfile> vary per candidate. See the
+                # conditioning comment above target_q.
                 profile_q = self.qformer(
-                    hist_cf, ins_list, user_cf=user_cf_for_q, source_mask=hist_mask
+                    hist_cf, ins_list, user_cf=target_cond, source_mask=hist_mask,
+                    sem_vec=hist_sem,
                 )
 
                 profile_llm = self.llm_proj(profile_q)                          # [B,Q,H]
@@ -1264,6 +1318,9 @@ class QRecLLM(Rec2Base):
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
         warm_token = bool(qformer_config.get("warm_token", False))
         pretrained_item_llm_emb = qformer_config.get("item_llm_emb_path", None)
+        sem_source = bool(qformer_config.get("sem_source", False))
+        item_sem_emb_path = qformer_config.get("item_sem_emb_path", None)
+        sem_source_dropout = float(qformer_config.get("sem_source_dropout", 0.5))
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1316,6 +1373,9 @@ class QRecLLM(Rec2Base):
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,
             align_rank_loss_tau=align_rank_loss_tau,
+            sem_source=sem_source,
+            item_sem_emb_path=item_sem_emb_path,
+            sem_source_dropout=sem_source_dropout,
         )
 
         ckpt_path = cfg.get("ckpt", "")

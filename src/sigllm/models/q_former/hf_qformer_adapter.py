@@ -60,6 +60,7 @@ class HFQFormerAdapter(nn.Module):
         init_from_pretrained_text: bool = True,
         user_conditioned: bool = False,
         d_user: Optional[int] = None,
+        d_sem: Optional[int] = None,
     ):
         super().__init__()
 
@@ -83,21 +84,34 @@ class HFQFormerAdapter(nn.Module):
         self.proj_cf = nn.Linear(d_cf, d_model)
         self.out_proj = nn.Identity() if self.output_dim == d_model else nn.Linear(d_model, self.output_dim)
 
-        # User-conditioned queries (Stage 3 personalization). When enabled, the
-        # base learnable queries `self.q` are shifted per-user by `user_proj(user_cf)`
-        # before the Q-Former forward. Stage 1/2 paths never pass `user_cf` so the
-        # path stays a no-op there even when this flag is True.
+        # Conditioned queries. When enabled, the base learnable queries `self.q`
+        # are shifted per-sample by `user_proj(cond_cf)` before the Q-Former
+        # forward. `cond_cf` is any vector in the MF embedding space; the
+        # intended use is the CANDIDATE ITEM's CF vector (DIN-style target
+        # attention: the same history is pooled differently for each candidate,
+        # so the pooled profile varies within a user and can move uAUC — a
+        # per-USER conditioning vector is constant across a user's candidates
+        # and cancels in uAUC). The module keeps its historical name
+        # `user_proj` for checkpoint compatibility.
         self.user_conditioned = bool(user_conditioned)
         if self.user_conditioned:
             d_user_eff = int(d_user) if d_user is not None else d_cf
             self.d_user = d_user_eff
             self.user_proj = nn.Linear(d_user_eff, d_model)
-            # Zero-init so the residual `queries = pretrained_q + user_proj(user_cf)`
+            # Zero-init so the residual `queries = pretrained_q + user_proj(cond_cf)`
             # starts as a no-op at step 0 (queries == pretrained_q exactly). Gradients
-            # still flow through user_cf, so user_proj grows from 0 only if CTR signal
-            # rewards it. Standard pattern for LoRA / FiLM / prefix tuning.
+            # still flow through cond_cf, so user_proj grows from 0 only if the
+            # training signal rewards it. Standard pattern for LoRA / FiLM / prefix tuning.
             nn.init.zeros_(self.user_proj.weight)
             nn.init.zeros_(self.user_proj.bias)
+
+        # Optional second cross-attention source: a frozen semantic (LLM-derived)
+        # item embedding next to the CF vector. Attention weighs the two sources
+        # per item, so cold items (weak CF, rich text) can lean on semantics and
+        # warm items on CF. All-zero semantic rows (items with no text) are
+        # masked out at forward time, falling back to CF-only cleanly.
+        self.d_sem = int(d_sem) if d_sem is not None else None
+        self.proj_sem = nn.Linear(self.d_sem, d_model) if self.d_sem else None
 
         config = InstructBlipQFormerConfig(
             vocab_size=len(self.qformer_tokenizer),
@@ -256,6 +270,48 @@ class HFQFormerAdapter(nn.Module):
             encoder_attention_mask = source_mask
         return encoder_hidden_states, encoder_attention_mask
 
+    def _project_sources(
+        self,
+        cf_vec: torch.Tensor,
+        sem_vec: Optional[torch.Tensor] = None,
+        source_mask: Optional[torch.Tensor] = None,
+    ):
+        """Assemble the cross-attention source sequence: CF tokens first, then
+        (optionally) semantic tokens aligned slot-for-slot with the CF ones.
+
+        ``sem_vec`` must mirror ``cf_vec``'s leading shape ([B, d_sem] or
+        [B, S, d_sem]). A semantic slot is valid only when its CF slot is valid
+        (same ``source_mask``) AND the row is non-zero — distilled banks keep
+        uncovered items at zero, so those fall back to CF-only attention.
+        """
+        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec, source_mask)
+        if sem_vec is None:
+            return encoder_hidden_states, encoder_attention_mask
+        if self.proj_sem is None:
+            raise ValueError("sem_vec passed but the adapter was built without d_sem")
+
+        if sem_vec.dim() == 2:
+            sem_seq = sem_vec.unsqueeze(1)
+        elif sem_vec.dim() == 3:
+            sem_seq = sem_vec
+        else:
+            raise ValueError(
+                f"Expected sem_vec shape [B, d_sem] or [B, S, d_sem], got {tuple(sem_vec.shape)}"
+            )
+        if sem_seq.size(0) != encoder_hidden_states.size(0) or sem_seq.size(1) != encoder_hidden_states.size(1):
+            raise ValueError(
+                f"sem_vec leading shape {tuple(sem_seq.shape[:2])} must match the CF "
+                f"source sequence {tuple(encoder_hidden_states.shape[:2])}"
+            )
+
+        sem_mask = (sem_seq.norm(dim=-1) > 0).long() * encoder_attention_mask
+        sem_hidden = self.proj_sem(sem_seq.to(self.proj_sem.weight.dtype))
+        encoder_hidden_states = torch.cat(
+            [encoder_hidden_states, sem_hidden.to(encoder_hidden_states.dtype)], dim=1
+        )
+        encoder_attention_mask = torch.cat([encoder_attention_mask, sem_mask], dim=1)
+        return encoder_hidden_states, encoder_attention_mask
+
     def _build_query_tokens(
         self,
         batch_size: int,
@@ -312,6 +368,7 @@ class HFQFormerAdapter(nn.Module):
         cf_vec: torch.Tensor,
         user_cf: Optional[torch.Tensor] = None,
         source_mask: Optional[torch.Tensor] = None,
+        sem_vec: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Queries-only forward over a CF (collaborative filtering) vector.
 
@@ -326,7 +383,9 @@ class HFQFormerAdapter(nn.Module):
         query_attention_mask = torch.ones(
             batch_size, query_tokens.size(1), dtype=torch.long, device=cf_vec.device
         )
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec, source_mask)
+        encoder_hidden_states, encoder_attention_mask = self._project_sources(
+            cf_vec, sem_vec, source_mask
+        )
 
         outputs = self.qformer(
             input_ids=None,
@@ -374,6 +433,7 @@ class HFQFormerAdapter(nn.Module):
         max_text_length: Optional[int] = None,
         user_cf: Optional[torch.Tensor] = None,
         source_mask: Optional[torch.Tensor] = None,
+        sem_vec: Optional[torch.Tensor] = None,
     ):
         """Joint forward returning ``(query_hidden, text_hidden, text_ids, text_mask)``.
 
@@ -404,7 +464,9 @@ class HFQFormerAdapter(nn.Module):
         # and becomes a valid cross-attention key. Dropping the mask let those
         # slots absorb attention mass proportional to the padding count, i.e.
         # leaked history length into the pooled profile token.
-        encoder_hidden_states, encoder_attention_mask = self._project_cf(cf_vec, source_mask)
+        encoder_hidden_states, encoder_attention_mask = self._project_sources(
+            cf_vec, sem_vec, source_mask
+        )
         query_attention_mask = torch.ones(
             batch_size, query_count, dtype=torch.long, device=cf_vec.device
         )
@@ -436,12 +498,19 @@ class HFQFormerAdapter(nn.Module):
         instruction,
         user_cf: Optional[torch.Tensor] = None,
         source_mask: Optional[torch.Tensor] = None,
+        sem_vec: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """LLM-feeding mode: queries cross-attend to ``cf_vec`` while the text
-        stream consumes ``instruction``. Returns query hidden states with
-        ``out_proj`` applied: ``[B, num_queries, output_dim]``."""
+        """LLM-feeding mode: queries cross-attend to ``cf_vec`` (and the
+        optional ``sem_vec`` semantic source) while the text stream consumes
+        ``instruction``. Returns query hidden states with ``out_proj``
+        applied: ``[B, num_queries, output_dim]``."""
 
         query_hidden, _, _, _ = self.forward_multimodal(
-            cf_vec, instruction, causal_text=False, user_cf=user_cf, source_mask=source_mask
+            cf_vec,
+            instruction,
+            causal_text=False,
+            user_cf=user_cf,
+            source_mask=source_mask,
+            sem_vec=sem_vec,
         )
         return self.out_proj(query_hidden)

@@ -86,11 +86,33 @@ class QRecInstructAlignmentModel(nn.Module):
     """
 
     def __init__(
-        self, mf, qformer, item_llm_emb=None, d_llm=None, llm_emb_normalize="center"
+        self,
+        mf,
+        qformer,
+        item_llm_emb=None,
+        d_llm=None,
+        llm_emb_normalize="center",
+        item_sem_emb=None,
+        sem_dropout=0.5,
     ) -> None:
         super().__init__()
         self.mf = mf
         self.qformer = qformer
+
+        # Optional semantic cross-attention source (see HFQFormerAdapter.d_sem):
+        # the RAW distilled bank, deliberately NOT normalize_item_llm_emb'd —
+        # normalization conditions the contrastive TARGET geometry; the source
+        # goes through its own trainable proj_sem, which absorbs scale/offset.
+        # ``sem_dropout`` zeroes whole semantic rows per sample during training
+        # (zero rows are masked out downstream), forcing the CF path to stay
+        # trained so warm items don't lose CF grounding to the easier semantic
+        # shortcut.
+        self.sem_dropout = float(sem_dropout)
+        if item_sem_emb is not None:
+            sem = item_sem_emb if isinstance(item_sem_emb, torch.Tensor) else item_sem_emb.weight
+            self.register_buffer("item_sem_emb", sem.float().clone(), persistent=False)
+        else:
+            self.item_sem_emb = None
 
         d_model = qformer.d_model
         vocab_size = qformer.vocab_size
@@ -135,9 +157,25 @@ class QRecInstructAlignmentModel(nn.Module):
     def l2norm(x: torch.Tensor) -> torch.Tensor:
         return x / (x.norm(dim=-1, keepdim=True) + 1e-12)
 
+    def _sem_for(self, item_ids: torch.Tensor):
+        """Semantic source rows for ``item_ids`` with training-time row dropout.
+
+        Dropped rows become all-zero, which the adapter masks out — the sample
+        falls back to CF-only cross-attention, exactly the cold-path geometry.
+        """
+        if self.item_sem_emb is None:
+            return None
+        sem = self.item_sem_emb[item_ids]
+        if self.training and self.sem_dropout > 0.0:
+            keep = (
+                torch.rand(sem.shape[:-1], device=sem.device) >= self.sem_dropout
+            ).to(sem.dtype).unsqueeze(-1)
+            sem = sem * keep
+        return sem
+
     def encode_item_queries(self, item_ids: torch.Tensor) -> torch.Tensor:
         item_cf = self.mf.item_encoder(item_ids)
-        return self.qformer.encode_cf(item_cf)
+        return self.qformer.encode_cf(item_cf, sem_vec=self._sem_for(item_ids))
 
     def encode_text_cls(self, text_list) -> torch.Tensor:
         _, text_cls = self.qformer.encode_text(text_list)
@@ -243,9 +281,10 @@ class QRecInstructAlignmentModel(nn.Module):
 
         cf_concat = torch.cat([pos_item_cf, pos_item_cf, neg_item_cf], dim=0)
         text_concat = pos_text + neg_text + pos_text
+        ids_concat = torch.cat([item_ids, item_ids, item_ids[neg_item_idx]], dim=0)
 
         query_hidden, _, _, _ = self.qformer.forward_multimodal(
-            cf_concat, text_concat, causal_text=False
+            cf_concat, text_concat, causal_text=False, sem_vec=self._sem_for(ids_concat)
         )
         pooled = query_hidden.mean(dim=1)
         logits = self.itm_head(pooled)
@@ -261,13 +300,60 @@ class QRecInstructAlignmentModel(nn.Module):
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
         return loss, accuracy
 
+    @staticmethod
+    def _title_char_spans(text_list):
+        """Character span of the item title inside the stage-1 caption template
+        ``"Title: {title}. Genres: {...}."``. Falls back to the whole string
+        when the template markers are absent."""
+        spans = []
+        for text in text_list:
+            prefix = "Title: "
+            start = len(prefix) if text.startswith(prefix) else 0
+            end = text.find(". Genres:")
+            if end < 0:
+                end = len(text)
+            spans.append((start, end))
+        return spans
+
+    def _title_target_mask(self, text_list, target_mask: torch.Tensor):
+        """Boolean mask over the NEXT-TOKEN targets that lie inside the title
+        span. Needs a fast tokenizer for offset mappings; returns None when
+        unavailable so callers can fall back to the overall accuracy."""
+        tokenizer = self.qformer.qformer_tokenizer
+        if not getattr(tokenizer, "is_fast", False):
+            return None
+        enc = tokenizer(
+            list(text_list),
+            padding=True,
+            truncation=True,
+            max_length=self.qformer.max_instruction_length,
+            return_offsets_mapping=True,
+        )
+        offsets = torch.tensor(enc["offset_mapping"], device=target_mask.device)  # [B, T, 2]
+        spans = self._title_char_spans(text_list)
+        starts = torch.tensor([s for s, _ in spans], device=target_mask.device).unsqueeze(1)
+        ends = torch.tensor([e for _, e in spans], device=target_mask.device).unsqueeze(1)
+        in_title = (
+            (offsets[..., 0] >= starts)
+            & (offsets[..., 1] <= ends)
+            & (offsets[..., 1] > offsets[..., 0])  # excludes special tokens (0, 0)
+        )
+        return in_title[:, 1:] & target_mask
+
     def loss_itg(self, item_ids: torch.Tensor, text_list):
         """ITG: causal next-token LM on the text branch, conditioned on the
-        item CF vector via cross-attention through the learned queries."""
+        item CF (and optional semantic) source via cross-attention through the
+        learned queries.
+
+        Returns ``(loss, token_accuracy, title_accuracy)``. The caption
+        template ``"Title: {}. Genres: {}."`` makes most tokens (scaffold +
+        genres) predictable without any item knowledge, so the overall
+        ``token_accuracy`` is inflated; ``title_accuracy`` counts only the
+        title-span targets — the part that actually requires item identity."""
 
         item_cf = self.mf.item_encoder(item_ids)
         _, text_hidden, text_ids, text_attention_mask = self.qformer.forward_multimodal(
-            item_cf, text_list, causal_text=True
+            item_cf, text_list, causal_text=True, sem_vec=self._sem_for(item_ids)
         )
 
         logits = self.lm_head(text_hidden[:, :-1, :])
@@ -283,17 +369,26 @@ class QRecInstructAlignmentModel(nn.Module):
 
         with torch.no_grad():
             preds = logits.argmax(dim=-1)
-            correct = ((preds == text_ids[:, 1:]) & target_mask).float().sum()
+            hits = (preds == text_ids[:, 1:])
+            correct = (hits & target_mask).float().sum()
             total = target_mask.float().sum().clamp(min=1.0)
             token_accuracy = correct / total
-        return loss, token_accuracy
+
+            title_mask = self._title_target_mask(text_list, target_mask)
+            if title_mask is None:
+                title_accuracy = token_accuracy.clone()
+            else:
+                title_correct = (hits & title_mask).float().sum()
+                title_total = title_mask.float().sum().clamp(min=1.0)
+                title_accuracy = title_correct / title_total
+        return loss, token_accuracy, title_accuracy
 
     def loss_item_item_ilm(self, left_ids: torch.Tensor, right_ids: torch.Tensor, tau: float = 0.07):
         """SigLLM-specific co-watch item-item contrastive."""
         left_cf = self.mf.item_encoder(left_ids)
         right_cf = self.mf.item_encoder(right_ids)
-        left_q = self.qformer.encode_cf(left_cf)
-        right_q = self.qformer.encode_cf(right_cf)
+        left_q = self.qformer.encode_cf(left_cf, sem_vec=self._sem_for(left_ids))
+        right_q = self.qformer.encode_cf(right_cf, sem_vec=self._sem_for(right_ids))
         left_sel, right_sel, _, _ = self.select_pair_by_similarity(left_q, right_q)
 
         left_norm = self.l2norm(left_sel)
@@ -304,16 +399,64 @@ class QRecInstructAlignmentModel(nn.Module):
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
         return loss, accuracy
 
-    def loss_user_item(self, user_ids: torch.Tensor, item_ids: torch.Tensor, tau: float = 0.07):
-        """User-item contrastive (ILM-style). Pulls Q-Former representation of
-        a user toward their positively-interacted item via in-batch InfoNCE.
-        Mirrors ``loss_item_item_ilm`` but uses ``mf.user_encoder`` on the left
-        side. On ML1M this captures the dominant CF signal (888K positive
-        user-item pairs vs 3K item-text pairs in our pkls)."""
+    def loss_user_item(
+        self,
+        user_ids: torch.Tensor,
+        item_ids: torch.Tensor,
+        tau: float = 0.07,
+        condition_on_item: bool = False,
+    ):
+        """User-item objective (ILM-style). On ML1M this captures the dominant
+        CF signal (888K positive user-item pairs vs 3K item-text pairs in our
+        pkls).
+
+        ``condition_on_item=False`` — original in-batch InfoNCE between the
+        user's queries and the positive item's queries.
+
+        ``condition_on_item=True`` — DIN-style pairwise BPR that pretrains the
+        candidate-conditioning path (``user_proj``): the USER encoding's
+        queries are shifted by the CANDIDATE item's CF vector, matching how
+        Stage 3 pools the history conditioned on the target item. Each
+        candidate (positive and an in-batch sampled negative) conditions its
+        OWN scoring pass, so the conditioning vector carries no label
+        information — putting the positive's vector into an in-batch InfoNCE
+        row instead would hand the model a copy-through shortcut (the
+        conditioning identifies the diagonal) and train ``user_proj`` into an
+        item-identity channel rather than a history modulator. Accuracy is the
+        fraction of rows with ``s_pos > s_neg`` (chance 0.5)."""
         user_cf = self.mf.user_encoder(user_ids)
         item_cf = self.mf.item_encoder(item_ids)
+        item_sem = self._sem_for(item_ids)
+
+        if condition_on_item and getattr(self.qformer, "user_conditioned", False):
+            # In-batch negative candidate: another user_item row's positive.
+            # May occasionally be a false negative for this user — standard
+            # implicit-feedback noise, acceptable.
+            perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
+            neg_ids = item_ids[perm]
+            neg_cf = item_cf[perm]
+            neg_sem = item_sem[perm] if item_sem is not None else None
+
+            user_q_pos = self.qformer.encode_cf(user_cf, user_cf=item_cf)
+            user_q_neg = self.qformer.encode_cf(user_cf, user_cf=neg_cf)
+            pos_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
+            neg_q = self.qformer.encode_cf(neg_cf, sem_vec=neg_sem)
+
+            u_pos, i_pos, _, _ = self.select_pair_by_similarity(user_q_pos, pos_q)
+            u_neg, i_neg, _, _ = self.select_pair_by_similarity(user_q_neg, neg_q)
+            s_pos = (self.l2norm(u_pos) * self.l2norm(i_pos)).sum(dim=-1) / tau
+            s_neg = (self.l2norm(u_neg) * self.l2norm(i_neg)).sum(dim=-1) / tau
+
+            valid = neg_ids != item_ids  # rolled negative can collide on tiny batches
+            if valid.sum() == 0:
+                zero = s_pos.sum() * 0.0
+                return zero, zero.detach()
+            loss = F.softplus(s_neg[valid] - s_pos[valid]).mean()
+            accuracy = (s_pos[valid] > s_neg[valid]).float().mean()
+            return loss, accuracy
+
         user_q = self.qformer.encode_cf(user_cf)
-        item_q = self.qformer.encode_cf(item_cf)
+        item_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
         user_sel, item_sel, _, _ = self.select_pair_by_similarity(user_q, item_q)
 
         user_norm = self.l2norm(user_sel)
@@ -329,12 +472,15 @@ class QRecInstructAlignmentModel(nn.Module):
             raise RuntimeError("LLM alignment loss requested but no LLM embeddings provided")
 
         # Same path the soft tokens take at injection time (encode_cf ->
-        # out_proj -> llm_proj, per token); pooling happens after projection so
-        # the per-token geometry the LLM sees is what gets aligned.
+        # out_proj -> llm_proj, per token). BLIP-2-style query selection, like
+        # ITC: contrast the single query token closest to the target instead of
+        # the mean over all Q tokens. Mean pooling pushed every query toward
+        # the same target and collapsed query diversity; selection lets one
+        # query specialize per item while the others keep their ITC/ITG roles.
         query_hidden = self.encode_item_queries(item_ids)                       # [B, Q, d_model]
         soft_tokens = self.llm_align_proj(self.qformer.out_proj(query_hidden))  # [B, Q, d_llm]
-        q_vec = soft_tokens.mean(dim=1)                                         # [B, d_llm]
-        t_vec = self.item_llm_emb[item_ids].to(q_vec.device)
+        t_vec = self.item_llm_emb[item_ids].to(soft_tokens.device)
+        q_vec, _ = self._select_query_by_text(soft_tokens, t_vec)               # [B, d_llm]
 
         q_norm = self.l2norm(q_vec)
         t_norm = self.l2norm(t_vec)

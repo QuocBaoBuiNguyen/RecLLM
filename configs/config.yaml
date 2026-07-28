@@ -86,6 +86,16 @@ model:
     # prompt's <Warm_ID> is stripped when False (wrap_prompt_with_soft_tokens_v2).
     warm_token: False
     item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
+    # Second cross-attention source: the distilled INPUT-space semantic bank
+    # (same file Stage 1/2 trained proj_sem on — NOT the last-hidden warm-token
+    # bank above) is fed next to the CF vector, so attention balances CF vs
+    # semantics per item. Cold items (weak CF, rich text) lean on semantics;
+    # items with no text have zero rows and are masked back to CF-only.
+    sem_source: True
+    item_sem_emb_path: ${run.qformer_stage1.item_llm_emb_path}
+    # Training-time row dropout on the semantic source so the CF path keeps
+    # earning gradient (semantics is the easier shortcut for warm items).
+    sem_source_dropout: 0.5
 
   rec_config:
     user_num: 839
@@ -189,14 +199,24 @@ run:
     tau_ui: 0.07
     # Softer than the other contrastives: even after centering, input-space
     # targets keep residual correlation (shared genres), and tau=0.07 was
-    # too sharp — LLM@1 sat at chance (~0.003) while ITC@1 learned. 0.15 got
-    # LLM@1 to 3-5x chance but L_llm still plateaued ~0.33 nats below ln(n);
-    # 0.20 pairs with llm_emb_normalize=whiten below.
+    # too sharp — LLM@1 sat at chance (~0.003) while ITC@1 learned.
     tau_llm: 0.20
     # How the frozen item_llm_emb targets are conditioned before the cosine
-    # InfoNCE: none | center | whiten. See QRecInstructAlignmentModel.__init__
-    # for why centering alone left L_llm unable to fit even the train targets.
-    llm_emb_normalize: whiten
+    # InfoNCE: none | center | whiten. center, NOT whiten: whitening rescales
+    # each dimension, so the aligned geometry no longer matches the raw LLM
+    # input-embedding coordinate system that Stage 3 injects into. The old
+    # capacity argument for whiten (L_llm plateaued under center) predates the
+    # switch of loss_llm_align from mean-pooled queries to BLIP-2 query
+    # selection, which attacks the same plateau without bending the target
+    # space. Revisit whiten only if L_llm still cannot fit TRAIN targets.
+    llm_emb_normalize: center
+    # Mirror of model.qformer_config.user_conditioned: builds user_proj in the
+    # Stage-1 adapter and pretrains it via the candidate-conditioned (DIN-style)
+    # user-item BPR, so it does not reach Stage 3 at its zero init.
+    user_conditioned: ${model.qformer_config.user_conditioned}
+    # Semantic second cross-attention source (reuses item_llm_emb_path below).
+    sem_source: ${model.qformer_config.sem_source}
+    sem_source_dropout: ${model.qformer_config.sem_source_dropout}
     # Must be distilled with --space input (LLM input-embedding space — the
     # space soft tokens are injected into). The last-hidden file stays on
     # model.qformer_config.item_llm_emb_path for the warm token.
@@ -237,10 +257,13 @@ run:
     # Warm-start llm_proj from Stage 1's aligned projection instead of a fresh
     # init — this is what carries the SeLLa alignment into the injection path.
     proj_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_align_proj_weights_name}"
-    # Alignment keep-alive so the generative objective doesn't wash the
-    # alignment out of Q-Former + llm_proj. Same InfoNCE as Stage 1's w_llm,
-    # weighted low so the LM loss stays primary. Set 0.0 to disable.
-    w_llm: 0.1
+    # Input-space alignment keep-alive: OFF. It pulls llm_proj toward the
+    # (normalized) input-embedding bank geometry while w_align below pulls the
+    # SAME vectors toward the LLM's last-hidden caption space — two different
+    # coordinate systems fighting over one projection. The Stage-1 alignment
+    # already rides in via the warm-started proj_ckpt_in; w_align alone keeps
+    # the injected tokens grounded in the space the LLM actually reads.
+    w_llm: 0.0
     tau_llm: ${run.qformer_stage1.tau_llm}
     # Discriminative LLM-space alignment (the load-bearing Q-Former→LLM
     # grounding): on-the-fly symmetric InfoNCE between mean-pooled
@@ -256,6 +279,12 @@ run:
     # have to reference the same target geometry.
     llm_emb_normalize: ${run.qformer_stage1.llm_emb_normalize}
     item_llm_emb_path: ${run.qformer_stage1.item_llm_emb_path}
+    # Adapter shape must mirror Stage 1 (user_proj + proj_sem ride through the
+    # strict checkpoint load to Stage 3), and the semantic source stays active
+    # so the generative objective trains the same two-source attention.
+    user_conditioned: ${model.qformer_config.user_conditioned}
+    sem_source: ${model.qformer_config.sem_source}
+    sem_source_dropout: ${model.qformer_config.sem_source_dropout}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"

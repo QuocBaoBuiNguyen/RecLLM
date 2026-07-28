@@ -92,7 +92,7 @@ def _init_rec_model(cfg, device):
     return mf
 
 
-def _init_qformer(cfg, device):
+def _init_qformer(cfg, device, d_sem=None):
     qformer_output_dim = cfg.get("qformer_output_dim") or cfg.qformer_d_model
     qformer = HFQFormerAdapter(
         d_cf=int(cfg.embedding_size),
@@ -104,6 +104,14 @@ def _init_qformer(cfg, device):
         qformer_text_model_name=cfg.qformer_text_model_name,
         max_instruction_length=int(cfg.max_instruction_length),
         init_from_pretrained_text=False,
+        # Must mirror Stage 1's adapter shape: its checkpoint now carries
+        # user_proj (candidate conditioning) and proj_sem (semantic source),
+        # and the strict load below would otherwise reject those keys. The
+        # conditioning path is unused here (no user_cf is passed), but the
+        # weights must ride through to Stage 3 intact.
+        user_conditioned=bool(cfg.get("user_conditioned", False)),
+        d_user=int(cfg.embedding_size),
+        d_sem=d_sem,
     ).to(device)
 
     ckpt_path = cfg.get("qformer_ckpt_in")
@@ -388,6 +396,8 @@ def forward_stage2(
     tau_llm: float = 0.07,
     w_align: float = 0.0,
     tau_align: float = 0.07,
+    sem_bank=None,
+    sem_dropout: float = 0.0,
 ):
     item_ids = batch["i_left"]
     captions = batch["text"]
@@ -395,10 +405,22 @@ def forward_stage2(
     with torch.no_grad():
         item_cf = mf.item_encoder(item_ids)
 
+    # Optional second cross-attention source (semantic item embedding). Row
+    # dropout during training keeps the CF path trained; zeroed rows are
+    # masked out inside the adapter.
+    sem_vec = None
+    if sem_bank is not None:
+        sem_vec = sem_bank[item_ids]
+        if qformer.training and sem_dropout > 0.0:
+            keep = (
+                torch.rand(sem_vec.size(0), 1, device=sem_vec.device) >= sem_dropout
+            ).to(sem_vec.dtype)
+            sem_vec = sem_vec * keep
+
     # BLIP-2-style generative pretraining: queries cross-attend to the CF
-    # vector only, no text input to the Q-Former. Instruction-awareness is
-    # deferred to Stage 3 (instruction tuning).
-    query_tokens = qformer.encode_cf(item_cf)
+    # vector (and optional semantic source) only, no text input to the
+    # Q-Former. Instruction-awareness is deferred to Stage 3.
+    query_tokens = qformer.encode_cf(item_cf, sem_vec=sem_vec)
     query_tokens = qformer.out_proj(query_tokens)
     soft_tokens = llm_proj(query_tokens)
 
@@ -451,7 +473,7 @@ def forward_stage2(
 def evaluate(
     loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int,
     align_bank=None, w_llm: float = 0.0, tau_llm: float = 0.07,
-    w_align: float = 0.0, tau_align: float = 0.07,
+    w_align: float = 0.0, tau_align: float = 0.07, sem_bank=None,
 ):
     qformer.eval()
     llm_proj.eval()
@@ -462,7 +484,7 @@ def evaluate(
             loss, parts = forward_stage2(
                 batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
-                w_align=w_align, tau_align=tau_align,
+                w_align=w_align, tau_align=tau_align, sem_bank=sem_bank,
             )
             meters.add_parts(loss, parts)
     qformer.train()
@@ -488,7 +510,30 @@ def train_qformer_stage2_generative(cfg):
     )
 
     mf = _init_rec_model(cfg, device)
-    qformer = _init_qformer(cfg, device).train()
+
+    # Semantic cross-attention source (second source next to CF). Loaded RAW —
+    # normalize_item_llm_emb conditions the contrastive TARGET bank only; the
+    # source has its own trainable proj_sem. Must load before the Q-Former so
+    # the adapter is built with proj_sem and can strict-load Stage 1's ckpt.
+    sem_source = bool(cfg.get("sem_source", False))
+    sem_dropout = float(cfg.get("sem_source_dropout", 0.5))
+    sem_bank = None
+    if sem_source:
+        emb_path = cfg.get("item_llm_emb_path")
+        if not emb_path or not os.path.exists(emb_path):
+            raise FileNotFoundError(
+                f"item_llm_emb_path is required and must exist when sem_source is enabled, got: {emb_path}"
+            )
+        blob = torch.load(emb_path, map_location="cpu")
+        sem_bank = (blob["item_llm_emb"] if isinstance(blob, dict) else blob).float().to(device)
+        log_step(
+            "Semantic cross-attention source active",
+            f"bank={tuple(sem_bank.shape)}, sem_source_dropout={sem_dropout}",
+        )
+
+    qformer = _init_qformer(
+        cfg, device, d_sem=sem_bank.size(-1) if sem_bank is not None else None
+    ).train()
     tokenizer, llm = _init_llm(cfg.llm_model_name, device)
 
     d_q = qformer.output_dim
@@ -584,6 +629,7 @@ def train_qformer_stage2_generative(cfg):
                 batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
                 w_align=w_align, tau_align=tau_align,
+                sem_bank=sem_bank, sem_dropout=sem_dropout,
             )
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -604,7 +650,7 @@ def train_qformer_stage2_generative(cfg):
         val_meters = evaluate(
             valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length,
             align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
-            w_align=w_align, tau_align=tau_align,
+            w_align=w_align, tau_align=tau_align, sem_bank=sem_bank,
         )
         val_loss = val_meters.mean("loss")
         print(
