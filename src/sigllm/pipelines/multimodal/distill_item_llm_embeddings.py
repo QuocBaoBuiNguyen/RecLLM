@@ -46,7 +46,7 @@ def parse_args():
 def parse_genres(genres) -> list[str]:
     return sorted({g.strip() for g in str(genres).split("|") if g.strip()})
 
-def build_item_texts(data_pkl: str, item_num: int, padding_index: int) -> dict[int, str]:
+def build_item_texts(data_pkl: str, item_num: int, padding_index: int, space: str = "last_hidden") -> dict[int, str]:
     df = pd.read_pickle(data_pkl)
     required = {"iid", "title", "genres"}
     missing = sorted(required - set(df.columns))
@@ -61,7 +61,13 @@ def build_item_texts(data_pkl: str, item_num: int, padding_index: int) -> dict[i
             continue
         parsed = parse_genres(genres)
         genre_str = ", ".join(parsed) if parsed else "Unknown"
-        item_texts[iid] = f"Title: {title}. Genres: {genre_str}."
+        if space == "input":
+            # No scaffold labels: under mask-mean pooling, tokens shared by
+            # every item ("Title", "Genres", ":") become a common component
+            # that collapses the targets into a narrow cosine cone.
+            item_texts[iid] = f"{title}. {genre_str}."
+        else:
+            item_texts[iid] = f"Title: {title}. Genres: {genre_str}."
 
     covered = [i for i in range(item_num) if i in item_texts]
 
@@ -210,7 +216,7 @@ def distill(args) -> None:
                 "Distilling from Base LLM. SeLLa distills from the Step-1 finetuned models"
             )
 
-    item_texts = build_item_texts(args.data_pkl, args.item_num, args.padding_index)
+    item_texts = build_item_texts(args.data_pkl, args.item_num, args.padding_index, args.space)
     table, hidden_size = _distill_table(
         model, tokenizer, item_texts, args.item_num, args.batch_size, args.max_length, args.padding_index, args.space
     )

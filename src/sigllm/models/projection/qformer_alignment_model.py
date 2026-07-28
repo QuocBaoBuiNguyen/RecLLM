@@ -41,7 +41,16 @@ class QRecInstructAlignmentModel(nn.Module):
         self.has_llm_align = item_llm_emb is not None
         if self.has_llm_align:
             emb = item_llm_emb if isinstance(item_llm_emb, torch.Tensor) else item_llm_emb.weight
-            emb = emb.float()
+            emb = emb.float().clone()
+            # Center over covered items before the cosine InfoNCE: mask-mean
+            # input embeddings share a large common component (prompt scaffold
+            # + genre tokens; off-diag cosine ~0.88 measured on ml-1m), which
+            # collapses all targets into a narrow cone and leaves the
+            # contrastive nothing to discriminate. Uncovered items (zero rows)
+            # are excluded from the mean and stay zero.
+            covered = emb.norm(dim=-1) > 0
+            if covered.any():
+                emb[covered] = emb[covered] - emb[covered].mean(dim=0, keepdim=True)
             d_llm = int(d_llm) if d_llm is not None else int(emb.size(-1))
             if emb.size(-1) != d_llm:
                 raise ValueError(

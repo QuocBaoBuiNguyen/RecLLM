@@ -360,6 +360,12 @@ def train_qformer_stage2_generative(cfg):
                 f"item_llm_emb hidden size {align_bank.size(-1)} != LLM hidden size {hidden_size}; "
                 "distill with --space input against the same LLM."
             )
+        # Same centering as Stage 1's alignment model: remove the common
+        # component (scaffold/genre tokens) so the cosine InfoNCE targets are
+        # separable. Uncovered items (zero rows) stay zero.
+        covered = align_bank.norm(dim=-1) > 0
+        if covered.any():
+            align_bank[covered] = align_bank[covered] - align_bank[covered].mean(dim=0, keepdim=True)
         log_step(
             "Alignment keep-alive active",
             f"w_llm={w_llm}, tau_llm={tau_llm}, bank={tuple(align_bank.shape)} from {emb_path}",

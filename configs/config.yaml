@@ -156,7 +156,10 @@ run:
     tau_itc: 0.07
     tau_ii: 0.05
     tau_ui: 0.07
-    tau_llm: 0.07
+    # Softer than the other contrastives: even after centering, input-space
+    # targets keep residual correlation (shared genres), and tau=0.07 was
+    # too sharp — LLM@1 sat at chance (~0.003) while ITC@1 learned.
+    tau_llm: 0.15
     # Must be distilled with --space input (LLM input-embedding space — the
     # space soft tokens are injected into). The last-hidden file stays on
     # model.qformer_config.item_llm_emb_path for the warm token.
@@ -201,7 +204,7 @@ run:
     # alignment out of Q-Former + llm_proj. Same InfoNCE as Stage 1's w_llm,
     # weighted low so the LM loss stays primary. Set 0.0 to disable.
     w_llm: 0.1
-    tau_llm: 0.07
+    tau_llm: ${run.qformer_stage1.tau_llm}
     item_llm_emb_path: ${run.qformer_stage1.item_llm_emb_path}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
