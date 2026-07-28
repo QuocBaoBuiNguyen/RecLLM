@@ -139,6 +139,70 @@ def _indices_for_type(batch, sample_type: str, device):
     return torch.tensor(indices, dtype=torch.long, device=device)
 
 
+# Which sample type each metric depends on. A batch holding none of that type
+# produces no loss for the metric, so it must be excluded from the average
+# rather than contributing a zero.
+METRIC_GROUPS = {
+    "L_itc": "item_text", "itc_top1": "item_text",
+    "L_itm": "item_text", "itm_acc": "item_text",
+    "L_itg": "item_text", "itg_acc": "item_text",
+    "L_llm": "item_text", "llm_top1": "item_text",
+    "L_ii": "item_item", "ii_top1": "item_item",
+    "L_ui": "user_item", "ui_top1": "user_item",
+}
+
+SAMPLE_TYPES = ("item_text", "item_item", "user_item")
+
+
+class MetricAccumulator:
+    """Average each metric over the batches where its sample type was present.
+
+    Averaging over *all* batches scales every metric by the fraction of
+    batches carrying its type, and that fraction differs sharply between
+    splits: the train loader shuffles (types interleave, so every batch holds
+    a few item_text rows) while val/test do not (the builder emits item_text
+    as one contiguous block, so a handful of val batches are almost entirely
+    item_text and the rest hold none). Diluted averages are therefore not
+    comparable across splits.
+
+    ``n_<type>`` records the mean number of rows of that type per contributing
+    batch. In-batch contrastives draw negatives from exactly those rows, so
+    chance accuracy is ``1 / n`` — without ``n``, a top-1 number cannot be
+    read at all.
+    """
+
+    def __init__(self):
+        self.loss_total = 0.0
+        self.steps = 0
+        self.sums = {key: 0.0 for key in METRIC_GROUPS}
+        self.active = {key: 0 for key in METRIC_GROUPS}
+        self.n_sums = {group: 0.0 for group in SAMPLE_TYPES}
+        self.n_active = {group: 0 for group in SAMPLE_TYPES}
+
+    def update(self, loss, logs, counts):
+        self.loss_total += float(loss.item())
+        self.steps += 1
+        for key, group in METRIC_GROUPS.items():
+            if counts[group] >= 2:
+                self.sums[key] += float(logs[key].item())
+                self.active[key] += 1
+        for group in SAMPLE_TYPES:
+            if counts[group] >= 2:
+                self.n_sums[group] += float(counts[group])
+                self.n_active[group] += 1
+
+    def result(self):
+        out = {"loss": self.loss_total / self.steps if self.steps else 0.0}
+        for key in METRIC_GROUPS:
+            out[key] = self.sums[key] / self.active[key] if self.active[key] else 0.0
+        for group in SAMPLE_TYPES:
+            out[f"n_{group}"] = (
+                self.n_sums[group] / self.n_active[group] if self.n_active[group] else 0.0
+            )
+            out[f"frac_{group}"] = self.n_active[group] / self.steps if self.steps else 0.0
+        return out
+
+
 def train_step(
     batch,
     model: QRecInstructAlignmentModel,
@@ -229,7 +293,12 @@ def train_step(
         losses.append(w_ui * loss_ui)
 
     loss = sum(losses, zero)
-    return loss, logs
+    counts = {
+        "item_text": int(item_text_idx.numel()),
+        "item_item": int(item_item_idx.numel()),
+        "user_item": int(user_item_idx.numel()),
+    }
+    return loss, logs, counts
 
 
 def evaluate_loss(
@@ -248,27 +317,12 @@ def evaluate_loss(
 ):
     model.eval()
     device = next(model.parameters()).device
-    totals = {
-        "loss": 0.0,
-        "L_itc": 0.0,
-        "L_itm": 0.0,
-        "L_itg": 0.0,
-        "L_ii": 0.0,
-        "L_ui": 0.0,
-        "L_llm": 0.0,
-        "itc_top1": 0.0,
-        "itm_acc": 0.0,
-        "itg_acc": 0.0,
-        "ii_top1": 0.0,
-        "ui_top1": 0.0,
-        "llm_top1": 0.0,
-    }
-    steps = 0
+    accumulator = MetricAccumulator()
 
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
-            loss, logs = train_step(
+            loss, logs, counts = train_step(
                 batch,
                 model,
                 w_itc=w_itc,
@@ -282,15 +336,10 @@ def evaluate_loss(
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
             )
-            totals["loss"] += loss.item()
-            for key in logs:
-                totals[key] += logs[key].item()
-            steps += 1
+            accumulator.update(loss, logs, counts)
 
     model.train()
-    if steps == 0:
-        return {key: 0.0 for key in totals}
-    return {key: value / steps for key, value in totals.items()}
+    return accumulator.result()
 
 
 def _save_checkpoint(
@@ -366,27 +415,13 @@ def train_qformer_stage1_representation(cfg):
 
     for epoch in range(cfg.epoch):
         model.train()
-        train_totals = {
-            "loss": 0.0,
-            "L_itc": 0.0,
-            "L_itm": 0.0,
-            "L_itg": 0.0,
-            "L_ii": 0.0,
-            "L_ui": 0.0,
-            "L_llm": 0.0,
-            "itc_top1": 0.0,
-            "itm_acc": 0.0,
-            "itg_acc": 0.0,
-            "ii_top1": 0.0,
-            "ui_top1": 0.0,
-            "llm_top1": 0.0,
-        }
+        accumulator = MetricAccumulator()
         train_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
             opt.zero_grad()
 
-            loss, logs = train_step(
+            loss, logs, counts = train_step(
                 batch,
                 model,
                 w_itc=cfg.w_itc,
@@ -404,16 +439,11 @@ def train_qformer_stage1_representation(cfg):
             loss.backward()
             opt.step()
 
-            train_totals["loss"] += loss.item()
-            for key in logs:
-                train_totals[key] += logs[key].item()
+            accumulator.update(loss, logs, counts)
             train_steps += 1
 
         if (epoch + 1) % cfg.log_epoch == 0:
-            avg_train = {
-                key: value / train_steps if train_steps > 0 else 0.0
-                for key, value in train_totals.items()
-            }
+            avg_train = accumulator.result()
             val_logs = evaluate_loss(
                 model,
                 val_loader,
@@ -436,14 +466,18 @@ def train_qformer_stage1_representation(cfg):
                 f"L_ui={avg_train['L_ui']:.4f} L_llm={avg_train['L_llm']:.4f} "
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
                 f"ITG_acc={avg_train['itg_acc']:.4f} II@1={avg_train['ii_top1']:.4f} "
-                f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} | "
+                f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} "
+                f"n_it={avg_train['n_item_text']:.1f}(chance={1.0 / max(avg_train['n_item_text'], 1.0):.4f}) "
+                f"n_ii={avg_train['n_item_item']:.1f} n_ui={avg_train['n_user_item']:.1f} | "
                 f"Val Loss={val_logs['loss']:.4f} "
                 f"L_itc={val_logs['L_itc']:.4f} L_itm={val_logs['L_itm']:.4f} "
                 f"L_itg={val_logs['L_itg']:.4f} L_ii={val_logs['L_ii']:.4f} "
                 f"L_ui={val_logs['L_ui']:.4f} L_llm={val_logs['L_llm']:.4f} "
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
                 f"ITG_acc={val_logs['itg_acc']:.4f} II@1={val_logs['ii_top1']:.4f} "
-                f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} | "
+                f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} "
+                f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
+                f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f}"
@@ -517,9 +551,11 @@ def train_qformer_stage1_representation(cfg):
         (
             f"loss={test_logs['loss']:.4f}, l_itc={test_logs['L_itc']:.4f}, "
             f"l_itm={test_logs['L_itm']:.4f}, l_itg={test_logs['L_itg']:.4f}, "
-            f"l_ii={test_logs['L_ii']:.4f}, itc@1={test_logs['itc_top1']:.4f}, "
+            f"l_ii={test_logs['L_ii']:.4f}, l_llm={test_logs['L_llm']:.4f}, "
+            f"itc@1={test_logs['itc_top1']:.4f}, "
             f"itm_acc={test_logs['itm_acc']:.4f}, itg_acc={test_logs['itg_acc']:.4f}, "
-            f"ii@1={test_logs['ii_top1']:.4f}"
+            f"ii@1={test_logs['ii_top1']:.4f}, llm@1={test_logs['llm_top1']:.4f}, "
+            f"n_it={test_logs['n_item_text']:.1f}"
         ),
     )
 
