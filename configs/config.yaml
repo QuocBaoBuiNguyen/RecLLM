@@ -148,12 +148,19 @@ run:
     w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
-    w_llm: 0.0
+    # SeLLa alignment: gradients flow through the injection-identical
+    # llm_align_proj (Linear+LayerNorm on out_proj output, per token, pooled
+    # after projection). The head is exported and warm-starts Stage-2's
+    # llm_proj — see best_align_proj_weights_name / run.qformer_stage2.proj_ckpt_in.
+    w_llm: 1.0
     tau_itc: 0.07
     tau_ii: 0.05
     tau_ui: 0.07
     tau_llm: 0.07
-    item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
+    # Must be distilled with --space input (LLM input-embedding space — the
+    # space soft tokens are injected into). The last-hidden file stays on
+    # model.qformer_config.item_llm_emb_path for the warm token.
+    item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb_input.pt"
     weight_decay: 1e-3
     debug_batch: True
     debug_batch_max_steps: 10
@@ -161,6 +168,7 @@ run:
     early_stopping_min_delta: 1e-4
     best_checkpoint_name: "qformer_stage1_best_full.pt"
     best_qformer_weights_name: "qformer_stage1_best_qformer.pth"
+    best_align_proj_weights_name: "qformer_stage1_best_align_proj.pth"
     log_epoch: 1
     epoch: 100
     pretrained_rec_path: ${model.rec_config.pretrained_path}
@@ -186,6 +194,15 @@ run:
     llm_model_name: ${model.llm_model}
     pretrained_rec_path: ${model.rec_config.pretrained_path}
     qformer_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}"
+    # Warm-start llm_proj from Stage 1's aligned projection instead of a fresh
+    # init — this is what carries the SeLLa alignment into the injection path.
+    proj_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_align_proj_weights_name}"
+    # Alignment keep-alive so the generative objective doesn't wash the
+    # alignment out of Q-Former + llm_proj. Same InfoNCE as Stage 1's w_llm,
+    # weighted low so the LM loss stays primary. Set 0.0 to disable.
+    w_llm: 0.1
+    tau_llm: 0.07
+    item_llm_emb_path: ${run.qformer_stage1.item_llm_emb_path}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"

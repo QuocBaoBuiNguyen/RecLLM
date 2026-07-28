@@ -49,7 +49,20 @@ class QRecInstructAlignmentModel(nn.Module):
                     f"specified d_llm={d_llm}"
                 )
             self.register_buffer("item_llm_emb", emb, persistent=False)
-            self.llm_align_proj = nn.Linear(d_model, d_llm)
+            # Injection-identical head: the same Linear+LayerNorm stack (and
+            # init) as the Stage-2/3 ``llm_proj``, applied per query token on
+            # ``out_proj`` output. Stage-1 exports its state dict so Stage-2
+            # warm-starts ``llm_proj`` from it — the alignment must live in the
+            # projection the frozen LLM actually reads, not a throwaway head.
+            d_q = qformer.output_dim
+            self.llm_align_proj = nn.Sequential(
+                nn.Linear(d_q, d_llm),
+                nn.LayerNorm(d_llm),
+            )
+            nn.init.normal_(self.llm_align_proj[0].weight, std=0.02)
+            nn.init.zeros_(self.llm_align_proj[0].bias)
+            nn.init.constant_(self.llm_align_proj[1].weight, d_llm ** -0.5)
+            nn.init.zeros_(self.llm_align_proj[1].bias)
         else:
             self.item_llm_emb = None
             self.llm_align_proj = None
@@ -251,9 +264,12 @@ class QRecInstructAlignmentModel(nn.Module):
         if not self.has_llm_align:
             raise RuntimeError("LLM alignment loss requested but no LLM embeddings provided")
 
-        query_hidden = self.encode_item_queries(item_ids)
-        pooled = query_hidden.mean(dim=1)
-        q_vec = self.llm_align_proj(pooled)
+        # Same path the soft tokens take at injection time (encode_cf ->
+        # out_proj -> llm_proj, per token); pooling happens after projection so
+        # the per-token geometry the LLM sees is what gets aligned.
+        query_hidden = self.encode_item_queries(item_ids)                       # [B, Q, d_model]
+        soft_tokens = self.llm_align_proj(self.qformer.out_proj(query_hidden))  # [B, Q, d_llm]
+        q_vec = soft_tokens.mean(dim=1)                                         # [B, d_llm]
         t_vec = self.item_llm_emb[item_ids].to(q_vec.device)
 
         q_norm = self.l2norm(q_vec)

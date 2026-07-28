@@ -530,6 +530,15 @@ def train_qformer_stage1_representation(cfg):
             "Exported best QFormer weights for stage2",
             f"path={best_qformer_path}, epoch={best_checkpoint['epoch']}, val_loss={best_checkpoint['val_loss']:.4f}",
         )
+        if getattr(model, "has_llm_align", False):
+            best_align_proj_path = os.path.join(
+                outdir, cfg.get("best_align_proj_weights_name", "qformer_stage1_best_align_proj.pth")
+            )
+            torch.save(model.llm_align_proj.state_dict(), best_align_proj_path)
+            log_step(
+                "Exported aligned projection for stage2 warm-start",
+                f"path={best_align_proj_path}",
+            )
     else:
         log_step("Skipped best QFormer export", "No best checkpoint was selected during training")
     

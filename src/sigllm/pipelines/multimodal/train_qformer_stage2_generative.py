@@ -1,9 +1,13 @@
 """Stage 2 — Generative pretraining of Q-Former + projection (BLIP-2 style).
 
-Loads the Q-Former weights from Stage 1, attaches a fresh ``nn.Linear``
-projection into the LLM's hidden size, and trains Q-Former + projection
-with next-token language modeling on item-text captions while keeping the
-LLM fully frozen. The Q-Former runs uni-modal here (queries cross-attend
+Loads the Q-Former weights from Stage 1, attaches a ``Linear + LayerNorm``
+projection into the LLM's hidden size (warm-started from Stage 1's aligned
+projection when ``proj_ckpt_in`` is set, fresh otherwise), and trains
+Q-Former + projection with next-token language modeling on item-text
+captions while keeping the LLM fully frozen. An optional alignment
+keep-alive term (``w_llm`` > 0) applies the Stage-1 InfoNCE between
+mean-pooled soft tokens and distilled input-space item embeddings, so the
+generative objective does not wash out the SeLLa alignment. The Q-Former runs uni-modal here (queries cross-attend
 to the CF vector only, no text input on the Q-Former text branch) —
 instruction-awareness is reserved for Stage 3, matching BLIP-2's stage-2
 design. This produces a checkpoint usable as the starting point for
@@ -133,7 +137,7 @@ def _init_llm(model_path, device):
     return tokenizer, llm
 
 
-def _build_projection(d_q: int, hidden_size: int, device) -> nn.Module:
+def _build_projection(d_q: int, hidden_size: int, device, ckpt_path: Optional[str] = None) -> nn.Module:
     """Linear + LayerNorm projection.
 
     LayerNorm.weight is initialised at ``1/sqrt(hidden_size)`` so the output
@@ -141,6 +145,9 @@ def _build_projection(d_q: int, hidden_size: int, device) -> nn.Module:
     embedding scale. Default LayerNorm init (weight=1) gives mean_l2 ~
     sqrt(H) ~ 64, which drowns the text portion of the prompt under the
     frozen attention.
+
+    ``ckpt_path`` warm-starts from Stage 1's ``llm_align_proj`` (same
+    Sequential layout), carrying the SeLLa alignment into the injection path.
     """
     proj = nn.Sequential(
         nn.Linear(d_q, hidden_size),
@@ -150,6 +157,12 @@ def _build_projection(d_q: int, hidden_size: int, device) -> nn.Module:
     nn.init.zeros_(proj[0].bias)
     nn.init.constant_(proj[1].weight, hidden_size ** -0.5)
     nn.init.zeros_(proj[1].bias)
+
+    if ckpt_path and os.path.exists(ckpt_path):
+        proj.load_state_dict(torch.load(ckpt_path, map_location="cpu"), strict=True)
+        log_step("Warm-started llm_proj from Stage 1 aligned projection", ckpt_path)
+    elif ckpt_path:
+        log_step("WARNING", f"proj_ckpt_in not found at {ckpt_path}; using fresh projection init")
     return proj
 
 
@@ -214,7 +227,32 @@ def _move_batch_to_device(batch, device):
     return batch
 
 
-def forward_stage2(batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length: int):
+def _align_loss(soft_tokens, item_ids, align_bank, tau: float):
+    """Alignment keep-alive: symmetric InfoNCE between mean-pooled soft tokens
+    (post ``llm_proj``, the exact vectors the LLM reads) and the distilled
+    input-space item embeddings — the same objective as Stage 1's
+    ``loss_llm_align``, kept on while the generative loss retrains the stack."""
+    q_vec = soft_tokens.float().mean(dim=1)                      # [B, H]
+    t_vec = align_bank[item_ids]                                 # [B, H]
+    q_norm = q_vec / (q_vec.norm(dim=-1, keepdim=True) + 1e-12)
+    t_norm = t_vec / (t_vec.norm(dim=-1, keepdim=True) + 1e-12)
+    sim = (q_norm @ t_norm.T) / tau
+    labels = torch.arange(sim.size(0), device=sim.device)
+    return (nn.functional.cross_entropy(sim, labels) + nn.functional.cross_entropy(sim.T, labels)) / 2.0
+
+
+def forward_stage2(
+    batch,
+    mf,
+    qformer,
+    llm_proj,
+    tokenizer,
+    llm,
+    max_caption_length: int,
+    align_bank=None,
+    w_llm: float = 0.0,
+    tau_llm: float = 0.07,
+):
     item_ids = batch["i_left"]
     captions = batch["text"]
 
@@ -247,10 +285,18 @@ def forward_stage2(batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_len
             labels=labels,
             return_dict=True,
         )
-    return outputs.loss
+
+    lm_loss = outputs.loss
+    if align_bank is not None and w_llm > 0.0:
+        align = _align_loss(soft_tokens, item_ids, align_bank, tau_llm)
+        return lm_loss + w_llm * align, lm_loss.detach(), align.detach()
+    return lm_loss, lm_loss.detach(), None
 
 
-def evaluate(loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int):
+def evaluate(
+    loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int,
+    align_bank=None, w_llm: float = 0.0, tau_llm: float = 0.07,
+):
     qformer.eval()
     llm_proj.eval()
     total = 0.0
@@ -258,8 +304,9 @@ def evaluate(loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
-            loss = forward_stage2(
-                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length
+            loss, _, _ = forward_stage2(
+                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
+                align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
             )
             total += float(loss.item())
             steps += 1
@@ -293,7 +340,30 @@ def train_qformer_stage2_generative(cfg):
 
     d_q = qformer.output_dim
     hidden_size = llm.config.hidden_size
-    llm_proj = _build_projection(d_q, hidden_size, device).train()
+    llm_proj = _build_projection(
+        d_q, hidden_size, device, ckpt_path=cfg.get("proj_ckpt_in")
+    ).train()
+
+    w_llm = float(cfg.get("w_llm", 0.0))
+    tau_llm = float(cfg.get("tau_llm", 0.07))
+    align_bank = None
+    if w_llm > 0.0:
+        emb_path = cfg.get("item_llm_emb_path")
+        if not emb_path or not os.path.exists(emb_path):
+            raise FileNotFoundError(
+                f"item_llm_emb_path is required and must exist when w_llm > 0.0, but got: {emb_path}"
+            )
+        blob = torch.load(emb_path, map_location="cpu")
+        align_bank = (blob["item_llm_emb"] if isinstance(blob, dict) else blob).float().to(device)
+        if align_bank.size(-1) != hidden_size:
+            raise ValueError(
+                f"item_llm_emb hidden size {align_bank.size(-1)} != LLM hidden size {hidden_size}; "
+                "distill with --space input against the same LLM."
+            )
+        log_step(
+            "Alignment keep-alive active",
+            f"w_llm={w_llm}, tau_llm={tau_llm}, bank={tuple(align_bank.shape)} from {emb_path}",
+        )
 
     trainable_params = [
         p for p in qformer.parameters() if p.requires_grad
@@ -328,28 +398,38 @@ def train_qformer_stage2_generative(cfg):
         qformer.train()
         llm_proj.train()
         train_total = 0.0
+        train_lm = 0.0
+        train_align = 0.0
         train_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
             optimizer.zero_grad()
-            loss = forward_stage2(
-                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length
+            loss, lm_loss, align_loss = forward_stage2(
+                batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
+                align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
             )
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             train_total += float(loss.item())
+            train_lm += float(lm_loss.item())
+            if align_loss is not None:
+                train_align += float(align_loss.item())
             train_steps += 1
 
         avg_train_loss = train_total / max(train_steps, 1)
+        avg_train_lm = train_lm / max(train_steps, 1)
+        avg_train_align = train_align / max(train_steps, 1)
         if (epoch + 1) % log_epoch != 0:
             continue
 
         val_loss = evaluate(
-            valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length
+            valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length,
+            align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
         )
         print(
-            f"epoch {epoch + 1} | train_loss={avg_train_loss:.4f} | val_loss={val_loss:.4f}"
+            f"epoch {epoch + 1} | train_loss={avg_train_loss:.4f} "
+            f"(lm={avg_train_lm:.4f}, align={avg_train_align:.4f}) | val_loss={val_loss:.4f}"
         )
 
         improved = stopper.update({"epoch": epoch + 1, "val_loss": val_loss})

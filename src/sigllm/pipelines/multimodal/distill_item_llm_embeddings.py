@@ -29,6 +29,18 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for embedding extraction.")
     parser.add_argument("--max-length", type=int, default=64, help="Max length for tokenization.")
     parser.add_argument("--padding-index", type=int, default=0, help="Index of the padding token (default 0).")
+    parser.add_argument(
+        "--space",
+        choices=["input", "last_hidden"],
+        default="last_hidden",
+        help=(
+            "Target space of the distilled vectors. 'input': mask-mean of the LLM's input "
+            "token embeddings over the raw item text — the space soft tokens are injected "
+            "into; use this file for Stage-1/2 alignment (w_llm). 'last_hidden': last-layer "
+            "hidden state at the final prompt token — the LLM's output space; use this file "
+            "for the warm token."
+        ),
+    )
     return parser.parse_args()
 
 def parse_genres(genres) -> list[str]:
@@ -131,7 +143,7 @@ def _load_finetuned_recllm(args):
     return model.llm_model, model.llm_tokenizer, "finetuned"
 
 @torch.no_grad()
-def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_length, padding_index):
+def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_length, padding_index, space):
     tokenizer.padding_size = "right"
 
     if tokenizer.pad_token is None:
@@ -146,7 +158,12 @@ def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_lengt
 
     for start in range(0, len(ids), batch_size):
         batch_ids = ids[start:start + batch_size]
-        prompts = [DISTILL_TEMPLATE.format(item_text=item_texts[i]) for i in batch_ids]
+        if space == "input":
+            # Raw item text only: the instruction template is constant across
+            # items and would dominate a mask-mean over input embeddings.
+            prompts = [item_texts[i] for i in batch_ids]
+        else:
+            prompts = [DISTILL_TEMPLATE.format(item_text=item_texts[i]) for i in batch_ids]
         tokens = tokenizer(
             prompts,
             return_tensors="pt",
@@ -156,11 +173,17 @@ def _distill_table(model, tokenizer, item_texts, item_num, batch_size, max_lengt
             add_special_tokens=True,
         ).to(device)
 
-        outputs = model(**tokens, output_hidden_states=True, return_dict=True)
-        last_hidden = outputs.hidden_states[-1] # [B, T, H]
-        last_idx = tokens.attention_mask.sum(dim=1) - 1 # [B]
-        batch_idx = torch.arange(last_hidden.size(0), device=device)
-        pooled = last_hidden[batch_idx, last_idx].float().cpu() # [B, H]
+        if space == "input":
+            token_emb = model.get_input_embeddings()(tokens.input_ids) # [B, T, H]
+            mask = tokens.attention_mask.unsqueeze(-1).to(token_emb.dtype) # [B, T, 1]
+            pooled = (token_emb * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+            pooled = pooled.float().cpu() # [B, H]
+        else:
+            outputs = model(**tokens, output_hidden_states=True, return_dict=True)
+            last_hidden = outputs.hidden_states[-1] # [B, T, H]
+            last_idx = tokens.attention_mask.sum(dim=1) - 1 # [B]
+            batch_idx = torch.arange(last_hidden.size(0), device=device)
+            pooled = last_hidden[batch_idx, last_idx].float().cpu() # [B, H]
 
         for row, iid in enumerate(batch_ids):
             table[iid] = pooled[row]
@@ -189,7 +212,7 @@ def distill(args) -> None:
 
     item_texts = build_item_texts(args.data_pkl, args.item_num, args.padding_index)
     table, hidden_size = _distill_table(
-        model, tokenizer, item_texts, args.item_num, args.batch_size, args.max_length, args.padding_index
+        model, tokenizer, item_texts, args.item_num, args.batch_size, args.max_length, args.padding_index, args.space
     )
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
@@ -200,6 +223,7 @@ def distill(args) -> None:
             "hidden_size": hidden_size,
             "llm_model": llm_name,
             "source": source,
+            "space": args.space,
             "normalized": False,
         },
         args.output,
