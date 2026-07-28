@@ -263,6 +263,9 @@ run:
     weight_decay: 1e-3
     epoch: 20
     log_epoch: 1
+    # Step-level progress log every N batches (running means incl. llm_align,
+    # align@1/@5, pos/neg cosine and sim_gap). 0 = epoch summaries only.
+    log_steps: 50
     max_caption_length: 64
     early_stopping_patience: 5
     early_stopping_min_delta: 1e-4

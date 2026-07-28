@@ -279,8 +279,9 @@ def _llm_space_align_loss(soft_tokens, target, tau: float):
     generative caption loss, this forces the injected representation to be
     linearly separable in the space the LLM *reads from*, so the frozen LLM
     can discriminate items from the soft tokens alone. Returns
-    ``(loss, align@1)``. Everything is upcast to float32 before
-    normalize/softmax."""
+    ``(loss, stats)`` where ``stats`` carries retrieval and geometry
+    diagnostics (floats, already detached). Everything is upcast to float32
+    before normalize/softmax."""
     q_vec = soft_tokens.float().mean(dim=1)                      # [B, H]
     t_vec = target.to(q_vec.device).float()                      # [B, H]
     q_norm = q_vec / (q_vec.norm(dim=-1, keepdim=True) + 1e-12)
@@ -292,8 +293,72 @@ def _llm_space_align_loss(soft_tokens, target, tau: float):
         + nn.functional.cross_entropy(sim.T, labels)
     ) / 2.0
     with torch.no_grad():
+        n = sim.size(0)
+        cos = sim * tau                                          # raw cosine, [-1, 1]
+        eye = torch.eye(n, dtype=torch.bool, device=sim.device)
+        pos_sim = cos.diagonal().mean()
+        neg_sim = cos[~eye].mean() if n > 1 else cos.new_zeros(())
         top1 = (sim.argmax(dim=1) == labels).float().mean()
-    return loss, top1
+        k = min(5, n)
+        topk = sim.topk(k, dim=1).indices
+        top5 = (topk == labels.unsqueeze(1)).any(dim=1).float().mean()
+        stats = {
+            "top1": float(top1.item()),
+            "top5": float(top5.item()),
+            "pos_sim": float(pos_sim.item()),
+            "neg_sim": float(neg_sim.item()),
+            "soft_norm": float(q_vec.norm(dim=-1).mean().item()),
+            "target_norm": float(t_vec.norm(dim=-1).mean().item()),
+            "n_candidates": n,
+        }
+    return loss, stats
+
+
+class _RunningMeans:
+    """Per-key running means over batches; keys with no observations are
+    simply absent from the summary, so disabled loss terms never print."""
+
+    def __init__(self):
+        self.sums = {}
+        self.counts = {}
+
+    def add(self, key, value):
+        if value is None:
+            return
+        self.sums[key] = self.sums.get(key, 0.0) + float(value)
+        self.counts[key] = self.counts.get(key, 0) + 1
+
+    def add_parts(self, loss, parts):
+        self.add("loss", float(loss.item()))
+        self.add("lm", parts["lm"])
+        self.add("keepalive", parts["keepalive"])
+        self.add("llm_align", parts["llm_align"])
+        stats = parts["align_stats"]
+        if stats is not None:
+            self.add("align@1", stats["top1"])
+            self.add("align@5", stats["top5"])
+            self.add("pos_sim", stats["pos_sim"])
+            self.add("neg_sim", stats["neg_sim"])
+            self.add("sim_gap", stats["pos_sim"] - stats["neg_sim"])
+            self.add("soft_norm", stats["soft_norm"])
+            self.add("target_norm", stats["target_norm"])
+
+    def mean(self, key, default=0.0):
+        count = self.counts.get(key, 0)
+        return self.sums.get(key, 0.0) / count if count else default
+
+    def summary(self, keys):
+        return ", ".join(
+            f"{key}={self.mean(key):.4f}" for key in keys if key in self.sums
+        )
+
+
+# Order used by every step/epoch/val log line below.
+_LOG_KEYS = (
+    "loss", "lm", "keepalive", "llm_align",
+    "align@1", "align@5", "pos_sim", "neg_sim", "sim_gap",
+    "soft_norm", "target_norm",
+)
 
 
 def _align_loss(soft_tokens, item_ids, align_bank, tau: float):
@@ -366,19 +431,19 @@ def forward_stage2(
         total = total + w_llm * keepalive
 
     llm_align = None
-    align_top1 = None
+    align_stats = None
     if w_align > 0.0:
         # Second frozen-LLM forward (no_grad) on the plain captions: the
         # discriminative target lives in the same space Stage 3 injects into.
         target = _llm_caption_targets(captions, tokenizer, llm, max_caption_length)
-        llm_align, align_top1 = _llm_space_align_loss(soft_tokens, target, tau_align)
+        llm_align, align_stats = _llm_space_align_loss(soft_tokens, target, tau_align)
         total = total + w_align * llm_align
 
     parts = {
-        "lm": lm_loss.detach(),
-        "keepalive": keepalive.detach() if keepalive is not None else None,
-        "llm_align": llm_align.detach() if llm_align is not None else None,
-        "align_top1": align_top1,
+        "lm": float(lm_loss.item()),
+        "keepalive": float(keepalive.item()) if keepalive is not None else None,
+        "llm_align": float(llm_align.item()) if llm_align is not None else None,
+        "align_stats": align_stats,
     }
     return total, parts
 
@@ -390,11 +455,7 @@ def evaluate(
 ):
     qformer.eval()
     llm_proj.eval()
-    total = 0.0
-    total_align = 0.0
-    total_top1 = 0.0
-    steps = 0
-    align_steps = 0
+    meters = _RunningMeans()
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch_to_device(batch, device)
@@ -403,19 +464,10 @@ def evaluate(
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
                 w_align=w_align, tau_align=tau_align,
             )
-            total += float(loss.item())
-            if parts["llm_align"] is not None:
-                total_align += float(parts["llm_align"].item())
-                total_top1 += float(parts["align_top1"].item())
-                align_steps += 1
-            steps += 1
+            meters.add_parts(loss, parts)
     qformer.train()
     llm_proj.train()
-    return {
-        "val_loss": total / max(steps, 1),
-        "val_llm_align": total_align / max(align_steps, 1),
-        "val_align_top1": total_top1 / max(align_steps, 1),
-    }
+    return meters
 
 
 def train_qformer_stage2_generative(cfg):
@@ -514,18 +566,18 @@ def train_qformer_stage2_generative(cfg):
 
     max_caption_length = int(cfg.get("max_caption_length", 64))
     log_epoch = int(cfg.get("log_epoch", 1))
+    # In-epoch progress logging: running means over the last `log_steps`
+    # batches (0 disables). Lets you watch llm_align / align@1 / sim_gap move
+    # within the first epoch instead of waiting for the epoch summary.
+    log_steps = int(cfg.get("log_steps", 50))
 
     for epoch in range(int(cfg.epoch)):
         qformer.train()
         llm_proj.train()
-        train_total = 0.0
-        train_lm = 0.0
-        train_keepalive = 0.0
-        train_llm_align = 0.0
-        train_align_top1 = 0.0
-        train_steps = 0
-        align_steps = 0
-        for batch in train_loader:
+        epoch_meters = _RunningMeans()
+        window_meters = _RunningMeans()
+        steps_per_epoch = len(train_loader)
+        for step, batch in enumerate(train_loader, start=1):
             batch = _move_batch_to_device(batch, device)
             optimizer.zero_grad()
             loss, parts = forward_stage2(
@@ -536,37 +588,28 @@ def train_qformer_stage2_generative(cfg):
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            train_total += float(loss.item())
-            train_lm += float(parts["lm"].item())
-            if parts["keepalive"] is not None:
-                train_keepalive += float(parts["keepalive"].item())
-            if parts["llm_align"] is not None:
-                train_llm_align += float(parts["llm_align"].item())
-                train_align_top1 += float(parts["align_top1"].item())
-                align_steps += 1
-            train_steps += 1
+            epoch_meters.add_parts(loss, parts)
+            window_meters.add_parts(loss, parts)
 
-        avg_train_loss = train_total / max(train_steps, 1)
-        avg_train_lm = train_lm / max(train_steps, 1)
-        avg_train_keepalive = train_keepalive / max(train_steps, 1)
-        avg_train_llm_align = train_llm_align / max(align_steps, 1)
-        avg_train_align_top1 = train_align_top1 / max(align_steps, 1)
+            if log_steps > 0 and (step % log_steps == 0 or step == steps_per_epoch):
+                log_step(
+                    f"epoch {epoch + 1} step {step}/{steps_per_epoch}",
+                    window_meters.summary(_LOG_KEYS),
+                )
+                window_meters = _RunningMeans()
+
         if (epoch + 1) % log_epoch != 0:
             continue
 
-        val_metrics = evaluate(
+        val_meters = evaluate(
             valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length,
             align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
             w_align=w_align, tau_align=tau_align,
         )
-        val_loss = val_metrics["val_loss"]
+        val_loss = val_meters.mean("loss")
         print(
-            f"epoch {epoch + 1} | train_loss={avg_train_loss:.4f} "
-            f"(lm={avg_train_lm:.4f}, keepalive={avg_train_keepalive:.4f}, "
-            f"llm_align={avg_train_llm_align:.4f}, align@1={avg_train_align_top1:.4f}) "
-            f"| val_loss={val_loss:.4f} "
-            f"(llm_align={val_metrics['val_llm_align']:.4f}, "
-            f"align@1={val_metrics['val_align_top1']:.4f})"
+            f"epoch {epoch + 1} | train: {epoch_meters.summary(_LOG_KEYS)} "
+            f"| val: {val_meters.summary(_LOG_KEYS)}"
         )
 
         improved = stopper.update({"epoch": epoch + 1, "val_loss": val_loss})
