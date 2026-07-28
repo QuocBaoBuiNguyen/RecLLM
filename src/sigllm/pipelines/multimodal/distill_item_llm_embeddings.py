@@ -22,7 +22,18 @@ def parse_args():
     parser.add_argument("--rec-ckpt", default=None, help="Stage-3 Step-1 runner checkpoint ")
     parser.add_argument("--options", nargs="+", default=None)
     parser.add_argument("--llm-model", required=True, help="HF path/dir of the base LLM")
-    parser.add_argument("--data-pkl", required=True, help="Preprocessed pickle with columns iid,title,genres (e.g. training_ood2.pkl).")
+    parser.add_argument(
+        "--data-pkl",
+        required=True,
+        nargs="+",
+        help=(
+            "Preprocessed pickle(s) with columns iid,title,genres. Pass ALL splits "
+            "(train_ood2.pkl valid_ood2.pkl test_ood2.pkl) — item title/genres are "
+            "side information, not labels, and any item left uncovered gets a zero "
+            "row, which makes its alignment target indistinguishable from every "
+            "other uncovered item."
+        ),
+    )
     parser.add_argument("--item-num", type=int, required=True, help="Number of items to process (for testing).")
     parser.add_argument("--output", required=True, help="Output path for the distilled embeddings (pickle).")
     parser.add_argument("--lora-adapter-dir", default=None, help="Path to LoRA adapter dir (if any).")
@@ -46,32 +57,58 @@ def parse_args():
 def parse_genres(genres) -> list[str]:
     return sorted({g.strip() for g in str(genres).split("|") if g.strip()})
 
-def build_item_texts(data_pkl: str, item_num: int, padding_index: int, space: str = "last_hidden") -> dict[int, str]:
-    df = pd.read_pickle(data_pkl)
-    required = {"iid", "title", "genres"}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise KeyError(f"Missing required columns in {data_pkl}: {missing}")
+def build_item_texts(data_pkls, item_num: int, padding_index: int, space: str = "last_hidden") -> dict[int, str]:
+    """Union item metadata across every given split.
 
+    Coverage must span all splits the Q-Former will ever see. The stage-1
+    builder emits one ``item_text`` sample per item present in *its own*
+    split's pkl, so under an OOD/cold-start split the validation set asks
+    about items absent from train. An uncovered item keeps a zero row here,
+    and a zero target normalizes to zero — every uncovered item then shares
+    the identical all-zero target, so the alignment InfoNCE is pinned at
+    chance no matter how good the model is.
+    """
+    if isinstance(data_pkls, str):
+        data_pkls = [data_pkls]
+
+    required = {"iid", "title", "genres"}
     item_texts: dict[int, str] = {}
-    # Select columns with a list (avoid KeyError from using a tuple key)
-    for iid, title, genres in df[["iid", "title", "genres"]].drop_duplicates(subset="iid").itertuples(index=False):
-        iid = int(iid)
-        if iid == padding_index:
-            continue
-        parsed = parse_genres(genres)
-        genre_str = ", ".join(parsed) if parsed else "Unknown"
-        if space == "input":
-            # No scaffold labels: under mask-mean pooling, tokens shared by
-            # every item ("Title", "Genres", ":") become a common component
-            # that collapses the targets into a narrow cosine cone.
-            item_texts[iid] = f"{title}. {genre_str}."
-        else:
-            item_texts[iid] = f"Title: {title}. Genres: {genre_str}."
+
+    for data_pkl in data_pkls:
+        df = pd.read_pickle(data_pkl)
+        missing = sorted(required - set(df.columns))
+        if missing:
+            raise KeyError(f"Missing required columns in {data_pkl}: {missing}")
+
+        added = 0
+        # Select columns with a list (avoid KeyError from using a tuple key)
+        for iid, title, genres in df[["iid", "title", "genres"]].drop_duplicates(subset="iid").itertuples(index=False):
+            iid = int(iid)
+            if iid == padding_index or iid in item_texts:
+                continue
+            parsed = parse_genres(genres)
+            genre_str = ", ".join(parsed) if parsed else "Unknown"
+            if space == "input":
+                # No scaffold labels: under mask-mean pooling, tokens shared by
+                # every item ("Title", "Genres", ":") become a common component
+                # that collapses the targets into a narrow cosine cone.
+                item_texts[iid] = f"{title}. {genre_str}."
+            else:
+                item_texts[iid] = f"Title: {title}. Genres: {genre_str}."
+            added += 1
+        LOGGER.info("Item texts from %s: +%d new ids (running total %d)", data_pkl, added, len(item_texts))
 
     covered = [i for i in range(item_num) if i in item_texts]
-
-    LOGGER.info(f"Build item texts: %d/%d item id covered (missing ids get zero vector).", len(covered), item_num)
+    missing_count = item_num - len(covered)
+    LOGGER.info("Build item texts: %d/%d item id covered.", len(covered), item_num)
+    if missing_count > 1:  # id 0 is the padding index and is expected to be missing
+        LOGGER.warning(
+            "%d/%d item ids have NO text and will get zero target rows. Every such item "
+            "shares an identical all-zero target, pinning the alignment loss at chance for "
+            "them. Pass all split pkls to --data-pkl.",
+            missing_count,
+            item_num,
+        )
     return item_texts
 
 def _load_base_or_adapter(args):
@@ -106,8 +143,9 @@ def _load_base_or_adapter(args):
     model.eval()
     return model, tokenizer, source
 
-def _derive_user_item_num(data_pkl: str, item_num: int):
-    data_dir = os.path.dirname(os.path.abspath(data_pkl))
+def _derive_user_item_num(data_pkl, item_num: int):
+    first = data_pkl[0] if not isinstance(data_pkl, str) else data_pkl
+    data_dir = os.path.dirname(os.path.abspath(first))
     users, items = 0, item_num
     for name in ("train_ood2.pkl", "valid_ood2.pkl", "test_ood2.pkl"):
         p = os.path.join(data_dir, name)
