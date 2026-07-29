@@ -407,6 +407,7 @@ class QRecInstructAlignmentModel(nn.Module):
         condition_on_item: bool = False,
         tau_cond: float = 0.2,
         cond_distill_mf: bool = True,
+        cond_neg_mode: str = "random",
     ):
         """User-item objective (ILM-style). On ML1M this captures the dominant
         CF signal (888K positive user-item pairs vs 3K item-text pairs in our
@@ -420,8 +421,9 @@ class QRecInstructAlignmentModel(nn.Module):
         pretrains the candidate-conditioning path (``user_proj``): the USER
         encoding's queries are shifted by the CANDIDATE item's CF vector,
         matching how Stage 3 pools the history conditioned on the target.
-        Each candidate (positive and an in-batch rolled negative) conditions
-        its OWN scoring pass, so the conditioning carries no label information
+        Each candidate (positive and a sampled negative — ``cond_neg_mode``
+        picks uniform-random catalog items or in-batch rolls) conditions its
+        OWN scoring pass, so the conditioning carries no label information
         (feeding the positive's vector into an InfoNCE row would be a
         copy-through shortcut).
 
@@ -465,21 +467,37 @@ class QRecInstructAlignmentModel(nn.Module):
         cond_loss = None
         cond_acc = None
         if condition_on_item and getattr(self.qformer, "user_conditioned", False):
-            # In-batch negative candidate: another user_item row's positive.
-            # May occasionally be a false negative for this user — standard
-            # implicit-feedback noise, acceptable.
-            perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
-            neg_ids = item_ids[perm]
-            neg_cf = item_cf[perm]
+            if cond_neg_mode == "random":
+                # Uniform catalog negative (row 0 is the MF padding index).
+                # In-batch "roll" negatives are other users' POSITIVES —
+                # popularity-biased items the user plausibly likes too, the
+                # hardest possible pair type: even the frozen MF only orders
+                # pos-vs-others'-pos at ~0.55-0.6, so both the training signal
+                # and the metric ceiling were pinned near chance (val UIC_acc
+                # 0.505 with distillation working). Random negatives restore a
+                # clean margin (MF orders pos-vs-random at ~its AUC).
+                neg_ids = torch.randint(
+                    1, self.mf.item_embedding.num_embeddings,
+                    item_ids.shape, device=item_ids.device,
+                )
+                neg_cf = self.mf.item_encoder(neg_ids)
+                neg_q = self.qformer.encode_cf(neg_cf, sem_vec=self._sem_for(neg_ids))
+                i_neg = self.l2norm(neg_q.mean(dim=1))
+            else:  # "roll": in-batch negative — another user_item row's positive.
+                perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
+                neg_ids = item_ids[perm]
+                neg_cf = item_cf[perm]
+                # Conditioning-free item bags: the negatives' encodings are a
+                # permutation of the positives' — no extra forward.
+                i_neg = None  # filled from i_pos below
 
             user_q_pos = self.qformer.encode_cf(user_cf, user_cf=item_cf)
             user_q_neg = self.qformer.encode_cf(user_cf, user_cf=neg_cf)
-            # The item bags are conditioning-free, so the negatives' encodings
-            # are just a permutation of the positives' — no extra forwards.
             u_pos = self.l2norm(user_q_pos.mean(dim=1))
             u_neg = self.l2norm(user_q_neg.mean(dim=1))
             i_pos = self.l2norm(item_q.mean(dim=1))
-            i_neg = i_pos[perm]
+            if i_neg is None:
+                i_neg = i_pos[perm]
 
             s_pos = (u_pos * i_pos).sum(dim=-1)
             s_neg = (u_neg * i_neg).sum(dim=-1)

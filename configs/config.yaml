@@ -202,7 +202,15 @@ run:
     # pinned L_ui at ln(2) (both scores hit the same top-pair ceiling) while
     # its 1/tau-scale gradient noise degraded the shared body (g_itc fell
     # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
-    w_ui_cond: 0.3
+    # 0.1, not 0.3: at 0.3 with roll negatives + MF distillation the term's
+    # persistent ~w*0.5/tau gradient collapsed the shared body onto a low-dim
+    # "MF score" axis — same-epoch A/B: val g_ii fell 3.25 -> 0.34 with train
+    # L_ii at chance (~ln 602), g_itc 2.44 -> 1.76. This is an AUXILIARY
+    # pretext whose only job is a non-zero, roughly-oriented user_proj init;
+    # Stage 3 Step 2 (align_rank_loss + user-grouped batches) does the real
+    # training. Set 0.0 if g_ii/g_ui still lag the w_ui_cond=0 baseline
+    # (val g_ii ~3.2, g_ui ~2.8 at epoch ~15).
+    w_ui_cond: 0.1
     tau_ui_cond: 0.2
     # Supervise the conditioned BPR with the frozen MF's pairwise ORDER
     # instead of the raw held-in label. Label-fitting through a u x item
@@ -210,8 +218,16 @@ run:
     # pinned at 0.50 and val L_uic drifting above ln 2. MF's dot product is a
     # transferable function of the inputs (held-out uAUC 0.708), so distilling
     # its order forces user_proj to encode a ranking FUNCTION. Val UIC_acc's
-    # ceiling under distillation is MF's own held-out accuracy (~0.7), not 1.
+    # ceiling under distillation is MF's own held-out accuracy, not 1.
     ui_cond_distill_mf: True
+    # Negative sampling for the conditioned BPR: random | roll. "roll" pits
+    # the positive against ANOTHER USER'S positive — popularity-biased items
+    # this user plausibly likes too; even the frozen MF only orders that pair
+    # type at ~0.55-0.6, so signal and metric ceiling both sat near chance
+    # (val UIC_acc 0.505 with distillation confirmed working). "random"
+    # catalog negatives restore a clean margin — expect val UIC_acc ~0.7-0.85
+    # if the conditioning pathway works.
+    ui_cond_neg: random
     # L_ii's VOTE in the L_repr selection metric (gradient weight stays w_ii).
     # Val L_ii swings ~+-1.2 nats epoch-to-epoch and at full weight that noise
     # decided every late-epoch selection verdict in the 34-epoch run.
