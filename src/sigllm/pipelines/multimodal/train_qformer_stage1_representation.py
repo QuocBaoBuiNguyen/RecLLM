@@ -571,10 +571,17 @@ def train_qformer_stage1_representation(cfg):
         patience=cfg.early_stopping_patience,
         min_delta=cfg.early_stopping_min_delta,
     )
+    # EMA smoothing of the selection metric before it reaches the stopper.
+    # Val L_repr moves by ~0.02-0.3/epoch late in training while its
+    # epoch-to-epoch noise is of the same order (val L_ii/L_ui swings), so an
+    # unsmoothed stopper both burns patience on noise plateaus and crowns
+    # lucky dips as "best". 0.0 disables (raw metric, old behaviour).
+    selection_ema = float(cfg.get("selection_ema", 0.5))
+    selection_ema_value = None
     log_step(
         "Training setup",
         f"seed={cfg.seed}, output_dir={outdir}, "
-        f"selection={selection_metric} ({selection_mode})",
+        f"selection={selection_metric} ({selection_mode}, ema={selection_ema})",
     )
 
     for epoch in range(cfg.epoch):
@@ -640,6 +647,24 @@ def train_qformer_stage1_representation(cfg):
                 ui_cond_neg=ui_cond_neg,
                 selection_weights=selection_weights,
             )
+            metrics = {
+                "epoch": epoch + 1,
+                **{f"val_{key}": value for key, value in val_logs.items()},
+                **{f"train_{key}": value for key, value in avg_train.items()},
+            }
+            ema_note = ""
+            if selection_ema > 0.0 and selection_metric in metrics:
+                raw_value = float(metrics[selection_metric])
+                selection_ema_value = (
+                    raw_value
+                    if selection_ema_value is None
+                    else selection_ema * selection_ema_value + (1.0 - selection_ema) * raw_value
+                )
+                # The stopper (improvement test, best-epoch choice, patience)
+                # sees the SMOOTHED value; the raw value stays in the print.
+                metrics[selection_metric] = selection_ema_value
+                ema_note = f" ema={selection_ema_value:.4f}"
+
             print(
                 f"epoch {epoch+1} | "
                 f"Train Loss={avg_train['loss']:.4f} "
@@ -670,18 +695,13 @@ def train_qformer_stage1_representation(cfg):
                 f"g_ii={val_logs['gain_ii']:+.3f} g_ui={val_logs['gain_ui']:+.3f} "
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
                 f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} "
-                f"[SELECT] L_repr={val_logs['L_repr']:.4f} | "
+                f"[SELECT] L_repr={val_logs['L_repr']:.4f}{ema_note} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f} "
                 f"tau_llm={tau_llm:.3f} llm_emb_norm={llm_emb_normalize}"
             )
 
-            metrics = {
-                "epoch": epoch + 1,
-                **{f"val_{key}": value for key, value in val_logs.items()},
-                **{f"train_{key}": value for key, value in avg_train.items()},
-            }
             improved = stopper.update(metrics)
 
             if improved:

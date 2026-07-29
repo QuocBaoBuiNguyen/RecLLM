@@ -235,10 +235,17 @@ run:
     # catalog negatives restore a clean margin — expect val UIC_acc ~0.7-0.85
     # if the conditioning pathway works.
     ui_cond_neg: random
-    # L_ii's VOTE in the L_repr selection metric (gradient weight stays w_ii).
-    # Val L_ii swings ~+-1.2 nats epoch-to-epoch and at full weight that noise
-    # decided every late-epoch selection verdict in the 34-epoch run.
+    # L_ii's / L_ui's VOTE in the L_repr selection metric (gradient weights
+    # stay w_ii / w_ui). Val L_ii swings ~+-1.2 nats and val L_ui ~+-0.9 nats
+    # epoch-to-epoch; at full weight that noise decided every late-epoch
+    # selection verdict in the 34-epoch run.
     select_w_ii: 0.3
+    select_w_ui: 0.3
+    # EMA smoothing of val_L_repr before the early stopper (0 = off, raw).
+    # Late-training improvements (~0.02-0.3/epoch) are the same order as the
+    # metric's epoch noise, so the raw stopper burns patience on noise
+    # plateaus and crowns lucky dips as best-epoch.
+    selection_ema: 0.5
     # Single-batch spikes were walking train loss upward late in the run.
     grad_clip_norm: 1.0
     # SeLLa alignment: gradients flow through the injection-identical
