@@ -517,11 +517,12 @@ def train_qformer_stage1_representation(cfg):
     # DIN-style pretraining of the candidate-conditioning path: only possible
     # when the adapter was built with the conditioning projection. The BPR is
     # ADDED next to the ui InfoNCE (L_uic / uic_acc, chance 0.5); the InfoNCE
-    # keeps its historical meaning (ui_top1 chance = 1/n).
-    ui_condition_on_item = bool(qformer.user_conditioned)
+    # keeps its historical meaning (ui_top1 chance = 1/n). Gated on the weight
+    # so w_ui_cond=0.0 also skips the extra conditioned forwards entirely.
     w_ui = float(cfg.get("w_ui", 0.0))
     tau_ui = float(cfg.get("tau_ui", 0.07))
-    w_ui_cond = float(cfg.get("w_ui_cond", 0.3))
+    w_ui_cond = float(cfg.get("w_ui_cond", 0.0))
+    ui_condition_on_item = bool(qformer.user_conditioned) and w_ui_cond > 0.0
     tau_ui_cond = float(cfg.get("tau_ui_cond", 0.2))
     ui_cond_distill_mf = bool(cfg.get("ui_cond_distill_mf", True))
     ui_cond_neg = str(cfg.get("ui_cond_neg", "random"))

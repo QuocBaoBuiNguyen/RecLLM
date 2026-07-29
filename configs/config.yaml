@@ -202,15 +202,22 @@ run:
     # pinned L_ui at ln(2) (both scores hit the same top-pair ceiling) while
     # its 1/tau-scale gradient noise degraded the shared body (g_itc fell
     # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
-    # 0.1, not 0.3: at 0.3 with roll negatives + MF distillation the term's
-    # persistent ~w*0.5/tau gradient collapsed the shared body onto a low-dim
-    # "MF score" axis — same-epoch A/B: val g_ii fell 3.25 -> 0.34 with train
-    # L_ii at chance (~ln 602), g_itc 2.44 -> 1.76. This is an AUXILIARY
-    # pretext whose only job is a non-zero, roughly-oriented user_proj init;
-    # Stage 3 Step 2 (align_rank_loss + user-grouped batches) does the real
-    # training. Set 0.0 if g_ii/g_ui still lag the w_ui_cond=0 baseline
-    # (val g_ii ~3.2, g_ui ~2.8 at epoch ~15).
-    w_ui_cond: 0.1
+    # 0.0 — the conditioned-BPR pretext is DISABLED after three A/B runs:
+    # (a) roll negs, no distill, w=0.3: zero learnable signal (L_uic pinned at
+    #     ln 2), body unharmed but user_proj learned pair memorization
+    #     (val acc 0.50, val loss above ln 2);
+    # (b) roll + MF distill, w=0.3: body collapsed onto the MF-margin axis
+    #     (val g_ii 3.25 -> 0.34, g_itc 2.44 -> 1.76 at the same epoch);
+    # (c) random negs + distill, w=0.1: ii/ui InfoNCE dead at chance from
+    #     epoch 6 through 16 ON TRAIN (L_ii ~ ln 602), never recovered.
+    # Pattern: whenever the pretext has a learnable low-dim shortcut axis
+    # (popularity / MF margin), the shared body absorbs that axis and the
+    # collaborative contrastives collapse — at any weight tried. user_proj
+    # therefore stays at its zero init (by-design FiLM pattern) and is trained
+    # directly by Stage 3 Step 2 CTR + align_rank_loss + user-grouped batches.
+    # The machinery (w_ui_cond / tau_ui_cond / ui_cond_neg / distill) is kept
+    # for future experiments, e.g. with a body-stop-gradient variant.
+    w_ui_cond: 0.0
     tau_ui_cond: 0.2
     # Supervise the conditioned BPR with the frozen MF's pairwise ORDER
     # instead of the raw held-in label. Label-fitting through a u x item
