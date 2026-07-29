@@ -399,6 +399,31 @@ class QRecInstructAlignmentModel(nn.Module):
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
         return loss, accuracy
 
+    def _user_source(self, user_ids: torch.Tensor, history_ids):
+        """Cross-attention source for the user side of ``loss_user_item``.
+
+        With ``history_ids`` (list of per-row item-id lists), the user is
+        represented by their padded HISTORY sequence — multi-source pooling
+        through the exact path Stage 3's <UserProfile> uses. Stages 1/2
+        otherwise only ever cross-attend to S=1 sources, so the aggregation
+        behaviour (softmax selection over many keys, padding masks, pooled
+        output statistics) reached Stage 3 completely untrained. Without
+        history (old pkls), falls back to the single MF user vector (S=1).
+
+        Returns ``(src_cf, source_mask, sem_vec)``.
+        """
+        if history_ids is None:
+            return self.mf.user_encoder(user_ids), None, None
+        device = user_ids.device
+        batch_size = user_ids.size(0)
+        max_len = max(max((len(h) for h in history_ids), default=1), 1)
+        his_pad = torch.zeros(batch_size, max_len, dtype=torch.long, device=device)
+        for row, hist in enumerate(history_ids):
+            if hist:
+                his_pad[row, : len(hist)] = torch.tensor(hist, dtype=torch.long, device=device)
+        source_mask = his_pad != self.mf.padding_index
+        return self.mf.item_encoder(his_pad), source_mask, self._sem_for(his_pad)
+
     def loss_user_item(
         self,
         user_ids: torch.Tensor,
@@ -408,6 +433,7 @@ class QRecInstructAlignmentModel(nn.Module):
         tau_cond: float = 0.2,
         cond_distill_mf: bool = True,
         cond_neg_mode: str = "random",
+        history_ids=None,
     ):
         """User-item objective (ILM-style). On ML1M this captures the dominant
         CF signal (888K positive user-item pairs vs 3K item-text pairs in our
@@ -449,11 +475,11 @@ class QRecInstructAlignmentModel(nn.Module):
 
         Returns ``(loss, top1, cond_loss, cond_acc)``; the last two are None
         when conditioning is off. ``cond_acc`` chance level is 0.5."""
-        user_cf = self.mf.user_encoder(user_ids)
+        user_src, user_mask, user_sem = self._user_source(user_ids, history_ids)
         item_cf = self.mf.item_encoder(item_ids)
         item_sem = self._sem_for(item_ids)
 
-        user_q = self.qformer.encode_cf(user_cf)
+        user_q = self.qformer.encode_cf(user_src, source_mask=user_mask, sem_vec=user_sem)
         item_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
         user_sel, item_sel, _, _ = self.select_pair_by_similarity(user_q, item_q)
 
@@ -491,8 +517,15 @@ class QRecInstructAlignmentModel(nn.Module):
                 # permutation of the positives' — no extra forward.
                 i_neg = None  # filled from i_pos below
 
-            user_q_pos = self.qformer.encode_cf(user_cf, user_cf=item_cf)
-            user_q_neg = self.qformer.encode_cf(user_cf, user_cf=neg_cf)
+            # With history mode this is EXACTLY Stage 3's <UserProfile>
+            # computation: pool the history sequence with queries shifted by
+            # the candidate's CF vector.
+            user_q_pos = self.qformer.encode_cf(
+                user_src, user_cf=item_cf, source_mask=user_mask, sem_vec=user_sem
+            )
+            user_q_neg = self.qformer.encode_cf(
+                user_src, user_cf=neg_cf, source_mask=user_mask, sem_vec=user_sem
+            )
             u_pos = self.l2norm(user_q_pos.mean(dim=1))
             u_neg = self.l2norm(user_q_neg.mean(dim=1))
             i_pos = self.l2norm(item_q.mean(dim=1))
@@ -509,9 +542,12 @@ class QRecInstructAlignmentModel(nn.Module):
             else:
                 diff = (s_neg - s_pos) / tau_cond
                 if cond_distill_mf:
+                    # MF margins always come from the MF USER vector,
+                    # regardless of what the Q-Former's user source is.
                     with torch.no_grad():
-                        m_pos = (user_cf * item_cf).sum(dim=-1)
-                        m_neg = (user_cf * neg_cf).sum(dim=-1)
+                        mf_user = self.mf.user_encoder(user_ids)
+                        m_pos = (mf_user * item_cf).sum(dim=-1)
+                        m_neg = (mf_user * neg_cf).sum(dim=-1)
                         flip = m_neg > m_pos
                     diff = torch.where(flip, -diff, diff)
                 cond_loss = F.softplus(diff[valid]).mean()

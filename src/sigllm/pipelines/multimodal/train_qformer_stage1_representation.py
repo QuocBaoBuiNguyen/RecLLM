@@ -360,6 +360,12 @@ def train_step(
     user_item_idx = _indices_for_type(batch, "user_item", device)
     if w_ui > 0.0 and user_item_idx.numel() >= 2:
         user_item_batch = _subset_batch(batch, user_item_idx)
+        # History-pooled user source (multi-source cross-attention, the Stage-3
+        # <UserProfile> path). Old pkls carry no history -> every list is
+        # empty -> None -> single-user-vector fallback inside the loss.
+        history_ids = user_item_batch.get("his")
+        if history_ids is not None and not any(history_ids):
+            history_ids = None
         loss_ui, ui_top1, loss_uic, uic_acc = model.loss_user_item(
             user_item_batch["u"],
             user_item_batch["i_left"],
@@ -368,6 +374,7 @@ def train_step(
             tau_cond=tau_ui_cond,
             cond_distill_mf=ui_cond_distill_mf,
             cond_neg_mode=ui_cond_neg,
+            history_ids=history_ids,
         )
         logs["L_ui"] = loss_ui
         logs["ui_top1"] = ui_top1.detach()
@@ -472,6 +479,25 @@ def train_qformer_stage1_representation(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, val_loader, test_loader = build_qformer_loaders(cfg, data_dir=cfg.data_dir)
+
+    # Report which user-side source the ui losses will use. History pooling
+    # requires a pkl rebuilt by the current QFormerAlignmentBuilder (stores
+    # per-row "his"); old pkls fall back to the single MF user vector. Scan
+    # the raw sample list (the flat list is block-ordered with user_item
+    # last, so probing the first rows would always miss it).
+    base_dataset = getattr(train_loader.dataset, "dataset", train_loader.dataset)
+    raw_samples = getattr(base_dataset, "samples", None) or []
+    if any(s.get("his") for s in raw_samples if s.get("sample_type") == "user_item"):
+        log_step(
+            "user-item source",
+            "HISTORY pooling (multi-source cross-attention, Stage-3 <UserProfile> path)",
+        )
+    else:
+        log_step(
+            "user-item source",
+            "single MF user vector (S=1). Rebuild the qformer pkls with "
+            "build_qformer_dataset to enable history pooling.",
+        )
 
     mf = _init_rec_model(cfg, device)
     qformer_d_model = int(cfg.get("qformer_d_model", 768))

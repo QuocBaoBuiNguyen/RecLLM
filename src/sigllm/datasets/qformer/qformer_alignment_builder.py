@@ -277,6 +277,13 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                     "text": format_item_text(int(row.iid)),
                     "instruction": rng.choice(QFormerAlignmentBuilder.TEMPL_USER_ITEM),
                     "weight": 1.0,
+                    # History BEFORE this interaction (padding id 0 stripped,
+                    # capped to the 50 most recent). Lets stage 1 represent the
+                    # user by POOLING history items through cross-attention —
+                    # the exact multi-source path Stage 3's <UserProfile>
+                    # uses — instead of the single MF user vector (S=1), which
+                    # left the pooling behaviour untrained until Stage 3.
+                    "his": [int(x) for x in row.his if int(x) != 0][-50:],
                 }
                 for row in pos_df.itertuples(index=False)
             ]

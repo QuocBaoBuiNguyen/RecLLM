@@ -202,39 +202,44 @@ run:
     # pinned L_ui at ln(2) (both scores hit the same top-pair ceiling) while
     # its 1/tau-scale gradient noise degraded the shared body (g_itc fell
     # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
-    # 0.0 — the conditioned-BPR pretext is DISABLED after three A/B runs:
-    # (a) roll negs, no distill, w=0.3: zero learnable signal (L_uic pinned at
-    #     ln 2), body unharmed but user_proj learned pair memorization
-    #     (val acc 0.50, val loss above ln 2);
-    # (b) roll + MF distill, w=0.3: body collapsed onto the MF-margin axis
-    #     (val g_ii 3.25 -> 0.34, g_itc 2.44 -> 1.76 at the same epoch);
-    # (c) random negs + distill, w=0.1: ii/ui InfoNCE dead at chance from
-    #     epoch 6 through 16 ON TRAIN (L_ii ~ ln 602), never recovered.
-    # Pattern: whenever the pretext has a learnable low-dim shortcut axis
-    # (popularity / MF margin), the shared body absorbs that axis and the
-    # collaborative contrastives collapse — at any weight tried. user_proj
-    # therefore stays at its zero init (by-design FiLM pattern) and is trained
-    # directly by Stage 3 Step 2 CTR + align_rank_loss + user-grouped batches.
-    # The machinery (w_ui_cond / tau_ui_cond / ui_cond_neg / distill) is kept
-    # for future experiments, e.g. with a body-stop-gradient variant.
-    w_ui_cond: 0.0
+    # Four A/B runs on this pretext; roll + no-distill is the ONLY good state:
+    # (a) roll, no distill, w=0.3  -> BEST body ever (val g_itc 2.44, g_ii 3.2
+    #     @ep17). The BPR margin cos(u,i)-cos(u,j) is a second user-item
+    #     alignment force on the body even though the UIC metric itself cannot
+    #     beat its ~0.5 val ceiling (pos-vs-others'-pos pairs).
+    # (b) roll + MF distill, w=0.3 -> body collapsed onto the MF-margin axis
+    #     (val g_ii 3.25 -> 0.34).
+    # (c) random + distill, w=0.1  -> ii/ui dead at chance on TRAIN, epochs
+    #     6-16, never recovered.
+    # (d) OFF (w=0.0)              -> ii/ui slow to catch (~ep28 vs ~ep5 for
+    #     (a); g_ii train 0.53 @ep25 then 2.62 @ep34, still climbing). The (a)
+    #     gradient ACCELERATES the collaborative basin, it is not survival.
+    # Rule: keep the pairwise force for the faster, better-peaked trajectory,
+    # and never give the pretext a learnable low-dim shortcut axis
+    # (popularity / MF margin). Read val UIC_acc ~0.5 as a metric-ceiling
+    # artifact here, NOT as failure; user_proj's real training is Stage 3
+    # Step 2 (CTR + align_rank_loss + user-grouped batches).
+    w_ui_cond: 0.3
     tau_ui_cond: 0.2
     # Supervise the conditioned BPR with the frozen MF's pairwise ORDER
     # instead of the raw held-in label. Label-fitting through a u x item
     # interaction network memorizes: observed train UIC_acc 0.61 with val
     # pinned at 0.50 and val L_uic drifting above ln 2. MF's dot product is a
     # transferable function of the inputs (held-out uAUC 0.708), so distilling
-    # its order forces user_proj to encode a ranking FUNCTION. Val UIC_acc's
-    # ceiling under distillation is MF's own held-out accuracy, not 1.
-    ui_cond_distill_mf: True
+    # its order forces user_proj to encode a ranking FUNCTION. DISABLED: run
+    # (b) above showed the distilled gradient collapses the shared body onto
+    # the MF-margin axis — the transferability win is not worth the body.
+    ui_cond_distill_mf: False
     # Negative sampling for the conditioned BPR: random | roll. "roll" pits
     # the positive against ANOTHER USER'S positive — popularity-biased items
     # this user plausibly likes too; even the frozen MF only orders that pair
     # type at ~0.55-0.6, so signal and metric ceiling both sat near chance
     # (val UIC_acc 0.505 with distillation confirmed working). "random"
-    # catalog negatives restore a clean margin — expect val UIC_acc ~0.7-0.85
-    # if the conditioning pathway works.
-    ui_cond_neg: random
+    # catalog negatives give the metric a clean margin BUT hand the body a
+    # popularity shortcut axis (run (c) above: ii/ui dead on train). Keep
+    # "roll": its gradient is a plain user-item alignment force and the ~0.5
+    # val UIC_acc is a known metric-ceiling artifact, not a failure.
+    ui_cond_neg: roll
     # L_ii's / L_ui's VOTE in the L_repr selection metric (gradient weights
     # stay w_ii / w_ui). Val L_ii swings ~+-1.2 nats and val L_ui ~+-0.9 nats
     # epoch-to-epoch; at full weight that noise decided every late-epoch
