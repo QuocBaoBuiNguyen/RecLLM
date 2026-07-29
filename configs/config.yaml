@@ -281,6 +281,17 @@ run:
     # legacy behavior (no extra LLM forward).
     w_align: 1.0
     tau_align: 0.07
+    # Conditioning for the PRECOMPUTED w_align caption-target bank
+    # (none | center | whiten). Raw Qwen2 last-hidden states share massive
+    # activations (target norms ~277, all captions near-collinear), which
+    # pinned llm_align at ln(batch)=3.466 with align@1 at exact chance and
+    # pos_sim == neg_sim for 20 straight epochs — zero gradient. This space is
+    # only a discrimination reference (never read back by the LLM), so
+    # whitening it is safe, unlike llm_emb_normalize above.
+    align_target_normalize: whiten
+    # Adam + fp16 with no clipping blew up at epoch 18 (lm 0.76 -> 1.88,
+    # soft_norm 0.54 -> 0.99, never recovered). 0 disables.
+    grad_clip_norm: 1.0
     # Must stay tied to Stage 1: the keep-alive and the warm-started llm_proj
     # have to reference the same target geometry.
     llm_emb_normalize: ${run.qformer_stage1.llm_emb_normalize}
@@ -296,7 +307,11 @@ run:
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"
     lr: 1e-4
     weight_decay: 1e-3
-    epoch: 20
+    # 40, not 20: the 20-epoch run was still improving when the cap hit (best
+    # at 17, patience never fired), and the align loss — once its targets are
+    # fixed — learns slower than the LM term. Early stopping is the real
+    # budget; this is just headroom.
+    epoch: 40
     log_epoch: 1
     # Step-level progress log every N batches (running means incl. llm_align,
     # align@1/@5, pos/neg cosine and sim_gap). 0 = epoch summaries only.

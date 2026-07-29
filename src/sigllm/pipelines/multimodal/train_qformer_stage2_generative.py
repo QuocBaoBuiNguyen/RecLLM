@@ -241,6 +241,60 @@ def _move_batch_to_device(batch, device):
 
 
 @torch.no_grad()
+def _build_caption_target_bank(
+    datasets,
+    tokenizer,
+    llm,
+    item_num: int,
+    max_caption_length: int,
+    normalize_mode: str,
+    device,
+    chunk_size: int = 64,
+):
+    """Precompute the w_align targets once: one frozen-LLM last-hidden vector
+    per item caption, then condition the whole bank with FIXED statistics.
+
+    Conditioning is the load-bearing part. Raw Qwen2 last-hidden states carry
+    massive shared activations (norms ~277 here): every caption target is
+    nearly collinear with every other, so cosine InfoNCE sees constant rows —
+    pos_sim == neg_sim, loss pinned at ln(B), zero gradient. Centering removes
+    the shared component; whiten additionally evens out the per-dim variance
+    the outlier dims would otherwise monopolize. Unlike the Stage-1 input-space
+    bank, this space is only a discrimination reference (the LLM never reads
+    these coordinates back), so bending its geometry is safe.
+
+    Also removes the per-step no-grad LLM forward the on-the-fly path paid.
+    Items appearing in several datasets keep the first caption seen (captions
+    are deterministic per item, so this is a dedupe, not a choice).
+    """
+    caption_by_item = {}
+    for subset in datasets:
+        base, indices = subset.dataset, subset.indices
+        for i in indices:
+            sample = base.samples[i]
+            caption_by_item.setdefault(int(sample["i_left"]), str(sample["text"]))
+
+    ids = sorted(caption_by_item)
+    bank = torch.zeros(item_num, llm.config.hidden_size)
+    for start in range(0, len(ids), chunk_size):
+        chunk = ids[start:start + chunk_size]
+        targets = _llm_caption_targets(
+            [caption_by_item[i] for i in chunk], tokenizer, llm, max_caption_length
+        )
+        bank[torch.tensor(chunk, dtype=torch.long)] = targets.cpu()
+
+    # Fixed-stat conditioning over covered rows; uncovered rows stay zero (they
+    # are never indexed — the loaders only yield item_text samples).
+    bank = normalize_item_llm_emb(bank, normalize_mode)
+    log_step(
+        "Built w_align caption target bank",
+        f"items={len(ids)}, normalize={normalize_mode}, "
+        f"mean_norm={bank[ids].norm(dim=-1).mean().item():.4f}",
+    )
+    return bank.to(device)
+
+
+@torch.no_grad()
 def _llm_caption_targets(captions, tokenizer, llm, max_caption_length: int):
     """Discriminative alignment targets from the frozen base LLM itself.
 
@@ -398,6 +452,7 @@ def forward_stage2(
     tau_align: float = 0.07,
     sem_bank=None,
     sem_dropout: float = 0.0,
+    align_target_bank=None,
 ):
     item_ids = batch["i_left"]
     captions = batch["text"]
@@ -455,9 +510,15 @@ def forward_stage2(
     llm_align = None
     align_stats = None
     if w_align > 0.0:
-        # Second frozen-LLM forward (no_grad) on the plain captions: the
-        # discriminative target lives in the same space Stage 3 injects into.
-        target = _llm_caption_targets(captions, tokenizer, llm, max_caption_length)
+        if align_target_bank is not None:
+            # Precomputed + fixed-stat normalized targets (see
+            # _build_caption_target_bank for why raw last-hidden states give
+            # this loss zero gradient).
+            target = align_target_bank[item_ids]
+        else:
+            # Legacy on-the-fly path: RAW last-hidden targets. Known to be
+            # near-collinear on Qwen2 — prefer the precomputed bank.
+            target = _llm_caption_targets(captions, tokenizer, llm, max_caption_length)
         llm_align, align_stats = _llm_space_align_loss(soft_tokens, target, tau_align)
         total = total + w_align * llm_align
 
@@ -474,6 +535,7 @@ def evaluate(
     loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length: int,
     align_bank=None, w_llm: float = 0.0, tau_llm: float = 0.07,
     w_align: float = 0.0, tau_align: float = 0.07, sem_bank=None,
+    align_target_bank=None,
 ):
     qformer.eval()
     llm_proj.eval()
@@ -485,6 +547,7 @@ def evaluate(
                 batch, mf, qformer, llm_proj, tokenizer, llm, max_caption_length,
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
                 w_align=w_align, tau_align=tau_align, sem_bank=sem_bank,
+                align_target_bank=align_target_bank,
             )
             meters.add_parts(loss, parts)
     qformer.train()
@@ -550,11 +613,22 @@ def train_qformer_stage2_generative(cfg):
     # (no extra LLM forward, loss unchanged).
     w_align = float(cfg.get("w_align", 0.0))
     tau_align = float(cfg.get("tau_align", 0.07))
+    align_target_normalize = str(cfg.get("align_target_normalize", "whiten"))
+    align_target_bank = None
     if w_align > 0.0:
+        align_target_bank = _build_caption_target_bank(
+            [train_loader.dataset, valid_loader.dataset],
+            tokenizer,
+            llm,
+            item_num=int(cfg.item_num),
+            max_caption_length=int(cfg.get("max_caption_length", 64)),
+            normalize_mode=align_target_normalize,
+            device=device,
+        )
         log_step(
             "Discriminative LLM-space alignment active",
-            f"w_align={w_align}, tau_align={tau_align} "
-            f"(InfoNCE vs frozen-LLM last-hidden caption targets)",
+            f"w_align={w_align}, tau_align={tau_align}, "
+            f"targets=precomputed bank (normalize={align_target_normalize})",
         )
     # Must match run.qformer_stage1.llm_emb_normalize — the config wires both
     # from one key. A mismatch makes the keep-alive pull llm_proj toward a
@@ -590,6 +664,7 @@ def train_qformer_stage2_generative(cfg):
         trainable_params, lr=float(cfg.lr), weight_decay=float(cfg.weight_decay)
     )
     scaler = torch.amp.GradScaler("cuda")
+    grad_clip_norm = float(cfg.get("grad_clip_norm", 1.0))
 
     outdir = cfg.output_dir
     os.makedirs(outdir, exist_ok=True)
@@ -630,8 +705,15 @@ def train_qformer_stage2_generative(cfg):
                 align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
                 w_align=w_align, tau_align=tau_align,
                 sem_bank=sem_bank, sem_dropout=sem_dropout,
+                align_target_bank=align_target_bank,
             )
             scaler.scale(loss).backward()
+            # Adam + fp16 with no clipping blew the run up mid-training once
+            # (loss 4.22 -> 5.74 in one epoch, never recovered); clip to keep a
+            # single bad batch from ejecting the model out of its basin.
+            if grad_clip_norm > 0.0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(trainable_params, grad_clip_norm)
             scaler.step(optimizer)
             scaler.update()
             epoch_meters.add_parts(loss, parts)
@@ -651,6 +733,7 @@ def train_qformer_stage2_generative(cfg):
             valid_loader, mf, qformer, llm_proj, tokenizer, llm, device, max_caption_length,
             align_bank=align_bank, w_llm=w_llm, tau_llm=tau_llm,
             w_align=w_align, tau_align=tau_align, sem_bank=sem_bank,
+            align_target_bank=align_target_bank,
         )
         val_loss = val_meters.mean("loss")
         print(
