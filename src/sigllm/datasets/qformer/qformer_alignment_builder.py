@@ -124,6 +124,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         item_text_valid_frac: float = 0.0,
         item_text_test_frac: float = 0.0,
         item_text_split_seed: int = 42,
+        min_positive_history: int = 1,
     ):
         """See the module docstring for the sample schema.
 
@@ -142,6 +143,14 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         in train — ITC/ITM/ITG on val then measured memorization, not
         generalization. Both fracs 0.0 = legacy behaviour (all items in every
         split).
+
+        ``min_positive_history`` must mirror
+        ``datasets.*.min_positive_history``, the SeLLa-parity filter
+        ``MovieOODDataset`` applies. Stage 3 never sees rows with a shorter
+        history, so building from the unfiltered frame trained Stage 1 on
+        user_item rows — and on the item_item pairs and item catalog derived
+        from them — that no downstream stage ever encounters. 1 = no filter
+        (legacy behaviour).
         """
         rng = random.Random(seed)
 
@@ -167,6 +176,19 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                 "Q-Former alignment builder requires preprocessed data with columns: "
                 f"{sorted(required_columns)}. Missing: {missing_columns}"
             )
+
+        # SeLLa-parity history filter, applied BEFORE anything is derived so the
+        # item catalog, the item_item pairs and the user_item rows all describe
+        # the same population Stage 3's MovieOODDataset feeds the model. Mirrors
+        # that class's filter exactly (whole frame, both labels).
+        rows_before_history_filter = len(df)
+        if int(min_positive_history) > 1:
+            df = df[df["his"].map(len) >= int(min_positive_history)].reset_index(drop=True)
+            if df.empty:
+                raise ValueError(
+                    f"min_positive_history={min_positive_history} filtered out every row "
+                    f"of {input_pkl_path} ({rows_before_history_filter} rows before)."
+                )
 
         pos_df = df[df["label"] == 1].copy()
         if pos_df.empty:
@@ -360,6 +382,9 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
             "item_text_split": item_text_split,
             "item_text_valid_frac": float(item_text_valid_frac),
             "item_text_test_frac": float(item_text_test_frac),
+            "min_positive_history": int(min_positive_history),
+            "rows_before_history_filter": int(rows_before_history_filter),
+            "rows_after_history_filter": int(len(df)),
         }
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

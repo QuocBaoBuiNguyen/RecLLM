@@ -191,6 +191,22 @@ run:
     item_text_valid_frac: 0.1
     item_text_test_frac: 0.1
     item_text_split_seed: 42
+    # Fixed-n item_text diagnostic. The main loaders mix sample types, so
+    # n_item_text per batch depends on split composition and in-batch chance
+    # (1/n) differs between train and val — val ITC@1 then looks better than
+    # train for free, ITM parks at its trivial 2/3 baseline for lack of hard
+    # negatives, and L_llm is capped at ln(n) below the train figure. This runs
+    # an extra measurement-only pass over the item_text rows ALONE with one big
+    # batch per split, so n (and chance) match across splits. Must be >= the
+    # largest held-out item_text block (~10% of the catalog here).
+    item_text_eval_batch_size: 512
+    # Same pass is repeated with the semantic cross-attention source FORCED OFF
+    # (the sem_dropout gate is train-only, so ordinary eval runs it at full
+    # strength). sem_on vs sem_off separates "the CF path learned this" from
+    # "the semantic source carried it" — necessary because that source is
+    # another projection of the very captions ITC/ITG/L_llm target. 0 disables
+    # all diagnostics.
+    diagnostic_every_epochs: 1
     # Fixed permutation for val/test so their batches carry the same
     # sample-type mix as shuffled train batches. Without it the builder's
     # contiguous per-type blocks give eval batches ~250 item_text rows vs
@@ -281,6 +297,18 @@ run:
     selection_ema: 0.5
     # Single-batch spikes were walking train loss upward late in the run.
     grad_clip_norm: 1.0
+    # L_ii / L_ui score MEAN-POOLED queries and remove the batch mean before the
+    # cosine. The Q tokens carry a large direction shared across inputs, so an
+    # uncentered score leaves every candidate nearly tied: simulated at this
+    # model's regime, CE sits at ln(B) (3.47 at B=32) with no centering and
+    # drops to ~0.00 with it, at top1 1.0 either way — i.e. the ordering was
+    # fine but the MARGIN, and therefore the gradient, was gone. This is the
+    # same narrow-cone problem llm_emb_normalize: center fixes for the L_llm
+    # targets. Do NOT replace the pooling with a max over the Q x Q query grid:
+    # that lets max_{q,r} lock onto q == r (cosine ~1 for any inputs) and pins
+    # the loss at ln(n) — the mechanism behind the run where L_ui sat at ln 2
+    # for 34 epochs. False = uncentered, for an A/B.
+    pair_logit_center: True
     # SeLLa alignment: gradients flow through the injection-identical
     # llm_align_proj (Linear+LayerNorm on out_proj output, per token, pooled
     # after projection). The head is exported and warm-starts Stage-2's
@@ -409,6 +437,8 @@ run:
     w_ui_cond_keep: ${run.qformer_stage1.w_ui_cond}
     tau_ui_cond: ${run.qformer_stage1.tau_ui_cond}
     ui_cond_neg: ${run.qformer_stage1.ui_cond_neg}
+    # Must match Stage 1 — the keep-alive replays the same loss.
+    pair_logit_center: ${run.qformer_stage1.pair_logit_center}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"

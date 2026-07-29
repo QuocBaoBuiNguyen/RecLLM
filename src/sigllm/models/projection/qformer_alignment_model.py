@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -94,10 +96,15 @@ class QRecInstructAlignmentModel(nn.Module):
         llm_emb_normalize="center",
         item_sem_emb=None,
         sem_dropout=0.5,
+        pair_logit_center=True,
     ) -> None:
         super().__init__()
         self.mf = mf
         self.qformer = qformer
+        # Batch-center the pooled vectors of the collaborative contrastives
+        # (L_ii / L_ui) before the cosine. See _pooled_pair_logits for the
+        # measured comparison; False restores the uncentered form for an A/B.
+        self.pair_logit_center = bool(pair_logit_center)
 
         # Optional semantic cross-attention source (see HFQFormerAdapter.d_sem):
         # the RAW distilled bank, deliberately NOT normalize_item_llm_emb'd —
@@ -108,6 +115,14 @@ class QRecInstructAlignmentModel(nn.Module):
         # trained so warm items don't lose CF grounding to the easier semantic
         # shortcut.
         self.sem_dropout = float(sem_dropout)
+        # Runtime kill switch for the semantic source, independent of
+        # ``self.training``. The dropout gate is train-only, so evaluation
+        # always ran with the semantic source at FULL strength — and since that
+        # source is a different projection of the very captions the text/LLM
+        # objectives target, a val number measured with it on cannot be read as
+        # "what the CF path learned". Flip this off (see ``sem_disabled``) for a
+        # CF-only diagnostic pass.
+        self.sem_enabled = True
         if item_sem_emb is not None:
             sem = item_sem_emb if isinstance(item_sem_emb, torch.Tensor) else item_sem_emb.weight
             self.register_buffer("item_sem_emb", sem.float().clone(), persistent=False)
@@ -157,13 +172,31 @@ class QRecInstructAlignmentModel(nn.Module):
     def l2norm(x: torch.Tensor) -> torch.Tensor:
         return x / (x.norm(dim=-1, keepdim=True) + 1e-12)
 
+    @contextmanager
+    def sem_disabled(self):
+        """Temporarily force the CF-only path (semantic source off).
+
+        Used for the diagnostic eval pass: the ``sem_dropout`` gate is
+        train-only, so a normal ``model.eval()`` measures every objective with
+        the semantic source fully on. Comparing that against this pass separates
+        "the CF representation learned this" from "the semantic source carried
+        it", which matters because the source is derived from the same captions
+        the text and LLM-alignment objectives target.
+        """
+        previous = self.sem_enabled
+        self.sem_enabled = False
+        try:
+            yield
+        finally:
+            self.sem_enabled = previous
+
     def _sem_for(self, item_ids: torch.Tensor):
         """Semantic source rows for ``item_ids`` with training-time row dropout.
 
         Dropped rows become all-zero, which the adapter masks out — the sample
         falls back to CF-only cross-attention, exactly the cold-path geometry.
         """
-        if self.item_sem_emb is None:
+        if self.item_sem_emb is None or not self.sem_enabled:
             return None
         sem = self.item_sem_emb[item_ids]
         if self.training and self.sem_dropout > 0.0:
@@ -182,38 +215,31 @@ class QRecInstructAlignmentModel(nn.Module):
         return text_cls
 
     @staticmethod
-    def _select_query_by_text(query_hidden: torch.Tensor, text_vec: torch.Tensor):
-        """Pick the query whose normalized similarity with the text CLS is
-        highest (BLIP-2 query selection)."""
+    def _max_query_logits(query_tokens: torch.Tensor, target_vecs: torch.Tensor, tau: float):
+        """In-batch logits between a query BAG and a set of single target
+        vectors: ``logits[b, c] = max_q cos(query_tokens[b, q], target_vecs[c])``.
 
-        q_norm = QRecInstructAlignmentModel.l2norm(query_hidden)
-        t_norm = QRecInstructAlignmentModel.l2norm(text_vec)
-        scores = torch.einsum("bqd,bd->bq", q_norm, t_norm)
-        selected_idx = scores.argmax(dim=1)
-        batch_idx = torch.arange(query_hidden.size(0), device=query_hidden.device)
-        return query_hidden[batch_idx, selected_idx], selected_idx
+        This is the BLIP-2 ITC shape and the ONLY unbiased max-over-queries
+        form available here. Two failure modes it avoids:
 
-    @staticmethod
-    def select_pair_by_similarity(left_tokens: torch.Tensor, right_tokens: torch.Tensor):
-        """Pick the closest pair of queries across two query bags (used by
-        the item-item contrastive)."""
+        1. Selecting the best query against the POSITIVE target and reusing
+           that index for the negatives handicaps the negatives — top1 and
+           every retrieval number come out inflated.
+        2. Taking the max over the full Q x Q pair grid between two query bags
+           collapses the loss. Matching query indices sit near cosine 1
+           regardless of input in this model (measured here), so ``max_{q,r}``
+           picks q == r at ~1.0 for EVERY candidate, the logit row goes flat
+           and the gradient vanishes — an earlier run pinned L_ui at ln 2 with
+           accuracy below 0.5 for 34 epochs that way, while its
+           ``1/tau``-scale gradient noise degraded the shared body.
 
-        if left_tokens.dim() != 3 or right_tokens.dim() != 3:
-            raise ValueError(
-                "Expected pair inputs to have shape [B, Q, D], "
-                f"got left={tuple(left_tokens.shape)}, right={tuple(right_tokens.shape)}"
-            )
-        if left_tokens.shape != right_tokens.shape:
-            raise ValueError("Pair shapes must match")
-
-        left = QRecInstructAlignmentModel.l2norm(left_tokens)
-        right = QRecInstructAlignmentModel.l2norm(right_tokens)
-        scores = torch.einsum("bqd,brd->bqr", left, right)
-        flat = scores.flatten(start_dim=1).argmax(dim=1)
-        r = right_tokens.size(1)
-        left_idx, right_idx = flat // r, flat % r
-        b = torch.arange(left_tokens.size(0), device=left_tokens.device)
-        return left_tokens[b, left_idx], right_tokens[b, right_idx], left_idx, right_idx
+        The fix is asymmetry: one side keeps its Q tokens, the other is
+        mean-pooled to a single vector, so no query-index-matching shortcut
+        exists and every candidate is still scored by its own best query.
+        """
+        q_norm = QRecInstructAlignmentModel.l2norm(query_tokens)               # [B, Q, D]
+        t_norm = QRecInstructAlignmentModel.l2norm(target_vecs)                # [C, D]
+        return torch.einsum("bqd,cd->bcq", q_norm, t_norm).max(dim=-1).values / tau
 
     def loss_itc(
         self,
@@ -231,12 +257,9 @@ class QRecInstructAlignmentModel(nn.Module):
         text_cls = self.encode_text_cls(text_list)
 
         # BLIP-2 ITC: score EVERY (item, text) candidate pair as the max over
-        # the item's queries, so negatives get the same best-query treatment as
-        # the positive. Selecting the query against the POSITIVE text first and
-        # only then scoring negatives handicaps the negatives and inflates top1.
-        q_norm = self.l2norm(query_hidden)                                     # [B, Q, D]
-        t_norm = self.l2norm(text_cls)                                         # [B, D]
-        sim_matrix = torch.einsum("bqd,cd->bcq", q_norm, t_norm).max(dim=-1).values / tau
+        # the item's queries (see _max_query_logits), so negatives get the same
+        # best-query treatment as the positive.
+        sim_matrix = self._max_query_logits(query_hidden, text_cls, tau)
 
         labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
         loss_q2t = F.cross_entropy(sim_matrix, labels)
@@ -385,17 +408,57 @@ class QRecInstructAlignmentModel(nn.Module):
                 title_accuracy = title_correct / title_total
         return loss, token_accuracy, title_accuracy
 
-    @staticmethod
-    def _max_pair_logits(left_tokens: torch.Tensor, right_tokens: torch.Tensor, tau: float):
-        """In-batch logits between two query bags: each (row, candidate) score
-        is the max cosine over all Q x Q query pairs, computed for EVERY
-        candidate (BLIP-2 style). The old path selected the best query pair
-        against the POSITIVE first and reused it for negatives, which
-        handicapped the negatives and inflated top1."""
-        left = QRecInstructAlignmentModel.l2norm(left_tokens)                  # [B, Q, D]
-        right = QRecInstructAlignmentModel.l2norm(right_tokens)                # [B, R, D]
-        scores = torch.einsum("bqd,crd->bcqr", left, right)                    # [B, B, Q, R]
-        return scores.flatten(start_dim=2).max(dim=-1).values / tau            # [B, B]
+    def _pooled_pair_logits(self, left_tokens: torch.Tensor, right_tokens: torch.Tensor, tau: float):
+        """In-batch logits between two query bags: MEAN-POOL both sides, then
+        (batch-)center before the cosine.
+
+        Both design choices are load-bearing, and the tempting alternatives are
+        all worse. Simulated on this model's regime — Q tokens carrying a large
+        direction shared across the batch plus a smaller input-dependent part,
+        B=32, tau=0.07, chance top1 = 0.031, ln(B) = 3.47 — over the ratio of
+        input-dependent to shared signal:
+
+            form                     CE (in_sig 0.05 -> 1.0)   top1
+            max over Q x R grid      3.45 -> 0.31              1.000
+            max-left vs mean-right   3.46 -> 2.04              0.06 -> 0.57
+            mean/mean (no center)    3.44 -> 0.15              1.000
+            mean/mean + center       0.00 -> 0.00              1.000
+
+        - Max over the full ``Q x R`` grid pins CE at ``ln(B)`` whenever the
+          shared component dominates: ``max_{q,r}`` locks onto q == r, which
+          sits near cosine 1 for ANY pair of inputs, so every candidate scores
+          the same and the row goes flat. Ordering survives but the margin —
+          and with it the gradient — does not. This is the mechanism behind the
+          earlier run that pinned L_ui at ln 2 for 34 epochs.
+        - Making it asymmetric instead (left keeps queries, right mean-pooled)
+          is WORSE, and is the only form that also destroys the ordering:
+          pooling the right side leaves every candidate pointing along the
+          shared direction, so top1 falls to near chance.
+        - The actual culprit is the shared component, not the choice of max.
+          Removing the batch mean fixes every form, and is exactly the remedy
+          this repo already applies to the L_llm target bank for the same
+          reason (see ``normalize_item_llm_emb``: a large common component
+          "collapses all targets into a narrow cone and leaves the contrastive
+          nothing to discriminate").
+
+        Mean-pooling costs query specialization, which is why ITC / ITG /
+        L_llm keep their max-over-queries form (``_max_query_logits``) — there
+        the other side is a single vector, so the ``q == r`` degeneracy cannot
+        arise in the first place. For the collaborative terms, CF alignment is
+        the objective and pooled scoring is what already worked for the
+        conditioned BPR.
+
+        Centering is skipped below 4 rows: at n=2 it maps the two rows to exact
+        opposites, so the similarity matrix degenerates to ``[[c, -c], [-c, c]]``
+        — a single degree of freedom that says nothing about the individual
+        pairs — and n=3 is barely better.
+        """
+        left = left_tokens.mean(dim=1)                                          # [B, D]
+        right = right_tokens.mean(dim=1)                                        # [C, D]
+        if self.pair_logit_center and left.size(0) >= 4:
+            left = left - left.mean(dim=0, keepdim=True)
+            right = right - right.mean(dim=0, keepdim=True)
+        return (self.l2norm(left) @ self.l2norm(right).T) / tau
 
     def loss_item_item_ilm(self, left_ids: torch.Tensor, right_ids: torch.Tensor, tau: float = 0.07):
         """SigLLM-specific co-watch item-item contrastive."""
@@ -404,7 +467,7 @@ class QRecInstructAlignmentModel(nn.Module):
         left_q = self.qformer.encode_cf(left_cf, sem_vec=self._sem_for(left_ids))
         right_q = self.qformer.encode_cf(right_cf, sem_vec=self._sem_for(right_ids))
 
-        logits = self._max_pair_logits(left_q, right_q, tau)
+        logits = self._pooled_pair_logits(left_q, right_q, tau)
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
@@ -502,10 +565,10 @@ class QRecInstructAlignmentModel(nn.Module):
         user_q = self.qformer.encode_cf(user_src, source_mask=user_mask, sem_vec=user_sem)
         item_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
 
-        # Max over all Q x Q query pairs per (user, candidate) — every candidate
-        # gets its own best pair instead of reusing the pair picked against the
-        # positive (see _max_pair_logits).
-        logits = self._max_pair_logits(user_q, item_q, tau)
+        # Every candidate is scored the same way — no query index is picked
+        # against the positive first (the old bias) and no Q x Q max to collapse
+        # into (see _pooled_pair_logits).
+        logits = self._pooled_pair_logits(user_q, item_q, tau)
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
@@ -591,10 +654,7 @@ class QRecInstructAlignmentModel(nn.Module):
         query_hidden = self.encode_item_queries(item_ids)                       # [B, Q, d_model]
         soft_tokens = self.llm_align_proj(self.qformer.out_proj(query_hidden))  # [B, Q, d_llm]
         t_vec = self.item_llm_emb[item_ids].to(soft_tokens.device)
-
-        q_norm = self.l2norm(soft_tokens)                                       # [B, Q, d_llm]
-        t_norm = self.l2norm(t_vec)                                             # [B, d_llm]
-        sim_matrix = torch.einsum("bqd,cd->bcq", q_norm, t_norm).max(dim=-1).values / tau
+        sim_matrix = self._max_query_logits(soft_tokens, t_vec, tau)
         labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
         loss_q2t = F.cross_entropy(sim_matrix, labels)
         if symmetric:

@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import math
 import random
 import torch
@@ -10,7 +11,7 @@ from typing import Optional
 
 from sigllm.common import NotebookLogger, EarlyStopping
 from sigllm.common.config import Config
-from sigllm.datasets.qformer.qformer_loader import build_qformer_loaders
+from sigllm.datasets.qformer.qformer_loader import build_qformer_loader, build_qformer_loaders
 from sigllm.models.rec.matrix_factorization import MatrixFactorization
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
 from sigllm.models.projection.qformer_alignment_model import QRecInstructAlignmentModel
@@ -453,6 +454,41 @@ def evaluate_loss(
     return accumulator.result()
 
 
+def _item_text_only(dataset):
+    """Subset holding just the ``item_text`` rows (for the fixed-n eval pass)."""
+    from torch.utils.data import Subset
+
+    indices = [i for i, s in enumerate(dataset.samples) if s["sample_type"] == "item_text"]
+    return Subset(dataset, indices)
+
+
+def build_item_text_eval_loader(cfg, data_dir, filename, batch_size):
+    """One-batch-per-split loader over the item_text rows only.
+
+    The main loaders mix sample types, so ``n_item_text`` per batch depends on
+    the split's composition: with the item-level holdout, a val batch carries a
+    handful of item_text rows while a train batch carries many. In-batch
+    retrieval chance is ``1/n``, so val ITC@1 looks better than train for free,
+    ITM has almost no hard negative to mine from a tiny similarity matrix and
+    parks at its trivial 2/3 baseline, and L_llm is capped at ``ln(n)`` well
+    below the train figure. This loader fixes ``n`` across splits by putting the
+    whole held-out item_text block in one batch, so the numbers are directly
+    comparable. Set ``item_text_eval_batch_size`` >= the largest held-out block.
+    """
+
+    class _BatchSizeCfg:
+        def __init__(self, base, batch_size):
+            self.batch_size = batch_size
+            self.num_workers = int(base.num_workers)
+
+    return build_qformer_loader(
+        _BatchSizeCfg(cfg, int(batch_size)),
+        filename=os.path.join(data_dir, filename),
+        shuffle=False,
+        filter_fn=_item_text_only,
+    )
+
+
 def _save_checkpoint(
     checkpoint_path,
     model,
@@ -577,6 +613,7 @@ def train_qformer_stage1_representation(cfg):
         llm_emb_normalize=llm_emb_normalize,
         item_sem_emb=item_sem_emb,
         sem_dropout=sem_dropout,
+        pair_logit_center=bool(cfg.get("pair_logit_center", True)),
     ).to(device)
 
     # DIN-style pretraining of the candidate-conditioning path: only possible
@@ -618,6 +655,68 @@ def train_qformer_stage1_representation(cfg):
     )
 
     opt = _init_optimizer(model, cfg.lr, weight_decay=cfg.weight_decay)
+
+    # Fixed-n item_text eval (see build_item_text_eval_loader) plus the CF-only
+    # diagnostic. Both are measurement-only: no gradient, no effect on selection
+    # or early stopping. They answer the two questions the main val line cannot:
+    # "is this comparable to train?" (fixed n) and "how much of it survives
+    # without the semantic source?" (sem off).
+    item_text_eval_batch = int(cfg.get("item_text_eval_batch_size", 512))
+    diag_every = int(cfg.get("diagnostic_every_epochs", 1))
+    item_text_loaders = {}
+    if diag_every > 0:
+        for split, filename in (
+            ("train", "train_qformer_ood2.pkl"),
+            ("val", "valid_qformer_ood2.pkl"),
+            ("test", "test_qformer_ood2.pkl"),
+        ):
+            loader = build_item_text_eval_loader(
+                cfg, cfg.data_dir, filename, item_text_eval_batch
+            )
+            if len(loader.dataset) > 0:
+                item_text_loaders[split] = loader
+        log_step(
+            "Diagnostics enabled",
+            "fixed-n item_text eval ("
+            + ", ".join(f"{s}={len(l.dataset)} rows" for s, l in item_text_loaders.items())
+            + f", batch={item_text_eval_batch}) + CF-only (sem off) pass every "
+            f"{diag_every} epoch(s)",
+        )
+
+    def run_diagnostics(epoch_index):
+        """Fixed-n item_text metrics, with the semantic source on and off."""
+        for split, loader in item_text_loaders.items():
+            for tag, ctx in (
+                ("sem_on", contextlib.nullcontext()),
+                ("sem_off", model.sem_disabled()),
+            ):
+                if tag == "sem_off" and model.item_sem_emb is None:
+                    continue
+                with ctx:
+                    logs = evaluate_loss(
+                        model,
+                        loader,
+                        w_itc=cfg.w_itc,
+                        w_itm=cfg.w_itm,
+                        w_itg=cfg.w_itg,
+                        w_ii=0.0,
+                        w_ui=0.0,
+                        w_llm=w_llm,
+                        tau_itc=cfg.tau_itc,
+                        tau_llm=tau_llm,
+                        selection_weights=selection_weights,
+                    )
+                log_step(
+                    f"[DIAG ep{epoch_index}] {split}/{tag}",
+                    f"n_it={logs['n_item_text']:.0f} "
+                    f"(chance={1.0 / max(logs['n_item_text'], 1.0):.4f}) "
+                    f"L_itc={logs['L_itc']:.4f} ITC@1={logs['itc_top1']:.4f} "
+                    f"g_itc={logs['gain_itc']:+.3f} "
+                    f"L_itm={logs['L_itm']:.4f} ITM_acc={logs['itm_acc']:.4f} "
+                    f"L_itg={logs['L_itg']:.4f} ITG_title={logs['itg_title_acc']:.4f} "
+                    f"L_llm={logs['L_llm']:.4f} LLM@1={logs['llm_top1']:.4f} "
+                    f"g_llm={logs['gain_llm']:+.3f}",
+                )
 
     outdir = cfg.output_dir
     os.makedirs(outdir, exist_ok=True)
@@ -766,6 +865,9 @@ def train_qformer_stage1_representation(cfg):
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f} "
                 f"tau_llm={tau_llm:.3f} llm_emb_norm={llm_emb_normalize}"
             )
+
+            if item_text_loaders and (epoch + 1) % diag_every == 0:
+                run_diagnostics(epoch + 1)
 
             improved = stopper.update(metrics)
 

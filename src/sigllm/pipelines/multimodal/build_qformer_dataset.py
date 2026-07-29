@@ -65,6 +65,10 @@ def build_qformer_pkls(cfg) -> None:
     # MovieOODDataset feeds at run time (one key, no 50-vs-10 drift).
     dataset_cfg = cfg.datasets_cfg[first_dataset_key]
     max_history_length = int(dataset_cfg.get("max_history_length", 10))
+    # Same SeLLa-parity filter MovieOODDataset applies at Stage 3: without it,
+    # Stage 1 trains on short-history rows (and the item_item pairs derived from
+    # them) that no downstream stage ever sees.
+    min_positive_history = int(dataset_cfg.get("min_positive_history", 1))
     # Item-level holdout for the item_text objective (0.0/0.0 = legacy: every
     # split gets item_text for all of its items, which leaks train pairs into
     # val under a temporal interaction split).
@@ -80,6 +84,7 @@ def build_qformer_pkls(cfg) -> None:
             f"max_user_item_pairs={max_user_item_pairs}, "
             f"include_user_item={include_user_item}, "
             f"max_history_length={max_history_length}, "
+            f"min_positive_history={min_positive_history}, "
             f"item_text_holdout=({item_text_valid_frac}, {item_text_test_frac}, "
             f"seed={item_text_split_seed})"
         ),
@@ -101,6 +106,7 @@ def build_qformer_pkls(cfg) -> None:
             item_text_valid_frac=item_text_valid_frac,
             item_text_test_frac=item_text_test_frac,
             item_text_split_seed=item_text_split_seed,
+            min_positive_history=min_positive_history,
         )
         log_step("Built Q-Former pkl", f"{input_path} -> {output_path}")
 
