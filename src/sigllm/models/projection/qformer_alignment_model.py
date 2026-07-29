@@ -406,6 +406,7 @@ class QRecInstructAlignmentModel(nn.Module):
         tau: float = 0.07,
         condition_on_item: bool = False,
         tau_cond: float = 0.2,
+        cond_distill_mf: bool = True,
     ):
         """User-item objective (ILM-style). On ML1M this captures the dominant
         CF signal (888K positive user-item pairs vs 3K item-text pairs in our
@@ -431,6 +432,18 @@ class QRecInstructAlignmentModel(nn.Module):
         earlier run showed L pinned at ln 2 with accuracy below 0.5 for 34
         epochs while its high-magnitude ~sigmoid'(0)/tau gradient kept
         injecting noise into the shared Q-Former body.
+
+        ``cond_distill_mf=True`` supervises the BPR with the frozen MF's
+        pairwise ORDER instead of the raw held-in label: when MF ranks the
+        rolled negative above the positive for this user, the pair direction
+        is flipped. Rationale: fitting held-in labels through a u x item
+        interaction network is memorizable (observed: train acc 0.61, val acc
+        pinned at 0.50 with val loss drifting ABOVE ln 2), while MF's dot
+        product is a transferable function of the inputs — distilling its
+        order forces the conditioned pathway to learn a ranking FUNCTION
+        rather than a pair table. Val cond_acc is still measured against the
+        true label, so its ceiling under distillation is MF's own held-out
+        pairwise accuracy (~0.7 on ML1M), not 1.0.
 
         Returns ``(loss, top1, cond_loss, cond_acc)``; the last two are None
         when conditioning is off. ``cond_acc`` chance level is 0.5."""
@@ -476,7 +489,16 @@ class QRecInstructAlignmentModel(nn.Module):
                 cond_loss = s_pos.sum() * 0.0
                 cond_acc = cond_loss.detach()
             else:
-                cond_loss = F.softplus((s_neg[valid] - s_pos[valid]) / tau_cond).mean()
+                diff = (s_neg - s_pos) / tau_cond
+                if cond_distill_mf:
+                    with torch.no_grad():
+                        m_pos = (user_cf * item_cf).sum(dim=-1)
+                        m_neg = (user_cf * neg_cf).sum(dim=-1)
+                        flip = m_neg > m_pos
+                    diff = torch.where(flip, -diff, diff)
+                cond_loss = F.softplus(diff[valid]).mean()
+                # Accuracy stays measured against the TRUE label (pos beats
+                # neg) so the metric is comparable whether distilling or not.
                 cond_acc = (s_pos[valid] > s_neg[valid]).float().mean()
 
         return loss, accuracy, cond_loss, cond_acc

@@ -281,6 +281,7 @@ def train_step(
     ui_condition_on_item: bool = False,
     w_ui_cond: float = 0.3,
     tau_ui_cond: float = 0.2,
+    ui_cond_distill_mf: bool = True,
     debug_batch: bool = False,
 ):
     """BLIP-2 stage-1 step: ITC + ITM + ITG on item-text samples, plus the
@@ -364,6 +365,7 @@ def train_step(
             tau=tau_ui,
             condition_on_item=ui_condition_on_item,
             tau_cond=tau_ui_cond,
+            cond_distill_mf=ui_cond_distill_mf,
         )
         logs["L_ui"] = loss_ui
         logs["ui_top1"] = ui_top1.detach()
@@ -398,6 +400,7 @@ def evaluate_loss(
     ui_condition_on_item=False,
     w_ui_cond=0.3,
     tau_ui_cond=0.2,
+    ui_cond_distill_mf=True,
     selection_weights=None,
 ):
     model.eval()
@@ -427,6 +430,7 @@ def evaluate_loss(
                 ui_condition_on_item=ui_condition_on_item,
                 w_ui_cond=w_ui_cond,
                 tau_ui_cond=tau_ui_cond,
+                ui_cond_distill_mf=ui_cond_distill_mf,
             )
             accumulator.update(loss, logs, counts)
 
@@ -515,12 +519,15 @@ def train_qformer_stage1_representation(cfg):
     tau_ui = float(cfg.get("tau_ui", 0.07))
     w_ui_cond = float(cfg.get("w_ui_cond", 0.3))
     tau_ui_cond = float(cfg.get("tau_ui_cond", 0.2))
+    ui_cond_distill_mf = bool(cfg.get("ui_cond_distill_mf", True))
     if ui_condition_on_item:
         log_step(
             "user_proj pretraining active",
             f"candidate-conditioned pairwise BPR added to the ui term "
             f"(w_ui_cond={w_ui_cond}, tau_ui_cond={tau_ui_cond}, "
-            f"uic_acc chance level 0.5).",
+            f"distill_mf={ui_cond_distill_mf}, uic_acc chance level 0.5"
+            + (", ceiling ~ MF held-out pairwise acc" if ui_cond_distill_mf else "")
+            + ").",
         )
 
     # Selection weights may deviate from the LOSS weights: the collaborative
@@ -587,6 +594,7 @@ def train_qformer_stage1_representation(cfg):
                 ui_condition_on_item=ui_condition_on_item,
                 w_ui_cond=w_ui_cond,
                 tau_ui_cond=tau_ui_cond,
+                ui_cond_distill_mf=ui_cond_distill_mf,
                 debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
             )
             loss.backward()
@@ -620,6 +628,7 @@ def train_qformer_stage1_representation(cfg):
                 ui_condition_on_item=ui_condition_on_item,
                 w_ui_cond=w_ui_cond,
                 tau_ui_cond=tau_ui_cond,
+                ui_cond_distill_mf=ui_cond_distill_mf,
                 selection_weights=selection_weights,
             )
             print(
@@ -726,6 +735,7 @@ def train_qformer_stage1_representation(cfg):
         ui_condition_on_item=ui_condition_on_item,
         w_ui_cond=w_ui_cond,
         tau_ui_cond=tau_ui_cond,
+        ui_cond_distill_mf=ui_cond_distill_mf,
         selection_weights=selection_weights,
     )
     log_step(

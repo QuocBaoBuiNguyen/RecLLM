@@ -204,6 +204,14 @@ run:
     # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
     w_ui_cond: 0.3
     tau_ui_cond: 0.2
+    # Supervise the conditioned BPR with the frozen MF's pairwise ORDER
+    # instead of the raw held-in label. Label-fitting through a u x item
+    # interaction network memorizes: observed train UIC_acc 0.61 with val
+    # pinned at 0.50 and val L_uic drifting above ln 2. MF's dot product is a
+    # transferable function of the inputs (held-out uAUC 0.708), so distilling
+    # its order forces user_proj to encode a ranking FUNCTION. Val UIC_acc's
+    # ceiling under distillation is MF's own held-out accuracy (~0.7), not 1.
+    ui_cond_distill_mf: True
     # L_ii's VOTE in the L_repr selection metric (gradient weight stays w_ii).
     # Val L_ii swings ~+-1.2 nats epoch-to-epoch and at full weight that noise
     # decided every late-epoch selection verdict in the 34-epoch run.

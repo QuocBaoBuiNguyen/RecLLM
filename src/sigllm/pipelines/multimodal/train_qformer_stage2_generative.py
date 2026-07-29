@@ -364,11 +364,21 @@ def _llm_space_align_loss(soft_tokens, target, tau: float):
         k = min(5, n)
         topk = sim.topk(k, dim=1).indices
         top5 = (topk == labels.unsqueeze(1)).any(dim=1).float().mean()
+        # Collapse detectors. q_pair_cos ~= 1.0 means the soft tokens are the
+        # SAME vector for every item (a collapsed upstream Q-Former): the sim
+        # matrix rows go identical, top1 degenerates to exactly 1/B per batch,
+        # and no amount of target conditioning can help. t_pair_cos ~= 1.0 is
+        # the mirror failure (collinear targets, e.g. an unnormalized
+        # last-hidden bank). Healthy runs sit well below ~0.9 on both.
+        q_pair = (q_norm @ q_norm.T)[~eye].mean() if n > 1 else cos.new_zeros(())
+        t_pair = (t_norm @ t_norm.T)[~eye].mean() if n > 1 else cos.new_zeros(())
         stats = {
             "top1": float(top1.item()),
             "top5": float(top5.item()),
             "pos_sim": float(pos_sim.item()),
             "neg_sim": float(neg_sim.item()),
+            "q_pair_cos": float(q_pair.item()),
+            "t_pair_cos": float(t_pair.item()),
             "soft_norm": float(q_vec.norm(dim=-1).mean().item()),
             "target_norm": float(t_vec.norm(dim=-1).mean().item()),
             "n_candidates": n,
@@ -402,6 +412,8 @@ class _RunningMeans:
             self.add("pos_sim", stats["pos_sim"])
             self.add("neg_sim", stats["neg_sim"])
             self.add("sim_gap", stats["pos_sim"] - stats["neg_sim"])
+            self.add("q_pair_cos", stats["q_pair_cos"])
+            self.add("t_pair_cos", stats["t_pair_cos"])
             self.add("soft_norm", stats["soft_norm"])
             self.add("target_norm", stats["target_norm"])
 
@@ -419,6 +431,7 @@ class _RunningMeans:
 _LOG_KEYS = (
     "loss", "lm", "keepalive", "llm_align",
     "align@1", "align@5", "pos_sim", "neg_sim", "sim_gap",
+    "q_pair_cos", "t_pair_cos",
     "soft_norm", "target_norm",
 )
 
