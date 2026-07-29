@@ -17,11 +17,26 @@ FilterFn = Callable[[QFormerAlignmentDataset], Dataset]
 
 
 def qformer_collate(batch):
-    """Stack tensors, keep other fields as lists."""
+    """Stack tensors, keep other fields as lists.
+
+    ``his`` (variable-length history id lists) is padded here, on CPU, into a
+    single ``[B, L]`` LongTensor (0 = MF padding index). Padding per batch in
+    the loss with ``torch.tensor(row, device=cuda)`` issued one small H2D copy
+    per row (~350/step at batch 1024); a single stacked tensor moves once with
+    the rest of the batch. Rows without history are all-zero and mask out
+    downstream.
+    """
     keys = batch[0].keys()
     out = {}
     for k in keys:
-        if isinstance(batch[0][k], torch.Tensor):
+        if k == "his":
+            max_len = max(max((len(b[k]) for b in batch), default=1), 1)
+            his_pad = torch.zeros(len(batch), max_len, dtype=torch.long)
+            for row, b in enumerate(batch):
+                if b[k]:
+                    his_pad[row, : len(b[k])] = torch.tensor(b[k], dtype=torch.long)
+            out[k] = his_pad
+        elif isinstance(batch[0][k], torch.Tensor):
             out[k] = torch.stack([b[k] for b in batch], dim=0)
         else:
             out[k] = [b[k] for b in batch]

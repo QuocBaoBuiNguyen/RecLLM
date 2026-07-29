@@ -29,9 +29,9 @@ LOGGER = NotebookLogger.rich_logger("sigllm.build_qformer_dataset")
 
 
 SPLITS = (
-    ("train_ood2.pkl", "train_qformer_ood2.pkl"),
-    ("valid_ood2.pkl", "valid_qformer_ood2.pkl"),
-    ("test_ood2.pkl", "test_qformer_ood2.pkl"),
+    ("train", "train_ood2.pkl", "train_qformer_ood2.pkl"),
+    ("valid", "valid_ood2.pkl", "valid_qformer_ood2.pkl"),
+    ("test", "test_ood2.pkl", "test_qformer_ood2.pkl"),
 )
 
 
@@ -60,6 +60,17 @@ def build_qformer_pkls(cfg) -> None:
     max_item_item_pairs = stage1_cfg.get("max_item_item_pairs", None)
     max_user_item_pairs = stage1_cfg.get("max_user_item_pairs", None)
     include_user_item = bool(stage1_cfg.get("include_user_item", False))
+    # SHARED history cap: read from the dataset config so Stage 1's history
+    # pooling is pretrained on exactly the sequence length Stage 3's
+    # MovieOODDataset feeds at run time (one key, no 50-vs-10 drift).
+    dataset_cfg = cfg.datasets_cfg[first_dataset_key]
+    max_history_length = int(dataset_cfg.get("max_history_length", 10))
+    # Item-level holdout for the item_text objective (0.0/0.0 = legacy: every
+    # split gets item_text for all of its items, which leaks train pairs into
+    # val under a temporal interaction split).
+    item_text_valid_frac = float(stage1_cfg.get("item_text_valid_frac", 0.0))
+    item_text_test_frac = float(stage1_cfg.get("item_text_test_frac", 0.0))
+    item_text_split_seed = int(stage1_cfg.get("item_text_split_seed", seed))
 
     log_step(
         "Build config",
@@ -67,11 +78,14 @@ def build_qformer_pkls(cfg) -> None:
             f"data_dir={data_dir}, seed={seed}, item_pair_window={item_pair_window}, "
             f"max_item_item_pairs={max_item_item_pairs}, "
             f"max_user_item_pairs={max_user_item_pairs}, "
-            f"include_user_item={include_user_item}"
+            f"include_user_item={include_user_item}, "
+            f"max_history_length={max_history_length}, "
+            f"item_text_holdout=({item_text_valid_frac}, {item_text_test_frac}, "
+            f"seed={item_text_split_seed})"
         ),
     )
 
-    for input_name, output_name in SPLITS:
+    for split_name, input_name, output_name in SPLITS:
         input_path = os.path.join(data_dir, input_name)
         output_path = os.path.join(data_dir, output_name)
         QFormerAlignmentBuilder.build_qformer_alignment_samples(
@@ -82,6 +96,11 @@ def build_qformer_pkls(cfg) -> None:
             max_item_item_pairs=max_item_item_pairs,
             max_user_item_pairs=max_user_item_pairs,
             include_user_item=include_user_item,
+            max_history_length=max_history_length,
+            item_text_split=split_name,
+            item_text_valid_frac=item_text_valid_frac,
+            item_text_test_frac=item_text_test_frac,
+            item_text_split_seed=item_text_split_seed,
         )
         log_step("Built Q-Former pkl", f"{input_path} -> {output_path}")
 

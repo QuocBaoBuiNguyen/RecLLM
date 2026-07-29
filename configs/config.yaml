@@ -92,13 +92,16 @@ model:
     # prompt's <Warm_ID> is stripped when False (wrap_prompt_with_soft_tokens_v2).
     warm_token: False
     item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
-    # Second cross-attention source: the distilled INPUT-space semantic bank
-    # (same file Stage 1/2 trained proj_sem on — NOT the last-hidden warm-token
-    # bank above) is fed next to the CF vector, so attention balances CF vs
-    # semantics per item. Cold items (weak CF, rich text) lean on semantics;
-    # items with no text have zero rows and are masked back to CF-only.
+    # Second cross-attention source: the same LAST-HIDDEN semantic bank Stage
+    # 1/2 trained proj_sem on, fed next to the CF vector so attention balances
+    # CF vs semantics per item. Cold items (weak CF, rich text) lean on
+    # semantics; items with no text have zero rows and are masked back to
+    # CF-only. MUST stay a different file from the Stage-1 L_llm target bank
+    # (run.qformer_stage1.item_llm_emb_path, input-space): feeding the target
+    # as a source lets the model copy it through proj_sem and turns L_llm into
+    # a leak — Stage 1 hard-errors on that combination.
     sem_source: True
-    item_sem_emb_path: ${run.qformer_stage1.item_llm_emb_path}
+    item_sem_emb_path: ${run.qformer_stage1.item_sem_emb_path}
     # Training-time row dropout on the semantic source so the CF path keeps
     # earning gradient (semantics is the easier shortcut for warm items).
     sem_source_dropout: 0.5
@@ -120,6 +123,12 @@ datasets:
     data_type: default
     min_positive_history: 2
     warm_definition: "not_cold"
+    # SHARED history cap. Read by BOTH MovieOODDataset (Stage 3 prompts /
+    # <UserProfile> pooling) and build_qformer_dataset (Stage 1 user_item
+    # "his" truncation), so the Q-Former pretrains its history pooling on
+    # exactly the sequence length Stage 3 feeds it. Changing this requires
+    # rebuilding the qformer pkls.
+    max_history_length: 10
     build_info:
       storage: "/content/SigLLM/data/processed/ml-1m/"
 
@@ -171,6 +180,17 @@ run:
     max_item_item_pairs: null
     max_user_item_pairs: null
     include_user_item: True
+    # Item-level holdout for the item_text objective (build_qformer_dataset).
+    # An item's (CF, text) pair lands in exactly ONE split's item_text block,
+    # assigned by a deterministic hash of (item_text_split_seed, iid). Without
+    # this, every split carried item_text for all of its items, and since the
+    # interaction split is temporal, val items are almost all seen in train —
+    # val ITC/ITM/ITG measured memorization, not generalization (why the text
+    # terms kept "improving" while L_ii/L_ui drifted). Requires rebuilding the
+    # qformer pkls. Set both to 0.0 for the legacy all-items behaviour.
+    item_text_valid_frac: 0.1
+    item_text_test_frac: 0.1
+    item_text_split_seed: 42
     # Fixed permutation for val/test so their batches carry the same
     # sample-type mix as shuffled train batches. Without it the builder's
     # contiguous per-type blocks give eval batches ~250 item_text rows vs
@@ -202,23 +222,31 @@ run:
     # pinned L_ui at ln(2) (both scores hit the same top-pair ceiling) while
     # its 1/tau-scale gradient noise degraded the shared body (g_itc fell
     # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
-    # Four A/B runs on this pretext; roll + no-distill is the ONLY good state:
+    #
+    # !! STALE A/B — RERUN BEFORE TRUSTING THESE SETTINGS !!
+    # The four runs below ((a)-(d)) predate two structural changes that alter
+    # exactly what this pretext trains:
+    #   1. The user source was a single MF vector (S=1), so user_q_pos vs
+    #      user_q_neg differed only by a user_proj shift on ONE key and the
+    #      pretext was nearly vacuous — "roll + no distill" winning largely
+    #      means "disturbs the body least". The source is now the padded
+    #      history sequence (S=L), where conditioning genuinely changes which
+    #      history items attention selects.
+    #   2. user_proj is now PER-QUERY (Linear(d_user, Q*d_model)), not one
+    #      shared shift broadcast to all queries.
+    # Historical results, kept for reference only:
     # (a) roll, no distill, w=0.3  -> BEST body ever (val g_itc 2.44, g_ii 3.2
-    #     @ep17). The BPR margin cos(u,i)-cos(u,j) is a second user-item
-    #     alignment force on the body even though the UIC metric itself cannot
-    #     beat its ~0.5 val ceiling (pos-vs-others'-pos pairs).
+    #     @ep17).
     # (b) roll + MF distill, w=0.3 -> body collapsed onto the MF-margin axis
     #     (val g_ii 3.25 -> 0.34).
     # (c) random + distill, w=0.1  -> ii/ui dead at chance on TRAIN, epochs
     #     6-16, never recovered.
-    # (d) OFF (w=0.0)              -> ii/ui slow to catch (~ep28 vs ~ep5 for
-    #     (a); g_ii train 0.53 @ep25 then 2.62 @ep34, still climbing). The (a)
-    #     gradient ACCELERATES the collaborative basin, it is not survival.
-    # Rule: keep the pairwise force for the faster, better-peaked trajectory,
-    # and never give the pretext a learnable low-dim shortcut axis
-    # (popularity / MF margin). Read val UIC_acc ~0.5 as a metric-ceiling
-    # artifact here, NOT as failure; user_proj's real training is Stage 3
-    # Step 2 (CTR + align_rank_loss + user-grouped batches).
+    # (d) OFF (w=0.0)              -> ii/ui slow to catch (~ep28 vs ~ep5 for (a)).
+    # Standing rule that likely survives the rerun: never give the pretext a
+    # learnable low-dim shortcut axis (popularity / MF margin). Read val
+    # UIC_acc ~0.5 under "roll" as a metric-ceiling artifact, NOT as failure;
+    # user_proj's real training is Stage 3 Step 2 (CTR + align_rank_loss +
+    # user-grouped batches).
     w_ui_cond: 0.3
     tau_ui_cond: 0.2
     # Supervise the conditioned BPR with the frozen MF's pairwise ORDER
@@ -281,10 +309,18 @@ run:
     # Semantic second cross-attention source (reuses item_llm_emb_path below).
     sem_source: ${model.qformer_config.sem_source}
     sem_source_dropout: ${model.qformer_config.sem_source_dropout}
-    # Must be distilled with --space input (LLM input-embedding space — the
-    # space soft tokens are injected into). The last-hidden file stays on
-    # model.qformer_config.item_llm_emb_path for the warm token.
+    # L_llm TARGET bank. Must be distilled with --space input (LLM
+    # input-embedding space — the space soft tokens are injected into). The
+    # last-hidden file stays on model.qformer_config.item_llm_emb_path for the
+    # warm token.
     item_llm_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb_input.pt"
+    # Semantic cross-attention SOURCE bank (proj_sem input). MUST differ from
+    # item_llm_emb_path above: source == target lets the model solve L_llm by
+    # copying the source through proj_sem -> out_proj -> llm_align_proj (and
+    # val runs without sem dropout, so the val number was a 100% leak). The
+    # trainer hard-errors if the two paths coincide while w_llm > 0. Uses the
+    # LAST-HIDDEN bank — a different geometry of the same captions.
+    item_sem_emb_path: "/content/SigLLM/data/processed/ml-1m/item_llm_emb.pt"
     weight_decay: 1e-3
     debug_batch: True
     debug_batch_max_steps: 10
@@ -359,7 +395,20 @@ run:
     # so the generative objective trains the same two-source attention.
     user_conditioned: ${model.qformer_config.user_conditioned}
     sem_source: ${model.qformer_config.sem_source}
+    # Semantic SOURCE bank — same file Stage 1 trained proj_sem on (last-
+    # hidden), distinct from the item_llm_emb_path target bank above.
+    item_sem_emb_path: ${run.qformer_stage1.item_sem_emb_path}
     sem_source_dropout: ${model.qformer_config.sem_source_dropout}
+    # ui keep-alive: the generative objective is 100% S=1 forwards, so a full
+    # Stage 2 run washes out the multi-source history pooling and candidate
+    # conditioning (user_proj) Stage 1 just pretrained for Stage 3's
+    # <UserProfile>. Replay one user_item batch (Stage-1 InfoNCE + conditioned
+    # BPR, same hyperparameters) per generative step. 0.0 = legacy behaviour.
+    w_ui_keep: 0.3
+    tau_ui_keep: ${run.qformer_stage1.tau_ui}
+    w_ui_cond_keep: ${run.qformer_stage1.w_ui_cond}
+    tau_ui_cond: ${run.qformer_stage1.tau_ui_cond}
+    ui_cond_neg: ${run.qformer_stage1.ui_cond_neg}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
     output_dir: "/content/SigLLM/ckpt/qformer_stage2_qwen2/"
@@ -398,6 +447,10 @@ run:
     output_dir: "/content/SigLLM/ckpt/qformer_stage3_step1_lora_qwen2/"
     best_ckpt_name: "checkpoint_best.pth"
     init_lr: 8e-5
+    # Must be overridden together with init_lr (same trap as step 2): the
+    # top-level min_lr (8e-5) EQUALS this init_lr, so the inherited cosine
+    # schedule was a flat line — no decay across the 5 epochs.
+    min_lr: 8e-6
     max_epoch: 5
 
   qformer_stage3_step2:

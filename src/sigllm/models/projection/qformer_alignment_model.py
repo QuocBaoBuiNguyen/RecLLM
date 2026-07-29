@@ -230,11 +230,13 @@ class QRecInstructAlignmentModel(nn.Module):
         query_hidden = self.encode_item_queries(item_ids)
         text_cls = self.encode_text_cls(text_list)
 
-        selected_query, _ = self._select_query_by_text(query_hidden, text_cls)
-
-        q_norm = self.l2norm(selected_query)
-        t_norm = self.l2norm(text_cls)
-        sim_matrix = (q_norm @ t_norm.T) / tau
+        # BLIP-2 ITC: score EVERY (item, text) candidate pair as the max over
+        # the item's queries, so negatives get the same best-query treatment as
+        # the positive. Selecting the query against the POSITIVE text first and
+        # only then scoring negatives handicaps the negatives and inflates top1.
+        q_norm = self.l2norm(query_hidden)                                     # [B, Q, D]
+        t_norm = self.l2norm(text_cls)                                         # [B, D]
+        sim_matrix = torch.einsum("bqd,cd->bcq", q_norm, t_norm).max(dim=-1).values / tau
 
         labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
         loss_q2t = F.cross_entropy(sim_matrix, labels)
@@ -383,17 +385,26 @@ class QRecInstructAlignmentModel(nn.Module):
                 title_accuracy = title_correct / title_total
         return loss, token_accuracy, title_accuracy
 
+    @staticmethod
+    def _max_pair_logits(left_tokens: torch.Tensor, right_tokens: torch.Tensor, tau: float):
+        """In-batch logits between two query bags: each (row, candidate) score
+        is the max cosine over all Q x Q query pairs, computed for EVERY
+        candidate (BLIP-2 style). The old path selected the best query pair
+        against the POSITIVE first and reused it for negatives, which
+        handicapped the negatives and inflated top1."""
+        left = QRecInstructAlignmentModel.l2norm(left_tokens)                  # [B, Q, D]
+        right = QRecInstructAlignmentModel.l2norm(right_tokens)                # [B, R, D]
+        scores = torch.einsum("bqd,crd->bcqr", left, right)                    # [B, B, Q, R]
+        return scores.flatten(start_dim=2).max(dim=-1).values / tau            # [B, B]
+
     def loss_item_item_ilm(self, left_ids: torch.Tensor, right_ids: torch.Tensor, tau: float = 0.07):
         """SigLLM-specific co-watch item-item contrastive."""
         left_cf = self.mf.item_encoder(left_ids)
         right_cf = self.mf.item_encoder(right_ids)
         left_q = self.qformer.encode_cf(left_cf, sem_vec=self._sem_for(left_ids))
         right_q = self.qformer.encode_cf(right_cf, sem_vec=self._sem_for(right_ids))
-        left_sel, right_sel, _, _ = self.select_pair_by_similarity(left_q, right_q)
 
-        left_norm = self.l2norm(left_sel)
-        right_norm = self.l2norm(right_sel)
-        logits = (left_norm @ right_norm.T) / tau
+        logits = self._max_pair_logits(left_q, right_q, tau)
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
@@ -402,25 +413,34 @@ class QRecInstructAlignmentModel(nn.Module):
     def _user_source(self, user_ids: torch.Tensor, history_ids):
         """Cross-attention source for the user side of ``loss_user_item``.
 
-        With ``history_ids`` (list of per-row item-id lists), the user is
-        represented by their padded HISTORY sequence — multi-source pooling
-        through the exact path Stage 3's <UserProfile> uses. Stages 1/2
-        otherwise only ever cross-attend to S=1 sources, so the aggregation
-        behaviour (softmax selection over many keys, padding masks, pooled
-        output statistics) reached Stage 3 completely untrained. Without
-        history (old pkls), falls back to the single MF user vector (S=1).
+        With ``history_ids``, the user is represented by their padded HISTORY
+        sequence — multi-source pooling through the exact path Stage 3's
+        <UserProfile> uses. Stages 1/2 otherwise only ever cross-attend to S=1
+        sources, so the aggregation behaviour (softmax selection over many
+        keys, padding masks, pooled output statistics) reached Stage 3
+        completely untrained. Without history (old pkls), falls back to the
+        single MF user vector (S=1).
+
+        ``history_ids`` is normally the [B, L] LongTensor padded on CPU by
+        ``qformer_collate`` (0 = padding) — one H2D copy per batch instead of
+        one ``torch.tensor(..., device=cuda)`` per row. A list of per-row id
+        lists is still accepted for direct callers.
 
         Returns ``(src_cf, source_mask, sem_vec)``.
         """
         if history_ids is None:
             return self.mf.user_encoder(user_ids), None, None
-        device = user_ids.device
-        batch_size = user_ids.size(0)
-        max_len = max(max((len(h) for h in history_ids), default=1), 1)
-        his_pad = torch.zeros(batch_size, max_len, dtype=torch.long, device=device)
-        for row, hist in enumerate(history_ids):
-            if hist:
-                his_pad[row, : len(hist)] = torch.tensor(hist, dtype=torch.long, device=device)
+        if isinstance(history_ids, torch.Tensor):
+            his_pad = history_ids.to(user_ids.device)
+        else:
+            device = user_ids.device
+            batch_size = user_ids.size(0)
+            max_len = max(max((len(h) for h in history_ids), default=1), 1)
+            his_pad = torch.zeros(batch_size, max_len, dtype=torch.long)
+            for row, hist in enumerate(history_ids):
+                if hist:
+                    his_pad[row, : len(hist)] = torch.tensor(hist, dtype=torch.long)
+            his_pad = his_pad.to(device)
         source_mask = his_pad != self.mf.padding_index
         return self.mf.item_encoder(his_pad), source_mask, self._sem_for(his_pad)
 
@@ -481,11 +501,11 @@ class QRecInstructAlignmentModel(nn.Module):
 
         user_q = self.qformer.encode_cf(user_src, source_mask=user_mask, sem_vec=user_sem)
         item_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
-        user_sel, item_sel, _, _ = self.select_pair_by_similarity(user_q, item_q)
 
-        user_norm = self.l2norm(user_sel)
-        item_norm = self.l2norm(item_sel)
-        logits = (user_norm @ item_norm.T) / tau
+        # Max over all Q x Q query pairs per (user, candidate) — every candidate
+        # gets its own best pair instead of reusing the pair picked against the
+        # positive (see _max_pair_logits).
+        logits = self._max_pair_logits(user_q, item_q, tau)
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
@@ -562,19 +582,19 @@ class QRecInstructAlignmentModel(nn.Module):
             raise RuntimeError("LLM alignment loss requested but no LLM embeddings provided")
 
         # Same path the soft tokens take at injection time (encode_cf ->
-        # out_proj -> llm_proj, per token). BLIP-2-style query selection, like
-        # ITC: contrast the single query token closest to the target instead of
-        # the mean over all Q tokens. Mean pooling pushed every query toward
-        # the same target and collapsed query diversity; selection lets one
-        # query specialize per item while the others keep their ITC/ITG roles.
+        # out_proj -> llm_proj, per token). BLIP-2-style max-over-queries, like
+        # ITC: each (item, target) candidate pair is scored by its own best
+        # query token instead of the mean over all Q tokens (mean pooling
+        # pushed every query toward the same target and collapsed query
+        # diversity) — and instead of the query picked against the POSITIVE
+        # target only, which handicapped negatives and inflated top1.
         query_hidden = self.encode_item_queries(item_ids)                       # [B, Q, d_model]
         soft_tokens = self.llm_align_proj(self.qformer.out_proj(query_hidden))  # [B, Q, d_llm]
         t_vec = self.item_llm_emb[item_ids].to(soft_tokens.device)
-        q_vec, _ = self._select_query_by_text(soft_tokens, t_vec)               # [B, d_llm]
 
-        q_norm = self.l2norm(q_vec)
-        t_norm = self.l2norm(t_vec)
-        sim_matrix = (q_norm @ t_norm.T) / tau
+        q_norm = self.l2norm(soft_tokens)                                       # [B, Q, d_llm]
+        t_norm = self.l2norm(t_vec)                                             # [B, d_llm]
+        sim_matrix = torch.einsum("bqd,cd->bcq", q_norm, t_norm).max(dim=-1).values / tau
         labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
         loss_q2t = F.cross_entropy(sim_matrix, labels)
         if symmetric:

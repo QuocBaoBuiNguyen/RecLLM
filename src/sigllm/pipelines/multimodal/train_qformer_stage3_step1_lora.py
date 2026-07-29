@@ -51,6 +51,10 @@ def apply_step1_overrides(cfg):
     cfg.model_cfg.ckpt = None
     cfg.run_cfg.output_dir = step1.output_dir
     cfg.run_cfg.init_lr = step1.init_lr
+    # min_lr must be overridden together with init_lr (same fix as Step 2):
+    # the top-level min_lr (8e-5) equals this stage's init_lr, which turns
+    # linear_warmup_cosine_lr into a perfectly flat schedule — no decay at all.
+    cfg.run_cfg.min_lr = step1.min_lr
     cfg.run_cfg.max_epoch = step1.max_epoch
     if cfg.model_cfg.get("qformer_config") is not None:
         cfg.model_cfg.qformer_config.warm_token = False

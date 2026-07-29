@@ -43,7 +43,10 @@ from sigllm.common.utils import resolve_hf_model_path
 from sigllm.common.config import Config
 from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
 from sigllm.datasets.qformer.qformer_loader import build_qformer_loader
-from sigllm.models.projection.qformer_alignment_model import normalize_item_llm_emb
+from sigllm.models.projection.qformer_alignment_model import (
+    QRecInstructAlignmentModel,
+    normalize_item_llm_emb,
+)
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
 from sigllm.models.rec.matrix_factorization import MatrixFactorization
 
@@ -73,6 +76,25 @@ def _filter_item_text(dataset: QFormerAlignmentDataset) -> Subset:
     if not indices:
         raise ValueError("No item_text samples found in dataset; cannot run generative pretraining.")
     return Subset(dataset, indices)
+
+
+def _filter_user_item(dataset: QFormerAlignmentDataset) -> Subset:
+    """user_item rows for the ui keep-alive; may be empty (old pkls)."""
+    indices = [i for i, s in enumerate(dataset.samples) if s["sample_type"] == "user_item"]
+    return Subset(dataset, indices)
+
+
+def _history_or_none(batch):
+    """Padded [B, L] history tensor from the collate, or None when the pkl
+    carries no history (all-zero) so the loss falls back to the MF user vector."""
+    his = batch.get("his")
+    if isinstance(his, torch.Tensor):
+        if his.numel() == 0 or not bool((his != 0).any()):
+            return None
+        return his
+    if his is not None and not any(his):
+        return None
+    return his
 
 
 def _init_rec_model(cfg, device):
@@ -427,12 +449,15 @@ class _RunningMeans:
         )
 
 
-# Order used by every step/epoch/val log line below.
+# Order used by every step/epoch/val log line below. The ui_keep* keys are
+# train-only (the keep-alive never runs at eval), so _RunningMeans simply
+# omits them from val summaries.
 _LOG_KEYS = (
     "loss", "lm", "keepalive", "llm_align",
     "align@1", "align@5", "pos_sim", "neg_sim", "sim_gap",
     "q_pair_cos", "t_pair_cos",
     "soft_norm", "target_norm",
+    "ui_keep", "ui_keep@1", "uic_keep", "uic_acc",
 )
 
 
@@ -595,16 +620,19 @@ def train_qformer_stage2_generative(cfg):
     sem_dropout = float(cfg.get("sem_source_dropout", 0.5))
     sem_bank = None
     if sem_source:
-        emb_path = cfg.get("item_llm_emb_path")
+        # item_sem_emb_path, NOT item_llm_emb_path: the semantic SOURCE bank
+        # must stay the one Stage 1 trained proj_sem on, and must differ from
+        # any alignment TARGET bank (see the Stage-1 leak guard).
+        emb_path = cfg.get("item_sem_emb_path")
         if not emb_path or not os.path.exists(emb_path):
             raise FileNotFoundError(
-                f"item_llm_emb_path is required and must exist when sem_source is enabled, got: {emb_path}"
+                f"item_sem_emb_path is required and must exist when sem_source is enabled, got: {emb_path}"
             )
         blob = torch.load(emb_path, map_location="cpu")
         sem_bank = (blob["item_llm_emb"] if isinstance(blob, dict) else blob).float().to(device)
         log_step(
             "Semantic cross-attention source active",
-            f"bank={tuple(sem_bank.shape)}, sem_source_dropout={sem_dropout}",
+            f"bank={tuple(sem_bank.shape)} from {emb_path}, sem_source_dropout={sem_dropout}",
         )
 
     qformer = _init_qformer(
@@ -670,6 +698,56 @@ def train_qformer_stage2_generative(cfg):
             f"bank={tuple(align_bank.shape)} from {emb_path}",
         )
 
+    # User-item keep-alive. The generative objective only ever runs S=1
+    # forwards (one item CF token [+ its sem token]), so a full Stage 2 run
+    # retrains the Q-Former body exclusively on single-source cross-attention
+    # and washes out what Stage 1 just pretrained for Stage 3's <UserProfile>:
+    # multi-source history pooling (S=L with padding masks) and the
+    # candidate-conditioned queries (user_proj). This term replays the Stage-1
+    # user-item losses (InfoNCE + optional conditioned BPR) on the user_item
+    # rows of the same train pkl, one batch per generative step, so those
+    # pathways keep receiving gradient. 0.0 = exact legacy behavior.
+    w_ui_keep = float(cfg.get("w_ui_keep", 0.0))
+    tau_ui_keep = float(cfg.get("tau_ui_keep", 0.07))
+    w_ui_cond_keep = float(cfg.get("w_ui_cond_keep", 0.0))
+    tau_ui_cond = float(cfg.get("tau_ui_cond", 0.2))
+    ui_cond_neg = str(cfg.get("ui_cond_neg", "roll"))
+    ui_loader = None
+    align_model = None
+    ui_condition_on_item = False
+    if w_ui_keep > 0.0:
+        ui_loader = build_qformer_loader(
+            cfg,
+            filename=os.path.join(cfg.data_dir, "train_qformer_ood2.pkl"),
+            shuffle=True,
+            filter_fn=_filter_user_item,
+        )
+        if len(ui_loader.dataset) == 0:
+            log_step(
+                "WARNING",
+                "w_ui_keep > 0 but the train pkl holds no user_item rows; "
+                "ui keep-alive disabled (rebuild with include_user_item: True).",
+            )
+            ui_loader = None
+        else:
+            # Thin wrapper exposing loss_user_item over the SAME qformer/mf.
+            # Its auxiliary heads (itm_head, lm_head) are unused here and are
+            # deliberately NOT added to the optimizer.
+            align_model = QRecInstructAlignmentModel(
+                mf=mf,
+                qformer=qformer,
+                item_sem_emb=sem_bank,
+                sem_dropout=sem_dropout,
+            ).to(device)
+            ui_condition_on_item = bool(qformer.user_conditioned) and w_ui_cond_keep > 0.0
+            log_step(
+                "ui keep-alive active",
+                f"w_ui_keep={w_ui_keep}, tau_ui={tau_ui_keep}, "
+                f"conditioned_bpr={ui_condition_on_item} "
+                f"(w_ui_cond_keep={w_ui_cond_keep}, tau_ui_cond={tau_ui_cond}, "
+                f"neg={ui_cond_neg}), rows={len(ui_loader.dataset)}",
+            )
+
     trainable_params = [
         p for p in qformer.parameters() if p.requires_grad
     ] + list(llm_proj.parameters())
@@ -704,9 +782,13 @@ def train_qformer_stage2_generative(cfg):
     # within the first epoch instead of waiting for the epoch summary.
     log_steps = int(cfg.get("log_steps", 50))
 
+    ui_iter = iter(ui_loader) if ui_loader is not None else None
+
     for epoch in range(int(cfg.epoch)):
         qformer.train()
         llm_proj.train()
+        if align_model is not None:
+            align_model.train()
         epoch_meters = _RunningMeans()
         window_meters = _RunningMeans()
         steps_per_epoch = len(train_loader)
@@ -720,6 +802,37 @@ def train_qformer_stage2_generative(cfg):
                 sem_bank=sem_bank, sem_dropout=sem_dropout,
                 align_target_bank=align_target_bank,
             )
+
+            # ui keep-alive: one user_item batch per generative step, replaying
+            # Stage 1's history-pooled InfoNCE (+ conditioned BPR) so the
+            # multi-source and user_proj pathways keep receiving gradient.
+            if ui_iter is not None:
+                try:
+                    ui_batch = next(ui_iter)
+                except StopIteration:
+                    ui_iter = iter(ui_loader)
+                    ui_batch = next(ui_iter)
+                ui_batch = _move_batch_to_device(ui_batch, device)
+                loss_ui, ui_top1, loss_uic, uic_acc = align_model.loss_user_item(
+                    ui_batch["u"],
+                    ui_batch["i_left"],
+                    tau=tau_ui_keep,
+                    condition_on_item=ui_condition_on_item,
+                    tau_cond=tau_ui_cond,
+                    cond_distill_mf=False,
+                    cond_neg_mode=ui_cond_neg,
+                    history_ids=_history_or_none(ui_batch),
+                )
+                loss = loss + w_ui_keep * loss_ui
+                if loss_uic is not None:
+                    loss = loss + w_ui_cond_keep * loss_uic
+                for meters in (epoch_meters, window_meters):
+                    meters.add("ui_keep", float(loss_ui.item()))
+                    meters.add("ui_keep@1", float(ui_top1.item()))
+                    if loss_uic is not None:
+                        meters.add("uic_keep", float(loss_uic.item()))
+                        meters.add("uic_acc", float(uic_acc.item()))
+
             scaler.scale(loss).backward()
             # Adam + fp16 with no clipping blew the run up mid-training once
             # (loss 4.22 -> 5.74 in one epoch, never recovered); clip to keep a

@@ -80,7 +80,12 @@ class HFQFormerAdapter(nn.Module):
             truncation_side="right",
         )
 
-        self.q = Parameter(torch.randn(1, num_queries, d_model))
+        # BLIP-2 query-token init: normal with std = initializer_range (0.02),
+        # matching the scale of the (BERT-initialized) embeddings the queries
+        # sit next to. torch.randn (std 1.0) put the queries ~50x larger than
+        # every other activation at step 0.
+        self.q = Parameter(torch.zeros(1, num_queries, d_model))
+        nn.init.normal_(self.q, mean=0.0, std=initializer_range)
         self.proj_cf = nn.Linear(d_cf, d_model)
         self.out_proj = nn.Identity() if self.output_dim == d_model else nn.Linear(d_model, self.output_dim)
 
@@ -97,7 +102,15 @@ class HFQFormerAdapter(nn.Module):
         if self.user_conditioned:
             d_user_eff = int(d_user) if d_user is not None else d_cf
             self.d_user = d_user_eff
-            self.user_proj = nn.Linear(d_user_eff, d_model)
+            # PER-QUERY shift: Linear(d_user, num_queries * d_model), reshaped
+            # to [B, Q, d_model] in _build_query_tokens. The old
+            # Linear(d_user, d_model) broadcast ONE vector across all Q
+            # queries, so every query saw the candidate identically and the
+            # conditioning could not specialize per query. NOTE: this changes
+            # the weight shape — adapter checkpoints saved before this change
+            # will not strict-load; rerun Stage 1 (all stages rebuild the
+            # adapter with the same shape, so the pipeline stays consistent).
+            self.user_proj = nn.Linear(d_user_eff, num_queries * d_model)
             # Zero-init so the residual `queries = pretrained_q + user_proj(cond_cf)`
             # starts as a no-op at step 0 (queries == pretrained_q exactly). Gradients
             # still flow through cond_cf, so user_proj grows from 0 only if the
@@ -145,13 +158,22 @@ class HFQFormerAdapter(nn.Module):
         BERT into the Q-Former (BLIP-2 / InstructBLIP convention).
 
         Cross-attention layers keep their random init since BERT has no
-        cross-attention. The Q-Former names self-attention modules
-        ``encoder.layer.i.attention.attention.*`` while BERT uses
-        ``encoder.layer.i.attention.self.*``; we remap accordingly. When the
-        Q-Former has fewer layers than BERT, only the first ``num_layers``
-        of BERT are copied. Tensors with mismatched shapes (e.g. when
-        ``hidden_size`` or ``num_heads`` is configured differently from
-        BERT-base) are skipped, leaving them at their random init.
+        cross-attention. Name remaps applied (Q-Former name -> BERT name):
+
+        - ``.attention.attention.``    -> ``.attention.self.`` (self-attention)
+        - ``.intermediate_query.``     -> ``.intermediate.``   (query-token FFN)
+        - ``.output_query.``           -> ``.output.``         (query-token FFN)
+        - ``embeddings.layernorm.``    -> ``embeddings.LayerNorm.``
+
+        The query FFN and embedding LayerNorm remaps matter most: the query
+        tokens flow through ``intermediate_query``/``output_query`` (NOT the
+        text FFN), so without the remap the exact sublayers every query passes
+        through stayed fully random while the text side got BERT weights.
+
+        When the Q-Former has fewer layers than BERT, only the first
+        ``num_layers`` of BERT are copied. Tensors with mismatched shapes
+        (e.g. when ``hidden_size`` or ``num_heads`` is configured differently
+        from BERT-base) are skipped, leaving them at their random init.
 
         Returns the number of tensors successfully transferred.
         """
@@ -179,7 +201,12 @@ class HFQFormerAdapter(nn.Module):
         loaded = 0
         skipped_shape = 0
         for q_key, q_tensor in target_state.items():
-            bert_key = q_key.replace(".attention.attention.", ".attention.self.")
+            bert_key = (
+                q_key.replace(".attention.attention.", ".attention.self.")
+                .replace(".intermediate_query.", ".intermediate.")
+                .replace(".output_query.", ".output.")
+                .replace("embeddings.layernorm.", "embeddings.LayerNorm.")
+            )
             if bert_key not in bert_state:
                 continue
             bert_tensor = bert_state[bert_key]
@@ -343,7 +370,9 @@ class HFQFormerAdapter(nn.Module):
                 raise ValueError(
                     f"user_cf batch ({user_cf.size(0)}) != cf_vec batch ({batch_size})"
                 )
-            user_cond = self.user_proj(user_cf).unsqueeze(1)  # [B, 1, d_model]
+            user_cond = self.user_proj(user_cf).view(
+                -1, self.num_queries, self.d_model
+            )  # [B, Q, d_model] — a distinct shift per query
             query_tokens = query_tokens + user_cond
         return query_tokens
 

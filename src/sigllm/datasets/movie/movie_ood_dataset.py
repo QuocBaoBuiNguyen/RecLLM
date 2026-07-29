@@ -103,10 +103,22 @@ class MovieOODDataset(RecBaseDataset):
 		self.item_num = self.annotation['TargetItemID'].max() + 1
 
 		if self.use_his:
+			# SHARED history cap (datasets.*.max_history_length): the same key
+			# drives the Q-Former alignment builder's `his` truncation, so the
+			# Stage-1 history pooling is pretrained on exactly the sequence
+			# length this dataset feeds Stage 3. Keep them on one key — a
+			# hardcoded 10 here vs 50 in the builder trains the pooling on a
+			# length regime it never sees again.
+			history_cap = 10
+			if hasattr(dataset_config, "get"):
+				try:
+					history_cap = int(dataset_config.get("max_history_length", 10))
+				except Exception:
+					history_cap = 10
 			max_length = 0
 			for his in self.annotation['InteractedItemIDs']:
 				max_length = max(max_length, len(his))
-			self.max_length = min(max_length, 10)
+			self.max_length = min(max_length, history_cap)
 			log_step("Movie OOD datasets, max history length:", str(self.max_length))
 	
 	def __getitem__(self, index):

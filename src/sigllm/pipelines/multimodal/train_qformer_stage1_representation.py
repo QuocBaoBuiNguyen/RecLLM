@@ -361,10 +361,14 @@ def train_step(
     if w_ui > 0.0 and user_item_idx.numel() >= 2:
         user_item_batch = _subset_batch(batch, user_item_idx)
         # History-pooled user source (multi-source cross-attention, the Stage-3
-        # <UserProfile> path). Old pkls carry no history -> every list is
-        # empty -> None -> single-user-vector fallback inside the loss.
+        # <UserProfile> path). The collate pads "his" into a [B, L] LongTensor
+        # (0 = padding). Old pkls carry no history -> all-zero tensor -> None
+        # -> single-user-vector fallback inside the loss.
         history_ids = user_item_batch.get("his")
-        if history_ids is not None and not any(history_ids):
+        if isinstance(history_ids, torch.Tensor):
+            if history_ids.numel() == 0 or not bool((history_ids != 0).any()):
+                history_ids = None
+        elif history_ids is not None and not any(history_ids):
             history_ids = None
         loss_ui, ui_top1, loss_uic, uic_acc = model.loss_user_item(
             user_item_batch["u"],
@@ -507,36 +511,71 @@ def train_qformer_stage1_representation(cfg):
     llm_emb_normalize = str(cfg.get("llm_emb_normalize", "center"))
     sem_source = bool(cfg.get("sem_source", False))
     sem_dropout = float(cfg.get("sem_source_dropout", 0.5))
+
+    # L_llm TARGET bank (input-embedding space — the space Stage 3 injects into).
     item_llm_emb = None
     d_llm = None
     item_llm_emb_path = cfg.get("item_llm_emb_path", None)
-    if w_llm > 0.0 or sem_source:
+    if w_llm > 0.0:
         if not item_llm_emb_path or not os.path.exists(item_llm_emb_path):
             raise FileNotFoundError(
-                "item_llm_emb_path is required and must exist when w_llm > 0.0 "
-                f"or sem_source is enabled, but got: {item_llm_emb_path}"
+                "item_llm_emb_path is required and must exist when w_llm > 0.0, "
+                f"but got: {item_llm_emb_path}"
             )
         blob = torch.load(item_llm_emb_path, map_location="cpu")
         item_llm_emb = blob["item_llm_emb"] if isinstance(blob, dict) else blob
         d_llm = int(item_llm_emb.size(-1))
-        log_step("Loaded item LLM embeddings", f"path={item_llm_emb_path}, shape={tuple(item_llm_emb.shape)}")
+        log_step(
+            "Loaded L_llm target bank",
+            f"path={item_llm_emb_path}, shape={tuple(item_llm_emb.shape)}",
+        )
 
-    qformer = _init_qformer(
-        cfg, qformer_d_model, device, d_sem=d_llm if sem_source else None
-    )
+    # Cross-attention SOURCE bank. MUST be a different bank from the L_llm
+    # target: with source == target, the model can solve L_llm by copying the
+    # source through proj_sem -> queries -> out_proj -> llm_align_proj without
+    # learning anything from CF — and evaluate_loss runs with model.eval()
+    # (no sem dropout), so validation L_llm was a 100% leak.
+    item_sem_emb = None
+    d_sem = None
+    item_sem_emb_path = cfg.get("item_sem_emb_path", None)
+    if sem_source:
+        if not item_sem_emb_path or not os.path.exists(item_sem_emb_path):
+            raise FileNotFoundError(
+                "item_sem_emb_path is required and must exist when sem_source "
+                f"is enabled, but got: {item_sem_emb_path}"
+            )
+        if w_llm > 0.0 and os.path.realpath(item_sem_emb_path) == os.path.realpath(
+            item_llm_emb_path
+        ):
+            raise ValueError(
+                "item_sem_emb_path must differ from item_llm_emb_path when "
+                "w_llm > 0.0: feeding the L_llm target bank as a cross-attention "
+                "source lets the model copy the target through proj_sem and "
+                "turns L_llm (train AND val) into a leak. Point item_sem_emb_path "
+                "at the last-hidden bank (item_llm_emb.pt) or set w_llm: 0.0."
+            )
+        blob = torch.load(item_sem_emb_path, map_location="cpu")
+        item_sem_emb = blob["item_llm_emb"] if isinstance(blob, dict) else blob
+        d_sem = int(item_sem_emb.size(-1))
+        log_step(
+            "Loaded semantic source bank",
+            f"path={item_sem_emb_path}, shape={tuple(item_sem_emb.shape)}",
+        )
+
+    qformer = _init_qformer(cfg, qformer_d_model, device, d_sem=d_sem)
     if sem_source:
         log_step(
             "Semantic cross-attention source active",
-            f"d_sem={d_llm}, sem_source_dropout={sem_dropout}",
+            f"d_sem={d_sem}, sem_source_dropout={sem_dropout}",
         )
 
     model = QRecInstructAlignmentModel(
         mf=mf,
         qformer=qformer,
-        item_llm_emb=item_llm_emb if w_llm > 0.0 else None,
-        d_llm=d_llm if w_llm > 0.0 else None,
+        item_llm_emb=item_llm_emb,
+        d_llm=d_llm,
         llm_emb_normalize=llm_emb_normalize,
-        item_sem_emb=item_llm_emb if sem_source else None,
+        item_sem_emb=item_sem_emb,
         sem_dropout=sem_dropout,
     ).to(device)
 

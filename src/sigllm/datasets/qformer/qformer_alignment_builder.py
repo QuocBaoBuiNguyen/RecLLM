@@ -96,6 +96,21 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
     train_dataset_cls = QFormerAlignmentDataset
 
     @staticmethod
+    def _item_text_bucket(iid: int, split_seed: int, valid_frac: float, test_frac: float) -> str:
+        """Deterministic item-level split for the item_text objective.
+
+        Depends only on ``(split_seed, iid)`` — NOT on which split's dataframe
+        is being processed — so an item lands in exactly one bucket across the
+        train/valid/test builder runs.
+        """
+        r = random.Random(f"{split_seed}:{int(iid)}").random()
+        if r < valid_frac:
+            return "valid"
+        if r < valid_frac + test_frac:
+            return "test"
+        return "train"
+
+    @staticmethod
     def build_qformer_alignment_samples(
         input_pkl_path: str,
         output_path: str,
@@ -104,7 +119,30 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         max_item_item_pairs: int | None = None,
         max_user_item_pairs: int | None = None,
         include_user_item: bool = False,
+        max_history_length: int = 10,
+        item_text_split: str = "train",
+        item_text_valid_frac: float = 0.0,
+        item_text_test_frac: float = 0.0,
+        item_text_split_seed: int = 42,
     ):
+        """See the module docstring for the sample schema.
+
+        ``max_history_length`` caps the per-row ``his`` list of user_item
+        samples. It must be the SAME value Stage 3's ``MovieOODDataset`` uses
+        (``datasets.*.max_history_length``): Stage 1 pretrains the history
+        pooling on sequences up to this length, and pretraining on L=50 while
+        Stage 3 runs L=10 (or vice versa) trains the pooling on a length
+        regime it never sees again.
+
+        ``item_text_valid_frac`` / ``item_text_test_frac`` carve a
+        deterministic item-level holdout for the item_text objective: an item's
+        (CF, text) pair appears in exactly ONE split's item_text block. Without
+        this, every split got item_text for every item it contains, and since
+        the interaction split is temporal, nearly all val/test items also occur
+        in train — ITC/ITM/ITG on val then measured memorization, not
+        generalization. Both fracs 0.0 = legacy behaviour (all items in every
+        split).
+        """
         rng = random.Random(seed)
 
         # Input contract after data_preprocessing.build_ml1m():
@@ -178,7 +216,15 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         #       "instruction": "...",
         #       "weight": 1.0,
         #   }
+        use_item_holdout = (item_text_valid_frac + item_text_test_frac) > 0.0
+        num_item_text = 0
         for iid in sorted(item_titles):
+            if use_item_holdout:
+                bucket = QFormerAlignmentBuilder._item_text_bucket(
+                    int(iid), item_text_split_seed, item_text_valid_frac, item_text_test_frac
+                )
+                if bucket != item_text_split:
+                    continue
             samples.append(
                 {
                     "sample_type": "item_text",
@@ -190,6 +236,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                     "weight": 1.0,
                 }
             )
+            num_item_text += 1
 
         # Step 3: item-item samples.
         #
@@ -278,12 +325,15 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                     "instruction": rng.choice(QFormerAlignmentBuilder.TEMPL_USER_ITEM),
                     "weight": 1.0,
                     # History BEFORE this interaction (padding id 0 stripped,
-                    # capped to the 50 most recent). Lets stage 1 represent the
-                    # user by POOLING history items through cross-attention —
-                    # the exact multi-source path Stage 3's <UserProfile>
-                    # uses — instead of the single MF user vector (S=1), which
-                    # left the pooling behaviour untrained until Stage 3.
-                    "his": [int(x) for x in row.his if int(x) != 0][-50:],
+                    # capped to the max_history_length most recent — the SAME
+                    # cap Stage 3's MovieOODDataset applies, so the pooling is
+                    # pretrained on the length regime it will actually run).
+                    # Lets stage 1 represent the user by POOLING history items
+                    # through cross-attention — the exact multi-source path
+                    # Stage 3's <UserProfile> uses — instead of the single MF
+                    # user vector (S=1), which left the pooling behaviour
+                    # untrained until Stage 3.
+                    "his": [int(x) for x in row.his if int(x) != 0][-int(max_history_length):],
                 }
                 for row in pos_df.itertuples(index=False)
             ]
@@ -298,7 +348,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         # makes the dataset easy to inspect and avoids hidden banks/legacy views.
         stats = {
             "num_samples": len(samples),
-            "num_item_text": len(item_titles),
+            "num_item_text": num_item_text,
             "num_item_item": len(item_item_samples),
             "num_user_item": len(user_item_samples),
             "num_users": int(pos_df["uid"].nunique()),
@@ -306,6 +356,10 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
             "num_positive_rows": int(len(pos_df)),
             "item_pair_window": window,
             "include_user_item": bool(include_user_item),
+            "max_history_length": int(max_history_length),
+            "item_text_split": item_text_split,
+            "item_text_valid_frac": float(item_text_valid_frac),
+            "item_text_test_frac": float(item_text_test_frac),
         }
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
