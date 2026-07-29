@@ -195,6 +195,21 @@ run:
     w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
+    # Candidate-conditioned pairwise BPR ADDED to the ui InfoNCE — the term
+    # that pretrains user_proj (Stage 3's target-conditioned history pooling).
+    # Scored on mean-pooled queries at a soft temperature: the first version
+    # replaced the InfoNCE and scored via independent max-pair selection, which
+    # pinned L_ui at ln(2) (both scores hit the same top-pair ceiling) while
+    # its 1/tau-scale gradient noise degraded the shared body (g_itc fell
+    # ~2.3 -> 0.65 nats on that run, together with the random proj_sem init).
+    w_ui_cond: 0.3
+    tau_ui_cond: 0.2
+    # L_ii's VOTE in the L_repr selection metric (gradient weight stays w_ii).
+    # Val L_ii swings ~+-1.2 nats epoch-to-epoch and at full weight that noise
+    # decided every late-epoch selection verdict in the 34-epoch run.
+    select_w_ii: 0.3
+    # Single-batch spikes were walking train loss upward late in the run.
+    grad_clip_norm: 1.0
     # SeLLa alignment: gradients flow through the injection-identical
     # llm_align_proj (Linear+LayerNorm on out_proj output, per token, pooled
     # after projection). The head is exported and warm-starts Stage-2's

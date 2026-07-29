@@ -405,55 +405,38 @@ class QRecInstructAlignmentModel(nn.Module):
         item_ids: torch.Tensor,
         tau: float = 0.07,
         condition_on_item: bool = False,
+        tau_cond: float = 0.2,
     ):
         """User-item objective (ILM-style). On ML1M this captures the dominant
         CF signal (888K positive user-item pairs vs 3K item-text pairs in our
         pkls).
 
-        ``condition_on_item=False`` — original in-batch InfoNCE between the
-        user's queries and the positive item's queries.
+        Always computes the in-batch InfoNCE between the user's queries and
+        the positive item's queries — this is the term that pressures the
+        Q-Former body to be input-dependent, and it must not be replaced.
 
-        ``condition_on_item=True`` — DIN-style pairwise BPR that pretrains the
-        candidate-conditioning path (``user_proj``): the USER encoding's
-        queries are shifted by the CANDIDATE item's CF vector, matching how
-        Stage 3 pools the history conditioned on the target item. Each
-        candidate (positive and an in-batch sampled negative) conditions its
-        OWN scoring pass, so the conditioning vector carries no label
-        information — putting the positive's vector into an in-batch InfoNCE
-        row instead would hand the model a copy-through shortcut (the
-        conditioning identifies the diagonal) and train ``user_proj`` into an
-        item-identity channel rather than a history modulator. Accuracy is the
-        fraction of rows with ``s_pos > s_neg`` (chance 0.5)."""
+        ``condition_on_item=True`` ADDS a DIN-style pairwise BPR that
+        pretrains the candidate-conditioning path (``user_proj``): the USER
+        encoding's queries are shifted by the CANDIDATE item's CF vector,
+        matching how Stage 3 pools the history conditioned on the target.
+        Each candidate (positive and an in-batch rolled negative) conditions
+        its OWN scoring pass, so the conditioning carries no label information
+        (feeding the positive's vector into an InfoNCE row would be a
+        copy-through shortcut).
+
+        BPR scoring is MEAN-POOLED over queries, not max-pair selected: an
+        independent max over the Q x Q cosine pairs on each side inflates both
+        scores to the same top-pair ceiling (matching query indices sit near
+        cosine 1 regardless of input), which erased the margin entirely — an
+        earlier run showed L pinned at ln 2 with accuracy below 0.5 for 34
+        epochs while its high-magnitude ~sigmoid'(0)/tau gradient kept
+        injecting noise into the shared Q-Former body.
+
+        Returns ``(loss, top1, cond_loss, cond_acc)``; the last two are None
+        when conditioning is off. ``cond_acc`` chance level is 0.5."""
         user_cf = self.mf.user_encoder(user_ids)
         item_cf = self.mf.item_encoder(item_ids)
         item_sem = self._sem_for(item_ids)
-
-        if condition_on_item and getattr(self.qformer, "user_conditioned", False):
-            # In-batch negative candidate: another user_item row's positive.
-            # May occasionally be a false negative for this user — standard
-            # implicit-feedback noise, acceptable.
-            perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
-            neg_ids = item_ids[perm]
-            neg_cf = item_cf[perm]
-            neg_sem = item_sem[perm] if item_sem is not None else None
-
-            user_q_pos = self.qformer.encode_cf(user_cf, user_cf=item_cf)
-            user_q_neg = self.qformer.encode_cf(user_cf, user_cf=neg_cf)
-            pos_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
-            neg_q = self.qformer.encode_cf(neg_cf, sem_vec=neg_sem)
-
-            u_pos, i_pos, _, _ = self.select_pair_by_similarity(user_q_pos, pos_q)
-            u_neg, i_neg, _, _ = self.select_pair_by_similarity(user_q_neg, neg_q)
-            s_pos = (self.l2norm(u_pos) * self.l2norm(i_pos)).sum(dim=-1) / tau
-            s_neg = (self.l2norm(u_neg) * self.l2norm(i_neg)).sum(dim=-1) / tau
-
-            valid = neg_ids != item_ids  # rolled negative can collide on tiny batches
-            if valid.sum() == 0:
-                zero = s_pos.sum() * 0.0
-                return zero, zero.detach()
-            loss = F.softplus(s_neg[valid] - s_pos[valid]).mean()
-            accuracy = (s_pos[valid] > s_neg[valid]).float().mean()
-            return loss, accuracy
 
         user_q = self.qformer.encode_cf(user_cf)
         item_q = self.qformer.encode_cf(item_cf, sem_vec=item_sem)
@@ -465,7 +448,38 @@ class QRecInstructAlignmentModel(nn.Module):
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)
         accuracy = (logits.argmax(dim=1) == labels).float().mean()
-        return loss, accuracy
+
+        cond_loss = None
+        cond_acc = None
+        if condition_on_item and getattr(self.qformer, "user_conditioned", False):
+            # In-batch negative candidate: another user_item row's positive.
+            # May occasionally be a false negative for this user — standard
+            # implicit-feedback noise, acceptable.
+            perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
+            neg_ids = item_ids[perm]
+            neg_cf = item_cf[perm]
+
+            user_q_pos = self.qformer.encode_cf(user_cf, user_cf=item_cf)
+            user_q_neg = self.qformer.encode_cf(user_cf, user_cf=neg_cf)
+            # The item bags are conditioning-free, so the negatives' encodings
+            # are just a permutation of the positives' — no extra forwards.
+            u_pos = self.l2norm(user_q_pos.mean(dim=1))
+            u_neg = self.l2norm(user_q_neg.mean(dim=1))
+            i_pos = self.l2norm(item_q.mean(dim=1))
+            i_neg = i_pos[perm]
+
+            s_pos = (u_pos * i_pos).sum(dim=-1)
+            s_neg = (u_neg * i_neg).sum(dim=-1)
+
+            valid = neg_ids != item_ids  # rolled negative can collide on tiny batches
+            if valid.sum() == 0:
+                cond_loss = s_pos.sum() * 0.0
+                cond_acc = cond_loss.detach()
+            else:
+                cond_loss = F.softplus((s_neg[valid] - s_pos[valid]) / tau_cond).mean()
+                cond_acc = (s_pos[valid] > s_neg[valid]).float().mean()
+
+        return loss, accuracy, cond_loss, cond_acc
 
     def loss_llm_align(self, item_ids: torch.Tensor, tau: float = 0.07, symmetric: bool = True):
         if not self.has_llm_align:

@@ -155,6 +155,7 @@ METRIC_GROUPS = {
     "L_llm": "item_text", "llm_top1": "item_text",
     "L_ii": "item_item", "ii_top1": "item_item",
     "L_ui": "user_item", "ui_top1": "user_item",
+    "L_uic": "user_item", "uic_acc": "user_item",
 }
 
 SAMPLE_TYPES = ("item_text", "item_item", "user_item")
@@ -278,14 +279,16 @@ def train_step(
     tau_ui: float = 0.07,
     tau_llm: float = 0.07,
     ui_condition_on_item: bool = False,
+    w_ui_cond: float = 0.3,
+    tau_ui_cond: float = 0.2,
     debug_batch: bool = False,
 ):
     """BLIP-2 stage-1 step: ITC + ITM + ITG on item-text samples, plus the
     SigLLM-specific item-item and (ILM-style) user-item contrastives.
 
-    ``ui_condition_on_item=True`` switches the user-item term to the DIN-style
-    candidate-conditioned BPR that pretrains ``user_proj`` (see
-    ``QRecInstructAlignmentModel.loss_user_item``)."""
+    ``ui_condition_on_item=True`` ADDS (does not replace) the DIN-style
+    candidate-conditioned BPR that pretrains ``user_proj``, weighted by
+    ``w_ui_cond`` (see ``QRecInstructAlignmentModel.loss_user_item``)."""
 
     device = batch["i_left"].device
 
@@ -299,6 +302,7 @@ def train_step(
         "L_itg": zero,
         "L_ii": zero,
         "L_ui": zero,
+        "L_uic": zero,
         "L_llm": zero,
         "itc_top1": zero.detach(),
         "itm_acc": zero.detach(),
@@ -306,6 +310,7 @@ def train_step(
         "itg_title_acc": zero.detach(),
         "ii_top1": zero.detach(),
         "ui_top1": zero.detach(),
+        "uic_acc": zero.detach(),
         "llm_top1": zero.detach(),
     }
     losses = []
@@ -353,15 +358,20 @@ def train_step(
     user_item_idx = _indices_for_type(batch, "user_item", device)
     if w_ui > 0.0 and user_item_idx.numel() >= 2:
         user_item_batch = _subset_batch(batch, user_item_idx)
-        loss_ui, ui_top1 = model.loss_user_item(
+        loss_ui, ui_top1, loss_uic, uic_acc = model.loss_user_item(
             user_item_batch["u"],
             user_item_batch["i_left"],
             tau=tau_ui,
             condition_on_item=ui_condition_on_item,
+            tau_cond=tau_ui_cond,
         )
         logs["L_ui"] = loss_ui
         logs["ui_top1"] = ui_top1.detach()
         losses.append(w_ui * loss_ui)
+        if loss_uic is not None and w_ui_cond > 0.0:
+            logs["L_uic"] = loss_uic
+            logs["uic_acc"] = uic_acc.detach()
+            losses.append(w_ui_cond * loss_uic)
 
     loss = sum(losses, zero)
     counts = {
@@ -386,11 +396,16 @@ def evaluate_loss(
     tau_ui=0.07,
     tau_llm=0.07,
     ui_condition_on_item=False,
+    w_ui_cond=0.3,
+    tau_ui_cond=0.2,
+    selection_weights=None,
 ):
     model.eval()
     device = next(model.parameters()).device
     accumulator = MetricAccumulator(
-        weights=_selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii, w_ui)
+        weights=selection_weights
+        if selection_weights is not None
+        else _selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii, w_ui)
     )
 
     with torch.no_grad():
@@ -410,6 +425,8 @@ def evaluate_loss(
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
                 ui_condition_on_item=ui_condition_on_item,
+                w_ui_cond=w_ui_cond,
+                tau_ui_cond=tau_ui_cond,
             )
             accumulator.update(loss, logs, counts)
 
@@ -490,14 +507,36 @@ def train_qformer_stage1_representation(cfg):
     ).to(device)
 
     # DIN-style pretraining of the candidate-conditioning path: only possible
-    # when the adapter was built with the conditioning projection.
+    # when the adapter was built with the conditioning projection. The BPR is
+    # ADDED next to the ui InfoNCE (L_uic / uic_acc, chance 0.5); the InfoNCE
+    # keeps its historical meaning (ui_top1 chance = 1/n).
     ui_condition_on_item = bool(qformer.user_conditioned)
+    w_ui = float(cfg.get("w_ui", 0.0))
+    tau_ui = float(cfg.get("tau_ui", 0.07))
+    w_ui_cond = float(cfg.get("w_ui_cond", 0.3))
+    tau_ui_cond = float(cfg.get("tau_ui_cond", 0.2))
     if ui_condition_on_item:
         log_step(
             "user_proj pretraining active",
-            "loss_user_item runs as candidate-conditioned pairwise BPR "
-            "(ui_top1 chance level is 0.5, not 1/n).",
+            f"candidate-conditioned pairwise BPR added to the ui term "
+            f"(w_ui_cond={w_ui_cond}, tau_ui_cond={tau_ui_cond}, "
+            f"uic_acc chance level 0.5).",
         )
+
+    # Selection weights may deviate from the LOSS weights: the collaborative
+    # contrastives belong in L_repr (they are the CF signal Stage 3 consumes)
+    # but val L_ii swings ~+-1.2 nats epoch-to-epoch, and at full weight that
+    # noise decided every late-epoch selection verdict. Damp its VOTE without
+    # touching its gradient.
+    grad_clip_norm = float(cfg.get("grad_clip_norm", 1.0))
+    selection_weights = _selection_weights(
+        cfg.w_itc,
+        cfg.w_itm,
+        cfg.w_itg,
+        w_llm,
+        float(cfg.get("select_w_ii", cfg.w_ii)),
+        float(cfg.get("select_w_ui", w_ui)),
+    )
 
     opt = _init_optimizer(model, cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -524,14 +563,9 @@ def train_qformer_stage1_representation(cfg):
         f"selection={selection_metric} ({selection_mode})",
     )
 
-    w_ui = float(cfg.get("w_ui", 0.0))
-    tau_ui = float(cfg.get("tau_ui", 0.07))
-
     for epoch in range(cfg.epoch):
         model.train()
-        accumulator = MetricAccumulator(
-            weights=_selection_weights(cfg.w_itc, cfg.w_itm, cfg.w_itg, w_llm, cfg.w_ii, w_ui)
-        )
+        accumulator = MetricAccumulator(weights=selection_weights)
         train_steps = 0
         for batch in train_loader:
             batch = _move_batch_to_device(batch, device)
@@ -551,9 +585,18 @@ def train_qformer_stage1_representation(cfg):
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
                 ui_condition_on_item=ui_condition_on_item,
+                w_ui_cond=w_ui_cond,
+                tau_ui_cond=tau_ui_cond,
                 debug_batch=cfg.debug_batch and epoch == 0 and train_steps < cfg.debug_batch_max_steps,
             )
             loss.backward()
+            # Late-run train loss was drifting UP (12.53 -> 12.88 over the
+            # last epochs of the 34-epoch run) — clip so single-batch spikes
+            # cannot walk the model out of its basin.
+            if grad_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in model.parameters() if p.requires_grad], grad_clip_norm
+                )
             opt.step()
 
             accumulator.update(loss, logs, counts)
@@ -575,17 +618,22 @@ def train_qformer_stage1_representation(cfg):
                 tau_ui=tau_ui,
                 tau_llm=tau_llm,
                 ui_condition_on_item=ui_condition_on_item,
+                w_ui_cond=w_ui_cond,
+                tau_ui_cond=tau_ui_cond,
+                selection_weights=selection_weights,
             )
             print(
                 f"epoch {epoch+1} | "
                 f"Train Loss={avg_train['loss']:.4f} "
                 f"L_itc={avg_train['L_itc']:.4f} L_itm={avg_train['L_itm']:.4f} "
                 f"L_itg={avg_train['L_itg']:.4f} L_ii={avg_train['L_ii']:.4f} "
-                f"L_ui={avg_train['L_ui']:.4f} L_llm={avg_train['L_llm']:.4f} "
+                f"L_ui={avg_train['L_ui']:.4f} L_uic={avg_train['L_uic']:.4f} "
+                f"L_llm={avg_train['L_llm']:.4f} "
                 f"ITC@1={avg_train['itc_top1']:.4f} ITM_acc={avg_train['itm_acc']:.4f} "
                 f"ITG_acc={avg_train['itg_acc']:.4f} ITG_title={avg_train['itg_title_acc']:.4f} "
                 f"II@1={avg_train['ii_top1']:.4f} "
-                f"UI@1={avg_train['ui_top1']:.4f} LLM@1={avg_train['llm_top1']:.4f} "
+                f"UI@1={avg_train['ui_top1']:.4f} UIC_acc={avg_train['uic_acc']:.4f} "
+                f"LLM@1={avg_train['llm_top1']:.4f} "
                 f"g_itc={avg_train['gain_itc']:+.3f} g_llm={avg_train['gain_llm']:+.3f} "
                 f"g_ii={avg_train['gain_ii']:+.3f} g_ui={avg_train['gain_ui']:+.3f} "
                 f"n_it={avg_train['n_item_text']:.1f}(chance={1.0 / max(avg_train['n_item_text'], 1.0):.4f}) "
@@ -593,11 +641,13 @@ def train_qformer_stage1_representation(cfg):
                 f"Val Loss={val_logs['loss']:.4f} "
                 f"L_itc={val_logs['L_itc']:.4f} L_itm={val_logs['L_itm']:.4f} "
                 f"L_itg={val_logs['L_itg']:.4f} L_ii={val_logs['L_ii']:.4f} "
-                f"L_ui={val_logs['L_ui']:.4f} L_llm={val_logs['L_llm']:.4f} "
+                f"L_ui={val_logs['L_ui']:.4f} L_uic={val_logs['L_uic']:.4f} "
+                f"L_llm={val_logs['L_llm']:.4f} "
                 f"ITC@1={val_logs['itc_top1']:.4f} ITM_acc={val_logs['itm_acc']:.4f} "
                 f"ITG_acc={val_logs['itg_acc']:.4f} ITG_title={val_logs['itg_title_acc']:.4f} "
                 f"II@1={val_logs['ii_top1']:.4f} "
-                f"UI@1={val_logs['ui_top1']:.4f} LLM@1={val_logs['llm_top1']:.4f} "
+                f"UI@1={val_logs['ui_top1']:.4f} UIC_acc={val_logs['uic_acc']:.4f} "
+                f"LLM@1={val_logs['llm_top1']:.4f} "
                 f"g_itc={val_logs['gain_itc']:+.3f} g_llm={val_logs['gain_llm']:+.3f} "
                 f"g_ii={val_logs['gain_ii']:+.3f} g_ui={val_logs['gain_ui']:+.3f} "
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
@@ -674,6 +724,9 @@ def train_qformer_stage1_representation(cfg):
         tau_ui=tau_ui,
         tau_llm=tau_llm,
         ui_condition_on_item=ui_condition_on_item,
+        w_ui_cond=w_ui_cond,
+        tau_ui_cond=tau_ui_cond,
+        selection_weights=selection_weights,
     )
     log_step(
         "Test results",

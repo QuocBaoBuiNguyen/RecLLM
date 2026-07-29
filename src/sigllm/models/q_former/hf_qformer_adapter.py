@@ -112,6 +112,15 @@ class HFQFormerAdapter(nn.Module):
         # masked out at forward time, falling back to CF-only cleanly.
         self.d_sem = int(d_sem) if d_sem is not None else None
         self.proj_sem = nn.Linear(self.d_sem, d_model) if self.d_sem else None
+        if self.proj_sem is not None:
+            # Zero-init: the semantic token starts as a constant no-op register
+            # (value = bias = 0) and grows only if the training signal rewards
+            # it. With the default random init the sem token is an
+            # always-present cross-attention key carrying pure noise, which
+            # dilutes the CF signal from step 0 — a stage-1 run with random
+            # init showed ITC gain collapsing from ~2.3 to ~0.65 nats.
+            nn.init.zeros_(self.proj_sem.weight)
+            nn.init.zeros_(self.proj_sem.bias)
 
         config = InstructBlipQFormerConfig(
             vocab_size=len(self.qformer_tokenizer),
