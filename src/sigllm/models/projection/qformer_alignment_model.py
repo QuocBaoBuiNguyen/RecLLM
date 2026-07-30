@@ -96,17 +96,26 @@ class QRecInstructAlignmentModel(nn.Module):
         llm_emb_normalize="center",
         item_sem_emb=None,
         sem_dropout=0.5,
-        pair_logit_center=True,
+        pair_logit_center=False,
         itc_logit_center=True,
+        bpr_logit_center=True,
     ) -> None:
         super().__init__()
         self.mf = mf
         self.qformer = qformer
-        # Batch-center the pooled vectors of the collaborative contrastives
-        # (L_ii / L_ui) before the cosine. See _pooled_pair_logits for the
-        # measured comparison; False restores the uncentered form for an A/B.
+        # Batch-center the pooled vectors of the collaborative InfoNCE terms
+        # (L_ii / L_ui) before the cosine. Default OFF: measured on ml-1m it
+        # pushed L_ii to 24.4 against a ln(n) of 6.4 (the centered residual is
+        # near low-rank, cosines go bipolar, and 1/tau amplifies that inside
+        # logsumexp). Turning it off recovered g_ii from -18.0 to -4.0 in one
+        # epoch. See _pooled_pair_logits.
         self.pair_logit_center = bool(pair_logit_center)
         self.itc_logit_center = bool(itc_logit_center)
+        # Centering for the candidate-conditioned BPR, which fails the OPPOSITE
+        # way: softplus sees only s_neg - s_pos (no logsumexp to blow up), and
+        # with a saturated cosine that difference is ~0, so user_proj gets no
+        # gradient and L_uic sits at ln 2. Default ON. See loss_user_item.
+        self.bpr_logit_center = bool(bpr_logit_center)
         # Optional semantic cross-attention source (see HFQFormerAdapter.d_sem):
         # the RAW distilled bank, deliberately NOT normalize_item_llm_emb'd —
         # normalization conditions the contrastive TARGET geometry; the source
@@ -595,14 +604,15 @@ class QRecInstructAlignmentModel(nn.Module):
                 )
                 neg_cf = self.mf.item_encoder(neg_ids)
                 neg_q = self.qformer.encode_cf(neg_cf, sem_vec=self._sem_for(neg_ids))
-                i_neg = self.l2norm(neg_q.mean(dim=1))
+                i_neg_vec = neg_q.mean(dim=1)
+                perm = None
             else:  # "roll": in-batch negative — another user_item row's positive.
                 perm = torch.roll(torch.arange(item_ids.size(0), device=item_ids.device), 1)
                 neg_ids = item_ids[perm]
                 neg_cf = item_cf[perm]
                 # Conditioning-free item bags: the negatives' encodings are a
                 # permutation of the positives' — no extra forward.
-                i_neg = None  # filled from i_pos below
+                i_neg_vec = None  # filled from i_pos_vec below
 
             # With history mode this is EXACTLY Stage 3's <UserProfile>
             # computation: pool the history sequence with queries shifted by
@@ -613,11 +623,50 @@ class QRecInstructAlignmentModel(nn.Module):
             user_q_neg = self.qformer.encode_cf(
                 user_src, user_cf=neg_cf, source_mask=user_mask, sem_vec=user_sem
             )
-            u_pos = self.l2norm(user_q_pos.mean(dim=1))
-            u_neg = self.l2norm(user_q_neg.mean(dim=1))
-            i_pos = self.l2norm(item_q.mean(dim=1))
-            if i_neg is None:
-                i_neg = i_pos[perm]
+            # Pooled but NOT yet normalized — centering has to happen before the
+            # l2norm to have any effect.
+            u_pos_vec = user_q_pos.mean(dim=1)
+            u_neg_vec = user_q_neg.mean(dim=1)
+            i_pos_vec = item_q.mean(dim=1)
+            if i_neg_vec is None:
+                i_neg_vec = i_pos_vec[perm]
+
+            # Centering HELPS here, unlike in the InfoNCE above — the two losses
+            # fail in opposite directions and the distinction is the whole
+            # reason these are separate flags.
+            #
+            # InfoNCE (``_pooled_pair_logits``): centering spreads the cosines,
+            # and ``cross_entropy`` over n candidates divides by a small tau, so
+            # the spread lands in logsumexp and drove the loss far past ln(n)
+            # (measured: L_ii 24.4 vs ln(n) 6.4). Hence its default is off.
+            #
+            # BPR here: ``softplus`` sees only the DIFFERENCE s_neg - s_pos, so
+            # there is no logsumexp to blow up. The failure is the opposite one —
+            # with the query output nearly collinear across inputs (measured
+            # offdiag cosine ~0.9999) both scores sit at ~1.0, where the cosine
+            # is saturated, so their difference is ~0 and the gradient reaching
+            # user_proj vanishes. That is exactly why L_uic sat at ln 2 = 0.6931
+            # for every epoch. Removing the shared direction restores a margin
+            # the pretext can actually move.
+            #
+            # The mean is SHARED between pos and neg on each side, deliberately.
+            # Centering each by its own mean would put s_pos and s_neg in
+            # different coordinate frames and their difference would stop being
+            # a comparison. For "roll" the negatives are a permutation of the
+            # positives, so a shared mean is also the only self-consistent
+            # choice (permuting centered vectors == centering permuted ones).
+            if self.bpr_logit_center and u_pos_vec.size(0) >= 4:
+                u_mu = torch.cat([u_pos_vec, u_neg_vec], dim=0).mean(dim=0, keepdim=True)
+                i_mu = torch.cat([i_pos_vec, i_neg_vec], dim=0).mean(dim=0, keepdim=True)
+                u_pos_vec = u_pos_vec - u_mu
+                u_neg_vec = u_neg_vec - u_mu
+                i_pos_vec = i_pos_vec - i_mu
+                i_neg_vec = i_neg_vec - i_mu
+
+            u_pos = self.l2norm(u_pos_vec)
+            u_neg = self.l2norm(u_neg_vec)
+            i_pos = self.l2norm(i_pos_vec)
+            i_neg = self.l2norm(i_neg_vec)
 
             s_pos = (u_pos * i_pos).sum(dim=-1)
             s_neg = (u_neg * i_neg).sum(dim=-1)

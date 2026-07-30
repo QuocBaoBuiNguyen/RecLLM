@@ -104,7 +104,13 @@ model:
     item_sem_emb_path: ${run.qformer_stage1.item_sem_emb_path}
     # Training-time row dropout on the semantic source so the CF path keeps
     # earning gradient (semantics is the easier shortcut for warm items).
-    sem_source_dropout: 0.5
+    # 0.2, not 0.5: at 0.5 half of every batch contributed nothing to proj_sem,
+    # and since proj_sem is zero-initialised it needs gradient to leave 0 at all
+    # — it stayed inert. 0.2 keeps the CF path honest while giving the semantic
+    # channel 4x more signal. NOTE: dropout is NOT the only way this path dies —
+    # if the bank has all-zero rows for the items in play they are masked out
+    # entirely; Stage 1 now logs covered_rows for exactly that reason.
+    sem_source_dropout: 0.2
 
   rec_config:
     user_num: 839
@@ -293,26 +299,47 @@ run:
     # selection verdict in the 34-epoch run.
     select_w_ii: 0.3
     select_w_ui: 0.3
-    # EMA smoothing of val_L_repr before the early stopper (0 = off, raw).
-    # Late-training improvements (~0.02-0.3/epoch) are the same order as the
-    # metric's epoch noise, so the raw stopper burns patience on noise
-    # plateaus and crowns lucky dips as best-epoch.
+    # Checkpoint selection. val_gain_itc (= ln(n) - val L_itc, so MAXIMISE),
+    # not val_L_repr: L_repr is a weighted SUM dominated by the raw magnitude of
+    # L_ii (~9.5) and L_ui (~6.2), so it kept falling (12.91 -> 12.24) straight
+    # through an epoch range where val gain_itc went +0.19 -> -0.23. It was blind
+    # to the overfit. gain_* is normalised by ln(n), so unlike raw L_* it is also
+    # comparable across splits with different batch composition.
+    #
+    # Caveat worth knowing: gain_itc watches the term that overfits FIRST, not
+    # the terms Stage 2/3 consume most (val gain_llm and val ITG_title were both
+    # still IMPROVING at the epoch this metric would stop on). It is the right
+    # choice while ITC overfits at epoch 2-3; once the item_text catalog is large
+    # enough for ITC to generalise, revisit — val_gain_llm is the more direct
+    # proxy for what Stage 2 warm-starts from.
+    selection_metric: val_gain_itc
+    selection_mode: max
+    # EMA smoothing of the selection metric before the early stopper (0 = off).
+    # Late-training improvements are the same order as the metric's epoch noise,
+    # so the raw stopper burns patience on noise plateaus and crowns lucky dips
+    # as best-epoch.
     selection_ema: 0.5
     # Single-batch spikes were walking train loss upward late in the run.
     grad_clip_norm: 1.0
-    # L_ii / L_ui score MEAN-POOLED queries and remove the batch mean before the
-    # cosine. The Q tokens carry a large direction shared across inputs, so an
-    # uncentered score leaves every candidate nearly tied: simulated at this
-    # model's regime, CE sits at ln(B) (3.47 at B=32) with no centering and
-    # drops to ~0.00 with it, at top1 1.0 either way — i.e. the ordering was
-    # fine but the MARGIN, and therefore the gradient, was gone. This is the
-    # same narrow-cone problem llm_emb_normalize: center fixes for the L_llm
-    # targets. Do NOT replace the pooling with a max over the Q x Q query grid:
-    # that lets max_{q,r} lock onto q == r (cosine ~1 for any inputs) and pins
-    # the loss at ln(n) — the mechanism behind the run where L_ui sat at ln 2
-    # for 34 epochs. False = uncentered, for an A/B.
-    pair_logit_center: True
+    # Batch-centering for the collaborative InfoNCE (L_ii / L_ui). OFF, measured:
+    # ON gave L_ii=24.45 against ln(n)=6.41 and L_ui=9.56 vs 5.86 — worse than
+    # chance, because the centered residual is near low-rank, the cosines go
+    # bipolar, and cross_entropy's logsumexp amplifies that by 1/tau. Turning it
+    # off moved g_ii from -18.04 to -4.03 and g_ui from -3.70 to +0.72 in the
+    # same epoch. Do NOT also replace the pooling with a max over the Q x Q
+    # query grid: that lets max_{q,r} lock onto q == r (cosine ~1 for any pair
+    # of inputs) and pins the loss at exactly ln(n).
+    pair_logit_center: False
     itc_logit_center: True
+    # Batch-centering for the candidate-conditioned BPR. ON — this loss fails
+    # the OPPOSITE way to the InfoNCE above, which is why it needs its own flag.
+    # softplus sees only s_neg - s_pos, so there is no logsumexp to blow up; the
+    # problem is that the query output is nearly collinear across inputs
+    # (measured offdiag_cos_raw ~0.9999), so both scores sit at ~1.0 where the
+    # cosine is saturated, the difference is ~0, and user_proj gets no gradient.
+    # Symptom: L_uic pinned at exactly ln 2 = 0.6931 with user_proj still at its
+    # zero init. Watch the [DIAG] "zero-init paths" line to confirm it moves.
+    bpr_logit_center: True
     decoupled_weight_decay: True
     min_gain_itc: 0.05
     collapse_patience: 3
@@ -447,6 +474,7 @@ run:
     ui_cond_neg: ${run.qformer_stage1.ui_cond_neg}
     # Must match Stage 1 — the keep-alive replays the same loss.
     pair_logit_center: ${run.qformer_stage1.pair_logit_center}
+    bpr_logit_center: ${run.qformer_stage1.bpr_logit_center}
     itc_logit_center: ${run.qformer_stage1.itc_logit_center}
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"

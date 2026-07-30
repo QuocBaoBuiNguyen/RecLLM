@@ -137,6 +137,33 @@ def _query_anisotropy(model, loader, max_rows: int = 512):
         "centered": _offdiag_cos(pooled - pooled.mean(dim=0, keepdim=True))
     }
 
+@torch.no_grad()
+def _zero_init_path_norms(model):
+    """Weight norms of the two zero-initialised conditioning paths.
+
+    ``proj_sem`` and ``user_proj`` both start at exactly 0 so they act as no-ops
+    at step 0 and only grow if the loss rewards them. The failure mode that
+    creates is silent: if they never receive usable gradient they simply stay at
+    0 forever, and every downstream metric looks "fine" because the paths are
+    inert rather than wrong. Printing the norms is the only direct way to tell
+    "the pretext is training this" from "the pretext is a no-op".
+
+    A norm still at 0.0 after a few epochs means the path is dead — check the
+    semantic bank coverage (for proj_sem) or the BPR margin / bpr_logit_center
+    (for user_proj).
+    """
+    out = {}
+    qformer = getattr(model, "qformer", None)
+    if qformer is None:
+        return out
+    for name in ("proj_sem", "user_proj"):
+        module = getattr(qformer, name, None)
+        if module is not None:
+            out[name] = float(module.weight.detach().norm().item())
+            out[f"{name}_bias"] = float(module.bias.detach().norm().item())
+    return out
+
+
 def _log_batch_preview(batch, prefix: str = "train_step"):
     """Print a compact preview of the current batch for debugging."""
     batch_size = batch["i_left"].size(0)
@@ -636,10 +663,35 @@ def train_qformer_stage1_representation(cfg):
         blob = torch.load(item_sem_emb_path, map_location="cpu")
         item_sem_emb = blob["item_llm_emb"] if isinstance(blob, dict) else blob
         d_sem = int(item_sem_emb.size(-1))
+        # COVERAGE, not just shape. An all-zero row is treated as "no text
+        # available" and masked out of cross-attention, so a bank that is mostly
+        # zeros silently disables the semantic source entirely — proj_sem then
+        # receives no gradient no matter what sem_source_dropout is set to, and
+        # the sem_on / sem_off diagnostic pair comes out bit-identical. That is
+        # the first thing to rule out when proj_sem looks dead.
+        covered = int((item_sem_emb.norm(dim=-1) > 0).sum())
+        total = int(item_sem_emb.size(0))
         log_step(
             "Loaded semantic source bank",
-            f"path={item_sem_emb_path}, shape={tuple(item_sem_emb.shape)}",
+            f"path={item_sem_emb_path}, shape={tuple(item_sem_emb.shape)}, "
+            f"covered_rows={covered}/{total} ({covered / max(total, 1):.1%}), "
+            f"mean_norm_covered="
+            f"{item_sem_emb[item_sem_emb.norm(dim=-1) > 0].norm(dim=-1).mean().item() if covered else 0.0:.4f}",
         )
+        if covered == 0:
+            raise ValueError(
+                f"Semantic source bank {item_sem_emb_path} has ZERO non-zero rows, so "
+                "every semantic token would be masked out and proj_sem could never "
+                "train. Re-distill it (--space last_hidden against the base LLM, "
+                "passing all splits via --data-pkl) or set sem_source: False."
+            )
+        if covered < total * 0.5:
+            log_step(
+                "WARNING",
+                f"only {covered / max(total, 1):.1%} of the semantic bank is populated; "
+                "uncovered items fall back to CF-only and contribute no gradient to "
+                "proj_sem. Check that --data-pkl covered every split at distill time.",
+            )
 
     qformer = _init_qformer(cfg, qformer_d_model, device, d_sem=d_sem)
     if sem_source:
@@ -656,8 +708,9 @@ def train_qformer_stage1_representation(cfg):
         llm_emb_normalize=llm_emb_normalize,
         item_sem_emb=item_sem_emb,
         sem_dropout=sem_dropout,
-        pair_logit_center=bool(cfg.get("pair_logit_center", True)),
-        itc_logit_center=bool(cfg.get("itc_logit_center", True))
+        pair_logit_center=bool(cfg.get("pair_logit_center", False)),
+        itc_logit_center=bool(cfg.get("itc_logit_center", True)),
+        bpr_logit_center=bool(cfg.get("bpr_logit_center", True)),
     ).to(device)
 
     # DIN-style pretraining of the candidate-conditioning path: only possible
@@ -756,6 +809,15 @@ def train_qformer_stage1_representation(cfg):
                 f"(raw near 1.0 = every item encodes to the same direction, so the "
                 f"uncentered cosine losses cannot resolve items; centered is what "
                 f"pair_logit_center/itc_logit_center actually score against)",
+            )
+        path_norms = _zero_init_path_norms(model)
+        if path_norms:
+            log_step(
+                f"[DIAG ep{epoch_index}] zero-init paths",
+                ", ".join(f"{k}={v:.6f}" for k, v in sorted(path_norms.items()))
+                + " | still 0.0 = that path is inert and receiving no usable "
+                "gradient (proj_sem: check bank coverage; user_proj: check "
+                "L_uic against ln 2 = 0.6931 and bpr_logit_center)",
             )
         for split, loader in item_text_loaders.items():
             for tag, ctx in (
@@ -893,9 +955,18 @@ def train_qformer_stage1_representation(cfg):
                 **{f"val_{key}": value for key, value in val_logs.items()},
                 **{f"train_{key}": value for key, value in avg_train.items()},
             }
+            if selection_metric not in metrics:
+                raise KeyError(
+                    f"selection_metric={selection_metric!r} is not among the logged "
+                    f"metrics, so the early stopper would KeyError on it. Available: "
+                    f"{sorted(metrics)}"
+                )
+            # Raw (pre-EMA) value, kept for the log line — the stopper below may
+            # see the smoothed one instead.
+            raw_selection_value = float(metrics[selection_metric])
             ema_note = ""
-            if selection_ema > 0.0 and selection_metric in metrics:
-                raw_value = float(metrics[selection_metric])
+            if selection_ema > 0.0:
+                raw_value = raw_selection_value
                 selection_ema_value = (
                     raw_value
                     if selection_ema_value is None
@@ -936,7 +1007,9 @@ def train_qformer_stage1_representation(cfg):
                 f"g_ii={val_logs['gain_ii']:+.3f} g_ui={val_logs['gain_ui']:+.3f} "
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
                 f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} "
-                f"[SELECT] L_repr={val_logs['L_repr']:.4f}{ema_note} | "
+                f"L_repr={val_logs['L_repr']:.4f} "
+                f"[SELECT] {selection_metric}({selection_mode})="
+                f"{float(raw_selection_value):+.4f}{ema_note} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
                 f"tau_itc={cfg.tau_itc:.3f} tau_ii={cfg.tau_ii:.3f} tau_ui={tau_ui:.3f} "
