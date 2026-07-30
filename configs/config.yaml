@@ -227,7 +227,18 @@ run:
     # drop 4x, so if L_repr now improves too slowly per epoch, raise `epoch`
     # rather than pushing lr further.
     lr: 1e-4
-    w_itc: 1.0
+    # 0.3, down from 1.0. ITC cannot generalise from CF alone (its target is the
+    # caption's text CLS, dominated by the per-item TITLE, which MF embeddings
+    # do not carry — see the selection_metric note below), so at full weight its
+    # gradient mostly drives memorisation of train-item signatures: measured
+    # train g_itc +0.33 -> +4.54 over 5 epochs while val went +0.16 -> -0.84.
+    # Kept non-zero rather than removed: it is still the only term pressuring
+    # the queries to be input-dependent at all, and the terms that DO generalise
+    # (g_llm, g_ii, g_ui) all kept improving alongside it, so it is not actively
+    # harmful — just over-weighted. Watch offdiag_cos_centered: if it shrinks
+    # toward 0 as fast as before, memorisation still dominates and this can go
+    # lower; if it stops shrinking, 0.3 is doing its job.
+    w_itc: 0.3
     # 0.0 — OFF. ITM_acc has sat at exactly 0.6667 on every epoch and every
     # split across runs, i.e. its trivial baseline (label mix is 1 positive :
     # 2 negatives, so predicting all-negative scores 2/3). L_itm likewise never
@@ -320,12 +331,38 @@ run:
     # {split}_{sem_on|sem_off}_{gain_itc|gain_llm|L_itc|L_llm|itc_top1|llm_top1|
     # itg_title_acc} — val_sem_off_gain_llm is the alternative worth trying once
     # ITC generalises, since llm_align_proj is what Stage 2 warm-starts from.
-    selection_metric: val_sem_off_gain_itc
+    # gain_LLM, not gain_itc. Measured over 5 epochs with the bank withheld from
+    # the caption-targeted losses (sem_for_text_losses: False):
+    #
+    #   ep      1      2      3      4      5
+    #   train g_itc  +0.33  +1.18  +2.59  +3.89  +4.54   (rises monotonically)
+    #   val   g_itc  +0.16  +0.21  -0.10  -0.41  -0.84   (falls through zero)
+    #   val   g_llm  +0.13  +0.20  +0.21  +0.23  +0.25   (rises monotonically)
+    #   val   g_ii   +0.12  +0.15  +0.15  +0.15  +0.15
+    #   val   UIC_acc 0.513  0.553  0.555  0.557  0.611
+    #
+    # ITC cannot generalise from CF alone and this is structural, not a tuning
+    # problem: its target is the text CLS of "Title: X. Genres: Y", where almost
+    # all of the discriminative content is the TITLE — a per-item arbitrary
+    # string. MF embeddings are trained on (uid, iid, label), so genres are
+    # recoverable (same-genre items co-watch) but titles are not. ITC is
+    # 1-of-n retrieval, i.e. identity-level discrimination, so for a held-out
+    # item the CF path has nothing to go on and can only memorise train-item
+    # signatures. Symptom in the geometry line: offdiag_cos_raw pinned at 0.9998
+    # while offdiag_cos_centered SHRINKS (0.0105 -> 0.0050) — a near-constant
+    # vector plus a per-item noise signature, which is exactly memorisation.
+    #
+    # gain_llm is the right target instead: it measures llm_align_proj, the head
+    # Stage 2 warm-starts llm_proj from, and its target (the centered
+    # input-embedding bank) has shared genre structure that CF really does carry.
+    # Keep w_itc > 0 anyway — it still pressures the queries to be
+    # input-dependent — just do not let it pick the checkpoint.
+    selection_metric: val_sem_off_gain_llm
     selection_mode: max
     # Metric the collapse guard watches; defaults to selection_metric so the two
     # cannot disagree about what "healthy" means. Must be a higher-is-better
     # gain_* key for the `< min_gain_itc` comparison to mean anything.
-    collapse_metric: val_sem_off_gain_itc
+    collapse_metric: val_sem_off_gain_llm
     # EMA smoothing of the selection metric before the early stopper (0 = off).
     # Late-training improvements are the same order as the metric's epoch noise,
     # so the raw stopper burns patience on noise plateaus and crowns lucky dips
@@ -353,7 +390,12 @@ run:
     # zero init. Watch the [DIAG] "zero-init paths" line to confirm it moves.
     bpr_logit_center: True
     decoupled_weight_decay: True
-    min_gain_itc: 0.05
+    # Collapse threshold for collapse_metric (any gain_* key; 0.0 = chance).
+    # 0.05 against val_sem_off_gain_llm, which sat at 0.13-0.27 and rising over
+    # the last run — so this only fires if the LLM alignment genuinely stops
+    # beating chance, not merely because ITC memorises. Old key name
+    # `min_gain_itc` is still read as a fallback.
+    min_collapse_gain: 0.05
     collapse_patience: 3
     collapse_warmup_epochs: 3
     # SeLLa alignment: gradients flow through the injection-identical

@@ -946,7 +946,12 @@ def train_qformer_stage1_representation(cfg):
     # lucky dips as "best". 0.0 disables (raw metric, old behaviour).
     selection_ema = float(cfg.get("selection_ema", 0.5))
     selection_ema_value = None
-    min_gain_itc = float(cfg.get("min_gain_itc", 0.05))
+    # Threshold for collapse_metric, whatever that metric is. Named
+    # min_gain_itc historically, when the guard could only watch gain_itc; the
+    # old key is still honoured so existing configs keep working.
+    min_collapse_gain = float(
+        cfg.get("min_collapse_gain", cfg.get("min_gain_itc", 0.05))
+    )
     collapse_patience = int(cfg.get("collapse_patience", 3))
     collapse_warmup = int(cfg.get("collapse_warmup_epochs", 3))
     # Defaults to the selection metric so the guard and the stopper can never
@@ -958,7 +963,7 @@ def train_qformer_stage1_representation(cfg):
     if collapse_patience > 0 and selection_mode != "max" and "collapse_metric" not in cfg:
         log_step(
             "WARNING",
-            f"collapse guard compares {collapse_metric} < {min_gain_itc}, but "
+            f"collapse guard compares {collapse_metric} < {min_collapse_gain}, but "
             f"selection_mode={selection_mode} suggests lower-is-better for that "
             "metric. Set collapse_metric to a gain_* key or collapse_patience: 0.",
         )
@@ -966,7 +971,7 @@ def train_qformer_stage1_representation(cfg):
         "Training setup",
         f"seed={cfg.seed}, output_dir={outdir}, "
         f"selection={selection_metric} ({selection_mode}, ema={selection_ema}), "
-        f"collapse_guard={collapse_metric} < {min_gain_itc} "
+        f"collapse_guard={collapse_metric} < {min_collapse_gain} "
         f"x{collapse_patience} after ep{collapse_warmup}",
     )
 
@@ -1114,14 +1119,14 @@ def train_qformer_stage1_representation(cfg):
             if collapse_patience > 0 and (epoch + 1) >= collapse_warmup:
                 collapse_value = float(metrics[collapse_metric])
                 collapse_counter = (
-                    collapse_counter + 1 if collapse_value < min_gain_itc else 0
+                    collapse_counter + 1 if collapse_value < min_collapse_gain else 0
                 )
 
                 if collapse_counter >= collapse_patience:
                     log_step(
                         "ABORTED - item-text objectives collapsed",
                         f"epoch={epoch + 1}, {collapse_metric}={collapse_value:+.3f} "
-                        f"< {min_gain_itc} for {collapse_counter} consecutive epochs "
+                        f"< {min_collapse_gain} for {collapse_counter} consecutive epochs "
                         f"(0.0 = chance). If this is the sem_off variant, the CF path "
                         f"has learned nothing and the objectives are being solved by "
                         f"reading the semantic bank — compare the [DIAG] sem_on vs "
