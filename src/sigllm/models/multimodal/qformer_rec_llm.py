@@ -111,6 +111,7 @@ class QRecLLM(Rec2Base):
         lora_dropout=0.05,
         tuning_step=None,
         user_conditioned=False,
+        candidate_aware=False,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -142,6 +143,7 @@ class QRecLLM(Rec2Base):
         self.lora_dropout = float(lora_dropout)
         self.tuning_step = tuning_step
         self.user_conditioned = bool(user_conditioned)
+        self.candidate_aware = bool(candidate_aware)
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
         # Yes/No margin; align_rank_loss shapes the aligned CF soft tokens. Both
@@ -168,6 +170,16 @@ class QRecLLM(Rec2Base):
                 "different aspects of an item depending on which user is asking.",
             )
 
+        if self.candidate_aware:
+            log_step(
+                "CANDIDATE-AWARE MODE",
+                "candidate_aware=True → Q-Former queries are shifted per-candidate by "
+                "item_proj(target_cf). Applied to HISTORY-item encoding so each "
+                "history item's soft tokens are read through the lens of the "
+                "candidate (DIN target-attention) — the uAUC lever: a shift that "
+                "VARIES within a user across candidates, unlike the user shift.",
+            )
+
         log_step("Running MiniGPT4Rec_v2 initialization")
 
         self.rec_model_type = rec_model
@@ -188,6 +200,8 @@ class QRecLLM(Rec2Base):
             max_instruction_length=max_instruction_length,
             user_conditioned=self.user_conditioned,
             d_user=rec_config.embedding_size,
+            candidate_aware=self.candidate_aware,
+            d_item=rec_config.embedding_size,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
@@ -371,6 +385,8 @@ class QRecLLM(Rec2Base):
         max_instruction_length: int,
         user_conditioned: bool = False,
         d_user: int = None,
+        candidate_aware: bool = False,
+        d_item: int = None,
     ):
         log_step("Loading QFormer")
         log_step(
@@ -390,6 +406,8 @@ class QRecLLM(Rec2Base):
             init_from_pretrained_text=False,
             user_conditioned=user_conditioned,
             d_user=d_user,
+            candidate_aware=candidate_aware,
+            d_item=d_item,
         ).to(self.device)
 
         if pretrained_qformer and pretrained_qformer != "not_have":
@@ -658,9 +676,18 @@ class QRecLLM(Rec2Base):
             if self.user_conditioned:
                 user_cf_for_q = self.rec_encoder.user_encoder(batch_data["UserID"])  # [B,d_cf]
 
+            # Candidate-aware queries: target_cf shifts the base Q tokens per
+            # CANDIDATE item. On the target item this is a (harmless) self-shift —
+            # target_cf is already the cross-attention key — but it is the SAME
+            # target_cf we broadcast over the history items below, where it is the
+            # actual uAUC lever (DIN target-attention). Pulled only when the flag is on.
+            target_cf_for_q = target_cf if self.candidate_aware else None
+
             # 2) QFormer outputs (instruction-conditioned)
             # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
-            target_q = self.qformer(target_cf, ins_list, user_cf=user_cf_for_q)  # [B,Q,d_model]
+            target_q = self.qformer(
+                target_cf, ins_list, user_cf=user_cf_for_q, target_cf=target_cf_for_q
+            )  # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
             # user_llm = self.llm_proj(user_q)               # [B,Q,H]
@@ -696,8 +723,20 @@ class QRecLLM(Rec2Base):
                         user_cf_for_q.unsqueeze(1).expand(-1, L, -1).reshape(B * L, -1)
                     )
 
+                # Candidate-aware: broadcast the SAME target (candidate) CF across
+                # all L history items of a user, so each history item's soft tokens
+                # are computed "through the lens" of the candidate being scored.
+                # This is DIN target-attention and the actual uAUC lever — the shift
+                # now VARIES across candidates within a user (unlike the user shift).
+                target_cf_flat_for_q = None
+                if self.candidate_aware:
+                    target_cf_flat_for_q = (
+                        target_cf.unsqueeze(1).expand(-1, L, -1).reshape(B * L, -1)
+                    )
+
                 inter_q_flat = self.qformer(
-                    inter_cf_flat, inter_ins_list, user_cf=user_cf_flat_for_q,
+                    inter_cf_flat, inter_ins_list,
+                    user_cf=user_cf_flat_for_q, target_cf=target_cf_flat_for_q,
                 )                                                                          # [B*L,Q,d_model]
                 inter_llm_flat2 = self.llm_proj(inter_q_flat)                         # [B*L,Q,H]
                 if self.ablate_soft_tokens:
@@ -1199,6 +1238,7 @@ class QRecLLM(Rec2Base):
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
+        candidate_aware = bool(qformer_config.get("candidate_aware", False))
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1245,6 +1285,7 @@ class QRecLLM(Rec2Base):
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
             user_conditioned=user_conditioned,
+            candidate_aware=candidate_aware,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,

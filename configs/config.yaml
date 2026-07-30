@@ -79,7 +79,19 @@ model:
     num_queries: 8
     num_heads: 8
     num_layers: 4
-    user_conditioned: False
+    # user_conditioned: additive per-user shift user_proj(user_cf) on the queries.
+    # Helps AUC (separates user A from user B) but CANCELS in uAUC (a constant
+    # within a user does not change within-user ordering).
+    user_conditioned: True
+    # candidate_aware (NEW, this branch): additive per-CANDIDATE shift
+    # item_proj(target_cf), broadcast over the L history items of each user, so
+    # every history soft token is read "through the lens" of the candidate being
+    # scored (DIN target-attention). This is the uAUC lever — the shift VARIES
+    # across candidates within a user, so it can move within-user ordering.
+    # Zero-init -> no-op at warm-start; only Q-Former/proj (Step 2) train it.
+    # Ablation: set False here + user_conditioned False = vanilla; True/False mix
+    # isolates each axis. This run = user_conditioned + candidate_aware (full).
+    candidate_aware: True
 
   rec_config:
     user_num: 839
@@ -208,7 +220,7 @@ run:
     # `qformer_stage3_step1`: only the keys that differ from the top-level
     # defaults are listed here.
     prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_vanilla_qwen2/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_candaware_qwen2/"
     ckpt: "${run.qformer_stage3_step1.output_dir}${run.qformer_stage3_step1.best_ckpt_name}"
     init_lr: 3e-5
     # Must stay below init_lr: the top-level min_lr (8e-5) is ABOVE this stage's

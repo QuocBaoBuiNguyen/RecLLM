@@ -60,6 +60,8 @@ class HFQFormerAdapter(nn.Module):
         init_from_pretrained_text: bool = True,
         user_conditioned: bool = False,
         d_user: Optional[int] = None,
+        candidate_aware: bool = False,
+        d_item: Optional[int] = None,
     ):
         super().__init__()
 
@@ -98,6 +100,25 @@ class HFQFormerAdapter(nn.Module):
             # rewards it. Standard pattern for LoRA / FiLM / prefix tuning.
             nn.init.zeros_(self.user_proj.weight)
             nn.init.zeros_(self.user_proj.bias)
+
+        # Candidate-aware (DIN-style) queries. When enabled, the base queries are
+        # ALSO shifted by `item_proj(target_cf)` — the CF vector of the CANDIDATE
+        # item currently being scored. This is the load-bearing axis for uAUC:
+        # unlike the per-user shift (a constant WITHIN a user, which cancels in
+        # within-user ranking), a target-item shift VARIES across candidates for
+        # the same user, so it can create a user x candidate interaction that
+        # moves within-user ordering. Applied to HISTORY-item encoding at Stage 3
+        # so each history item's soft tokens are read "through the lens" of the
+        # candidate (DIN target-attention), and to the target item too (harmless,
+        # its own CF is already the cross-attention key). Zero-init -> no-op at
+        # warm-start; grows only if it earns within-user discrimination.
+        self.candidate_aware = bool(candidate_aware)
+        if self.candidate_aware:
+            d_item_eff = int(d_item) if d_item is not None else d_cf
+            self.d_item = d_item_eff
+            self.item_proj = nn.Linear(d_item_eff, d_model)
+            nn.init.zeros_(self.item_proj.weight)
+            nn.init.zeros_(self.item_proj.bias)
 
         config = InstructBlipQFormerConfig(
             vocab_size=len(self.qformer_tokenizer),
@@ -245,13 +266,18 @@ class HFQFormerAdapter(nn.Module):
         self,
         batch_size: int,
         user_cf: Optional[torch.Tensor],
+        target_cf: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Expand base learnable queries and optionally shift per-user.
+        """Expand base learnable queries and optionally shift per-user / per-candidate.
 
         When ``user_conditioned`` is on and ``user_cf`` is provided, each query
         token is shifted by ``user_proj(user_cf)`` so the same Q tokens encode
-        different aspects for different users. Otherwise queries are identical
-        across the batch (vanilla Q-Former behaviour).
+        different aspects for different users. When ``candidate_aware`` is on and
+        ``target_cf`` is provided, the queries are ADDITIONALLY shifted by
+        ``item_proj(target_cf)`` — the candidate item — so the same queries read
+        an item "through the lens" of the candidate being scored (DIN-style).
+        Both shifts are zero-init residuals; with neither active the queries are
+        identical across the batch (vanilla Q-Former behaviour).
         """
         query_tokens = self.q.expand(batch_size, -1, -1)
         if self.user_conditioned and user_cf is not None:
@@ -265,6 +291,17 @@ class HFQFormerAdapter(nn.Module):
                 )
             user_cond = self.user_proj(user_cf).unsqueeze(1)  # [B, 1, d_model]
             query_tokens = query_tokens + user_cond
+        if self.candidate_aware and target_cf is not None:
+            if target_cf.dim() != 2:
+                raise ValueError(
+                    f"Expected target_cf shape [B, d_item], got {tuple(target_cf.shape)}"
+                )
+            if target_cf.size(0) != batch_size:
+                raise ValueError(
+                    f"target_cf batch ({target_cf.size(0)}) != cf_vec batch ({batch_size})"
+                )
+            item_cond = self.item_proj(target_cf).unsqueeze(1)  # [B, 1, d_model]
+            query_tokens = query_tokens + item_cond
         return query_tokens
 
     def _build_causal_joint_mask(
@@ -296,6 +333,7 @@ class HFQFormerAdapter(nn.Module):
         self,
         cf_vec: torch.Tensor,
         user_cf: Optional[torch.Tensor] = None,
+        target_cf: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Queries-only forward over a CF (collaborative filtering) vector.
 
@@ -303,10 +341,11 @@ class HFQFormerAdapter(nn.Module):
         token; there is no text-side input. Returns query hidden states of
         shape ``[B, num_queries, d_model]``. ``out_proj`` is not applied
         here; callers decide whether they want the projected (LLM-feeding)
-        or raw (contrastive) representation.
+        or raw (contrastive) representation. ``target_cf`` (candidate item)
+        additionally shifts the queries when ``candidate_aware`` is on.
         """
         batch_size = cf_vec.size(0)
-        query_tokens = self._build_query_tokens(batch_size, user_cf)
+        query_tokens = self._build_query_tokens(batch_size, user_cf, target_cf)
         query_attention_mask = torch.ones(
             batch_size, query_tokens.size(1), dtype=torch.long, device=cf_vec.device
         )
@@ -357,12 +396,14 @@ class HFQFormerAdapter(nn.Module):
         causal_text: bool = False,
         max_text_length: Optional[int] = None,
         user_cf: Optional[torch.Tensor] = None,
+        target_cf: Optional[torch.Tensor] = None,
     ):
         """Joint forward returning ``(query_hidden, text_hidden, text_ids, text_mask)``.
 
         ``causal_text=True`` enables a causal mask on the text→text attention
         block (used by ITG); the default is bidirectional (used by ITM and by
-        the LLM-feeding ``forward``).
+        the LLM-feeding ``forward``). ``target_cf`` (candidate item) additionally
+        shifts the queries when ``candidate_aware`` is on.
         """
         if cf_vec.dim() != 2:
             raise ValueError(f"Expected cf_vec to have shape [B, d_cf], got {tuple(cf_vec.shape)}")
@@ -370,7 +411,7 @@ class HFQFormerAdapter(nn.Module):
         batch_size = cf_vec.size(0)
         text_list = self._normalize_text_input(text, batch_size)
 
-        query_tokens = self._build_query_tokens(batch_size, user_cf)
+        query_tokens = self._build_query_tokens(batch_size, user_cf, target_cf)
         query_count = query_tokens.size(1)
 
         text_ids, text_attention_mask = self._tokenize(
@@ -408,12 +449,16 @@ class HFQFormerAdapter(nn.Module):
         cf_vec: torch.Tensor,
         instruction,
         user_cf: Optional[torch.Tensor] = None,
+        target_cf: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """LLM-feeding mode: queries cross-attend to ``cf_vec`` while the text
         stream consumes ``instruction``. Returns query hidden states with
-        ``out_proj`` applied: ``[B, num_queries, output_dim]``."""
+        ``out_proj`` applied: ``[B, num_queries, output_dim]``. ``target_cf``
+        (candidate item) additionally shifts the queries when ``candidate_aware``
+        is on — for history items this makes the soft tokens candidate-dependent
+        (DIN target-attention)."""
 
         query_hidden, _, _, _ = self.forward_multimodal(
-            cf_vec, instruction, causal_text=False, user_cf=user_cf
+            cf_vec, instruction, causal_text=False, user_cf=user_cf, target_cf=target_cf
         )
         return self.out_proj(query_hidden)
