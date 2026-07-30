@@ -846,14 +846,18 @@ def train_qformer_stage1_representation(cfg):
         # sem_source is enabled — otherwise turning sem_source off would make the
         # early stopper KeyError on a missing key.
         has_sem = model.item_sem_emb is not None
+        # FACTORIES, not instances: a @contextmanager object is single-use (its
+        # __enter__ deletes the stored args), so one instance reused across the
+        # splits raises AttributeError on the second split. Build a fresh context
+        # per pass instead.
         passes = (
-            (("sem_on", contextlib.nullcontext()), ("sem_off", model.sem_disabled()))
+            (("sem_on", contextlib.nullcontext), ("sem_off", model.sem_disabled))
             if has_sem
-            else (("sem_on", contextlib.nullcontext()),)
+            else (("sem_on", contextlib.nullcontext),)
         )
         for split, loader in item_text_loaders.items():
-            for tag, ctx in passes:
-                with ctx:
+            for tag, make_ctx in passes:
+                with make_ctx():
                     logs = evaluate_loss(
                         model,
                         loader,
@@ -872,14 +876,22 @@ def train_qformer_stage1_representation(cfg):
                 if not has_sem:
                     for key in DIAG_EXPORTED_METRICS:
                         diag_metrics[f"{split}_sem_off_{key}"] = float(logs[key])
+                # ITM only when it is actually enabled: with w_itm=0 the loss is
+                # never computed and the log would read "ITM_acc=0.0000", which
+                # looks like an accuracy of zero rather than "not run".
+                itm_part = (
+                    f"L_itm={logs['L_itm']:.4f} ITM_acc={logs['itm_acc']:.4f} "
+                    if float(cfg.w_itm) > 0.0
+                    else "ITM=off "
+                )
                 log_step(
                     f"[DIAG ep{epoch_index}] {split}/{tag}",
                     f"n_it={logs['n_item_text']:.0f} "
                     f"(chance={1.0 / max(logs['n_item_text'], 1.0):.4f}) "
                     f"L_itc={logs['L_itc']:.4f} ITC@1={logs['itc_top1']:.4f} "
                     f"g_itc={logs['gain_itc']:+.3f} "
-                    f"L_itm={logs['L_itm']:.4f} ITM_acc={logs['itm_acc']:.4f} "
-                    f"L_itg={logs['L_itg']:.4f} ITG_title={logs['itg_title_acc']:.4f} "
+                    + itm_part
+                    + f"L_itg={logs['L_itg']:.4f} ITG_title={logs['itg_title_acc']:.4f} "
                     f"L_llm={logs['L_llm']:.4f} LLM@1={logs['llm_top1']:.4f} "
                     f"g_llm={logs['gain_llm']:+.3f}",
                 )
