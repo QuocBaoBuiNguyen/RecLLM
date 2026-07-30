@@ -249,15 +249,24 @@ run:
     # L_repr selection metric. Re-enable (start ~0.2) only with a concrete
     # hypothesis for why it would behave differently.
     w_itm: 0.0
-    # 0.3, down from 1.0 — same reasoning as w_itc, and the same measured
-    # trajectory: ITG generates the caption (title + genres) from the CF vector,
-    # so the title portion is not recoverable and it memorises instead. Over 47
-    # epochs train ITG_title went 0.258 -> 0.794 while val peaked at 0.371
-    # (~ep6-15) and then drifted down to 0.350; val L_itg rose MONOTONICALLY
-    # 2.353 -> 2.916, i.e. it got worse on held-out items the whole run.
-    # Kept non-zero: unlike ITC it never fell below chance, and next-token LM on
-    # the genre/scaffold tokens is a real signal that CF does carry.
-    w_itg: 0.3
+    # 1.0 — do NOT lower this, even though ITG overfits on the title exactly like
+    # ITC (train ITG_title 0.258 -> 0.794 while val peaks at 0.371 and val L_itg
+    # rises monotonically). It was tried at 0.3 and the collaborative terms
+    # STOPPED LEARNING ENTIRELY: val g_ii froze at +0.124 and g_ui at +0.110,
+    # identical to 4 decimals for 10 straight epochs, with proj_sem stalled near
+    # 1.0 instead of climbing past 4.
+    #
+    # Mechanism: ITC and ITG are the only terms that push the query output to be
+    # input-dependent. With both damped, offdiag_cos_raw stayed at 0.9997 (vs
+    # 0.9933 by ep10 at w_itg=1.0) — every item still encodes to the same
+    # direction. L_ii / L_ui score cosines over pooled queries, so against a
+    # collapsed representation they have nothing to discriminate and sit at
+    # chance indefinitely. ITG's "overfitting" is the price of the anti-collapse
+    # pressure that makes the collaborative terms work at all.
+    #
+    # w_itc=0.3 + w_itg=1.0 is the best known pair: ITC damped enough to stop
+    # dominating, ITG left strong enough to keep the representation open.
+    w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
     # Candidate-conditioned pairwise BPR ADDED to the ui InfoNCE — the term
