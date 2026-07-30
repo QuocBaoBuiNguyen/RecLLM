@@ -177,11 +177,22 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                 f"{sorted(required_columns)}. Missing: {missing_columns}"
             )
 
-        # SeLLa-parity history filter, applied BEFORE anything is derived so the
-        # item catalog, the item_item pairs and the user_item rows all describe
-        # the same population Stage 3's MovieOODDataset feeds the model. Mirrors
-        # that class's filter exactly (whole frame, both labels).
+        # SeLLa-parity history filter. It applies to the INTERACTION ROWS only —
+        # the user_item samples and the item_item co-watch pairs derived from
+        # them — because that is what Stage 3's MovieOODDataset filters.
+        #
+        # The item CATALOG (title/genres, used for item_text) is deliberately
+        # taken from the UNFILTERED frame. Title and genres are side information,
+        # not labels, so excluding an item's caption leaks nothing; and the
+        # filter hits train hardest (early rows have the shortest histories), so
+        # deriving the catalog from the filtered frame collapsed the train
+        # item_text block to ~501 items against ~2210 for val. With Q-Former at
+        # ~30M params that is memorised within 2 epochs: measured train g_itc
+        # +4.82 against val -0.23 at the same n. Items dropped from the rows are
+        # still needed here — they keep appearing inside other rows' history, so
+        # Stage 3 does encode them and they do need an alignment.
         rows_before_history_filter = len(df)
+        catalog_df = df
         if int(min_positive_history) > 1:
             df = df[df["his"].map(len) >= int(min_positive_history)].reset_index(drop=True)
             if df.empty:
@@ -204,9 +215,13 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         #   item_genres[10] = ["Animation", "Children's", "Comedy"]
         #
         # These lookups are reused by item-text and user-item samples.
+        #
+        # Built from ``catalog_df`` (pre-history-filter) rather than ``df``: see
+        # the filter comment above. This is a superset of the items appearing in
+        # ``df``, so every lookup made from pos_df below is still satisfied.
         item_titles: dict[int, str] = {}
         item_genres: dict[int, list[str]] = {}
-        for iid, title, genres in df[["iid", "title", "genres"]].drop_duplicates("iid").itertuples(index=False):
+        for iid, title, genres in catalog_df[["iid", "title", "genres"]].drop_duplicates("iid").itertuples(index=False):
             parsed_genres = parse_genres(genres)
             if not parsed_genres:
                 raise ValueError(f"Item {iid} has empty genres.")
@@ -385,6 +400,12 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
             "min_positive_history": int(min_positive_history),
             "rows_before_history_filter": int(rows_before_history_filter),
             "rows_after_history_filter": int(len(df)),
+            # Catalog comes from the unfiltered frame; the rows do not. A large
+            # gap here is expected and is the point — it is the number of items
+            # that keep appearing inside other rows' history and therefore still
+            # need an item_text alignment.
+            "catalog_items_unfiltered": int(catalog_df["iid"].nunique()),
+            "catalog_items_after_filter": int(df["iid"].nunique()),
         }
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

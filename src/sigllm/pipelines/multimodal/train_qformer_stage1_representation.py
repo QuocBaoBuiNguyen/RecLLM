@@ -239,6 +239,15 @@ RETRIEVAL_TERMS = (
 # damp that via w_ii / w_ui rather than by dropping the terms entirely.
 REPR_TERMS = ("L_itc", "L_itm", "L_itg", "L_llm", "L_ii", "L_ui")
 
+# Metrics the fixed-n diagnostic publishes into the metrics dict as
+# ``{split}_{sem_on|sem_off}_{key}``, so they can drive checkpoint selection.
+# Kept small on purpose: these are measured at a FIXED n across splits, which is
+# what makes them comparable, and every extra key is another name a config can
+# typo into.
+DIAG_EXPORTED_METRICS = (
+    "gain_itc", "gain_llm", "L_itc", "L_llm", "itc_top1", "llm_top1", "itg_title_acc",
+)
+
 
 def _selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii=0.0, w_ui=0.0):
     """Weights applied to the ``L_repr`` selection metric."""
@@ -798,7 +807,18 @@ def train_qformer_stage1_representation(cfg):
             )
 
     def run_diagnostics(epoch_index):
-        """Fixed-n item_text metrics, with the semantic source on and off."""
+        """Fixed-n item_text metrics, with the semantic source on and off.
+
+        Returns a flat ``{f"{split}_{tag}_{metric}": value}`` dict (e.g.
+        ``val_sem_off_gain_itc``) so these can be used for CHECKPOINT SELECTION,
+        not just printed. That matters: with the semantic source on, ITC/L_llm
+        can be solved by reading the distilled bank — which is derived from the
+        very captions ITC targets — so a selection metric measured with sem on
+        rewards that shortcut. Measured on ml-1m, sem_on gave val g_itc +3.010
+        while sem_off gave -0.701 in the SAME epoch: the CF path had learned
+        nothing, yet the sem_on metric looked excellent. Selecting on the
+        sem_off variant selects on what Stage 3 actually consumes.
+        """
         probe_loader = item_text_loaders.get("val") or next(iter(item_text_loaders.values()))
         anisotropy = _query_anisotropy(model, probe_loader)
         if anisotropy is not None:
@@ -819,13 +839,20 @@ def train_qformer_stage1_representation(cfg):
                 "gradient (proj_sem: check bank coverage; user_proj: check "
                 "L_uic against ln 2 = 0.6931 and bpr_logit_center)",
             )
+        diag_metrics = {}
+        # With no semantic bank the two passes are identical by construction, so
+        # run once and publish it under BOTH tags. Emitting the sem_off keys
+        # unconditionally keeps a sem_off selection metric valid whether or not
+        # sem_source is enabled — otherwise turning sem_source off would make the
+        # early stopper KeyError on a missing key.
+        has_sem = model.item_sem_emb is not None
+        passes = (
+            (("sem_on", contextlib.nullcontext()), ("sem_off", model.sem_disabled()))
+            if has_sem
+            else (("sem_on", contextlib.nullcontext()),)
+        )
         for split, loader in item_text_loaders.items():
-            for tag, ctx in (
-                ("sem_on", contextlib.nullcontext()),
-                ("sem_off", model.sem_disabled()),
-            ):
-                if tag == "sem_off" and model.item_sem_emb is None:
-                    continue
+            for tag, ctx in passes:
                 with ctx:
                     logs = evaluate_loss(
                         model,
@@ -840,6 +867,11 @@ def train_qformer_stage1_representation(cfg):
                         tau_llm=tau_llm,
                         selection_weights=selection_weights,
                     )
+                for key in DIAG_EXPORTED_METRICS:
+                    diag_metrics[f"{split}_{tag}_{key}"] = float(logs[key])
+                if not has_sem:
+                    for key in DIAG_EXPORTED_METRICS:
+                        diag_metrics[f"{split}_sem_off_{key}"] = float(logs[key])
                 log_step(
                     f"[DIAG ep{epoch_index}] {split}/{tag}",
                     f"n_it={logs['n_item_text']:.0f} "
@@ -851,18 +883,43 @@ def train_qformer_stage1_representation(cfg):
                     f"L_llm={logs['L_llm']:.4f} LLM@1={logs['llm_top1']:.4f} "
                     f"g_llm={logs['gain_llm']:+.3f}",
                 )
+        return diag_metrics
 
     outdir = cfg.output_dir
     os.makedirs(outdir, exist_ok=True)
     best_checkpoint_path = os.path.join(outdir, cfg.best_checkpoint_name)
-    # Select on the item_text objectives (L_itc + L_itm + L_itg + L_llm) rather
-    # than the full composite. The collaborative contrastives converge within
-    # ~5 epochs and then drift upward on validation, which vetoes later epochs
-    # that are still improving on text grounding and LLM alignment — the two
-    # things Stage 2/3 actually consume. Set selection_metric=val_loss to
-    # restore the old behaviour.
-    selection_metric = cfg.get("selection_metric", "val_L_repr")
-    selection_mode = cfg.get("selection_mode", "min")
+    # Default selects on the CF-ONLY (sem_off) fixed-n ITC gain — see
+    # run_diagnostics for why a sem_on metric rewards reading the semantic bank
+    # instead of learning from CF. Any key present in the per-epoch metrics dict
+    # works (val_L_repr, val_gain_llm, val_sem_off_gain_llm, ...).
+    selection_metric = cfg.get("selection_metric", "val_sem_off_gain_itc")
+    selection_mode = cfg.get("selection_mode", "max")
+
+    # A diagnostic-derived selection metric only exists on epochs where the
+    # diagnostic ran, and only if a loader was built at all. Fail here, at setup,
+    # rather than on the first epoch that happens to skip it.
+    if any(tag in selection_metric for tag in ("sem_on", "sem_off")):
+        if not item_text_loaders:
+            raise ValueError(
+                f"selection_metric={selection_metric!r} comes from the item_text "
+                "diagnostic, but no diagnostic loader was built. Either lower "
+                "item_text_eval_batch_size until every split yields >=1 batch, set "
+                "diagnostic_every_epochs > 0, or pick a selection_metric from the "
+                "main loaders (e.g. val_gain_itc)."
+            )
+        if diag_every != 1:
+            raise ValueError(
+                f"selection_metric={selection_metric!r} needs the diagnostic on EVERY "
+                f"evaluated epoch, but diagnostic_every_epochs={diag_every}. Set it to 1."
+            )
+        split_prefix = selection_metric.split("_", 1)[0]
+        if split_prefix not in item_text_loaders:
+            raise ValueError(
+                f"selection_metric={selection_metric!r} refers to split "
+                f"{split_prefix!r}, which has no diagnostic loader. Available: "
+                f"{sorted(item_text_loaders)}."
+            )
+
     stopper = EarlyStopping(
         ref_metric=selection_metric,
         monitor_mode=selection_mode,
@@ -879,12 +936,25 @@ def train_qformer_stage1_representation(cfg):
     min_gain_itc = float(cfg.get("min_gain_itc", 0.05))
     collapse_patience = int(cfg.get("collapse_patience", 3))
     collapse_warmup = int(cfg.get("collapse_warmup_epochs", 3))
+    # Defaults to the selection metric so the guard and the stopper can never
+    # disagree about what "healthy" means. Only meaningful for a metric where
+    # HIGHER is better and 0 is chance (the gain_* family).
+    collapse_metric = cfg.get("collapse_metric", selection_metric)
     collapse_counter = 0
     aborted = False
+    if collapse_patience > 0 and selection_mode != "max" and "collapse_metric" not in cfg:
+        log_step(
+            "WARNING",
+            f"collapse guard compares {collapse_metric} < {min_gain_itc}, but "
+            f"selection_mode={selection_mode} suggests lower-is-better for that "
+            "metric. Set collapse_metric to a gain_* key or collapse_patience: 0.",
+        )
     log_step(
         "Training setup",
         f"seed={cfg.seed}, output_dir={outdir}, "
-        f"selection={selection_metric} ({selection_mode}, ema={selection_ema})",
+        f"selection={selection_metric} ({selection_mode}, ema={selection_ema}), "
+        f"collapse_guard={collapse_metric} < {min_gain_itc} "
+        f"x{collapse_patience} after ep{collapse_warmup}",
     )
 
     for epoch in range(cfg.epoch):
@@ -950,10 +1020,17 @@ def train_qformer_stage1_representation(cfg):
                 ui_cond_neg=ui_cond_neg,
                 selection_weights=selection_weights,
             )
+            # BEFORE building `metrics`: the diagnostic publishes the fixed-n
+            # sem_on/sem_off keys that checkpoint selection may depend on.
+            diag_metrics = {}
+            if item_text_loaders and (epoch + 1) % diag_every == 0:
+                diag_metrics = run_diagnostics(epoch + 1)
+
             metrics = {
                 "epoch": epoch + 1,
                 **{f"val_{key}": value for key, value in val_logs.items()},
                 **{f"train_{key}": value for key, value in avg_train.items()},
+                **diag_metrics,
             }
             if selection_metric not in metrics:
                 raise KeyError(
@@ -1016,26 +1093,27 @@ def train_qformer_stage1_representation(cfg):
                 f"tau_llm={tau_llm:.3f} llm_emb_norm={llm_emb_normalize}"
             )
 
-            if item_text_loaders and (epoch + 1) % diag_every == 0:
-                run_diagnostics(epoch + 1)
-
+            # Collapse guard, watched on the SAME quantity that drives selection
+            # (``collapse_metric`` defaults to selection_metric). Keeping the two
+            # in sync matters: with selection on the sem_off gain, a guard still
+            # reading the sem_on gain would happily let a run continue where the
+            # semantic shortcut scores +3.0 while the CF path sits at -0.7.
             if collapse_patience > 0 and (epoch + 1) >= collapse_warmup:
+                collapse_value = float(metrics[collapse_metric])
                 collapse_counter = (
-                    collapse_counter + 1
-                    if float(val_logs["gain_itc"]) < min_gain_itc
-                    else 0
+                    collapse_counter + 1 if collapse_value < min_gain_itc else 0
                 )
 
                 if collapse_counter >= collapse_patience:
-                    chance_nats = math.log(max(val_logs["n_item_text"], 1.0))
                     log_step(
                         "ABORTED - item-text objectives collapsed",
-                        f"epoch={epoch + 1}, val gain_itc={val_logs['gain_itc']:+.3f} "
+                        f"epoch={epoch + 1}, {collapse_metric}={collapse_value:+.3f} "
                         f"< {min_gain_itc} for {collapse_counter} consecutive epochs "
-                        f"(ITC is at chance, ln(n)={chance_nats:.4f}). Check the [DIAG] "
-                        f"query geometry line: offdiag_cos_raw near 1.0 means every item "
-                        f"encodes to the same direction, so the uncentered cosine losses "
-                        f"cannot resolve items. No weights exported.",
+                        f"(0.0 = chance). If this is the sem_off variant, the CF path "
+                        f"has learned nothing and the objectives are being solved by "
+                        f"reading the semantic bank — compare the [DIAG] sem_on vs "
+                        f"sem_off lines and raise sem_source_dropout. Otherwise check "
+                        f"[DIAG] query geometry. No weights exported.",
                     )
                     aborted = True
                     break

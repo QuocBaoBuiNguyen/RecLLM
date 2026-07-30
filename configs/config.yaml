@@ -228,15 +228,16 @@ run:
     # rather than pushing lr further.
     lr: 1e-4
     w_itc: 1.0
-    # 0.2, not 1.0. ITM_acc was 0.689 train / 0.605-0.647 val against a trivial
-    # 0.667 baseline (its label mix is 1 positive : 2 negatives, so predicting
-    # all-negative scores 2/3) — i.e. no discriminative signal, and below trivial
-    # on val. It was also driving ~76% of the epoch-to-epoch L_repr delta while
-    # L_itc silently degraded, so it was steering checkpoint selection with pure
-    # noise. Keep it non-zero: it is cheap (reuses the ITC similarity matrix) and
-    # should recover once n_item_text is large enough for hard-negative mining to
-    # find real negatives. Raise back toward 1.0 once ITM_acc clears ~0.75.
-    w_itm: 0.2
+    # 0.0 — OFF. ITM_acc has sat at exactly 0.6667 on every epoch and every
+    # split across runs, i.e. its trivial baseline (label mix is 1 positive :
+    # 2 negatives, so predicting all-negative scores 2/3). L_itm likewise never
+    # left ~0.637. Raising n_item_text to 205+ per batch did not help, so the
+    # hard-negative mining is not negative-starved — the head simply is not
+    # learning. A term stuck at its baseline contributes only gradient noise to
+    # the shared Q-Former body, and it was previously also distorting the
+    # L_repr selection metric. Re-enable (start ~0.2) only with a concrete
+    # hypothesis for why it would behave differently.
+    w_itm: 0.0
     w_itg: 1.0
     w_ii: 1.0
     w_ui: 1.0
@@ -299,21 +300,32 @@ run:
     # selection verdict in the 34-epoch run.
     select_w_ii: 0.3
     select_w_ui: 0.3
-    # Checkpoint selection. val_gain_itc (= ln(n) - val L_itc, so MAXIMISE),
-    # not val_L_repr: L_repr is a weighted SUM dominated by the raw magnitude of
-    # L_ii (~9.5) and L_ui (~6.2), so it kept falling (12.91 -> 12.24) straight
-    # through an epoch range where val gain_itc went +0.19 -> -0.23. It was blind
-    # to the overfit. gain_* is normalised by ln(n), so unlike raw L_* it is also
-    # comparable across splits with different batch composition.
+    # Checkpoint selection on the CF-ONLY ITC gain from the fixed-n diagnostic
+    # (= ln(n) - L_itc with the semantic source forced OFF, so MAXIMISE; 0 is
+    # chance). Two earlier candidates both failed, for different reasons:
     #
-    # Caveat worth knowing: gain_itc watches the term that overfits FIRST, not
-    # the terms Stage 2/3 consume most (val gain_llm and val ITG_title were both
-    # still IMPROVING at the epoch this metric would stop on). It is the right
-    # choice while ITC overfits at epoch 2-3; once the item_text catalog is large
-    # enough for ITC to generalise, revisit — val_gain_llm is the more direct
-    # proxy for what Stage 2 warm-starts from.
-    selection_metric: val_gain_itc
+    # - val_L_repr is a weighted SUM dominated by the raw magnitude of L_ii
+    #   (~9.5) and L_ui (~6.2), so it fell steadily (12.91 -> 12.24) straight
+    #   through an epoch range where val gain_itc went +0.19 -> -0.23. Blind to
+    #   overfitting.
+    # - val_gain_itc (sem ON) rewards the SHORTCUT: the semantic bank is
+    #   distilled from the very captions ITC targets, so the model can score
+    #   well without using CF at all. Measured in one epoch: sem_on val g_itc
+    #   +3.010 vs sem_off -0.701 — the CF path had learned nothing while the
+    #   metric read "excellent", and the checkpoint was saved.
+    #
+    # The sem_off variant measures what Stage 3 actually consumes: the CF ->
+    # soft-token path. Requires diagnostic_every_epochs: 1 and a val diagnostic
+    # loader; Stage 1 validates both at setup. Available keys follow
+    # {split}_{sem_on|sem_off}_{gain_itc|gain_llm|L_itc|L_llm|itc_top1|llm_top1|
+    # itg_title_acc} — val_sem_off_gain_llm is the alternative worth trying once
+    # ITC generalises, since llm_align_proj is what Stage 2 warm-starts from.
+    selection_metric: val_sem_off_gain_itc
     selection_mode: max
+    # Metric the collapse guard watches; defaults to selection_metric so the two
+    # cannot disagree about what "healthy" means. Must be a higher-is-better
+    # gain_* key for the `< min_gain_itc` comparison to mean anything.
+    collapse_metric: val_sem_off_gain_itc
     # EMA smoothing of the selection metric before the early stopper (0 = off).
     # Late-training improvements are the same order as the metric's epoch noise,
     # so the raw stopper burns patience on noise plateaus and crowns lucky dips
