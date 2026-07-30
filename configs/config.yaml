@@ -249,7 +249,15 @@ run:
     # L_repr selection metric. Re-enable (start ~0.2) only with a concrete
     # hypothesis for why it would behave differently.
     w_itm: 0.0
-    w_itg: 1.0
+    # 0.3, down from 1.0 — same reasoning as w_itc, and the same measured
+    # trajectory: ITG generates the caption (title + genres) from the CF vector,
+    # so the title portion is not recoverable and it memorises instead. Over 47
+    # epochs train ITG_title went 0.258 -> 0.794 while val peaked at 0.371
+    # (~ep6-15) and then drifted down to 0.350; val L_itg rose MONOTONICALLY
+    # 2.353 -> 2.916, i.e. it got worse on held-out items the whole run.
+    # Kept non-zero: unlike ITC it never fell below chance, and next-token LM on
+    # the genre/scaffold tokens is a real signal that CF does carry.
+    w_itg: 0.3
     w_ii: 1.0
     w_ui: 1.0
     # Candidate-conditioned pairwise BPR ADDED to the ui InfoNCE — the term
@@ -357,12 +365,38 @@ run:
     # input-embedding bank) has shared genre structure that CF really does carry.
     # Keep w_itc > 0 anyway — it still pressures the queries to be
     # input-dependent — just do not let it pick the checkpoint.
-    selection_metric: val_sem_off_gain_llm
+    # COMPOSITE, because every single-term metric tried here was blind to a
+    # different collapse — each kept improving while something it did not watch
+    # fell apart:
+    #   val_L_repr            weighted sum of raw losses, dominated by the
+    #                         magnitude of L_ii/L_ui; fell steadily while ITC
+    #                         overfit.
+    #   val_gain_itc          ITC cannot generalise from CF (target is the
+    #                         caption text CLS, dominated by per-item TITLE,
+    #                         which MF embeddings do not carry): +0.16 -> -0.84
+    #                         on val while train went +0.33 -> +4.54.
+    #   val_sem_off_gain_llm  generalises and keeps rising to ep46 — but it is
+    #                         the only term that does, so it rode straight past
+    #                         the collapse of the collaborative terms. Between
+    #                         ep16 and ep46 it gained +0.004 while g_ii went
+    #                         +0.267 -> -0.015 and g_ui +0.330 -> +0.029.
+    #
+    # val_gain_repr = gain_llm(sem OFF) + select_collab_weight * (g_ii + g_ui)
+    # watches both halves of what the later stages consume: the alignment head
+    # Stage 2 warm-starts llm_proj from, and the collaborative signal Stage 3
+    # scores with. All three are `gain` values (ln(n) - L) so they are already
+    # normalised by their own chance level and can be summed.
+    # On the ep1-46 run: peak at ep16 (0.615), ep46 only 0.327.
+    selection_metric: val_gain_repr
     selection_mode: max
+    # Weight on EACH collaborative gain in the composite. 0.5 keeps the
+    # alignment term primary while making the pair jointly comparable to it
+    # (g_llm ~0.32 vs 0.5*(0.27+0.33) ~0.30 at the peak).
+    select_collab_weight: 0.5
     # Metric the collapse guard watches; defaults to selection_metric so the two
     # cannot disagree about what "healthy" means. Must be a higher-is-better
-    # gain_* key for the `< min_gain_itc` comparison to mean anything.
-    collapse_metric: val_sem_off_gain_llm
+    # gain_* key for the `< min_collapse_gain` comparison to mean anything.
+    collapse_metric: val_gain_repr
     # EMA smoothing of the selection metric before the early stopper (0 = off).
     # Late-training improvements are the same order as the metric's epoch noise,
     # so the raw stopper burns patience on noise plateaus and crowns lucky dips
@@ -465,7 +499,12 @@ run:
     best_qformer_weights_name: "qformer_stage1_best_qformer.pth"
     best_align_proj_weights_name: "qformer_stage1_best_align_proj.pth"
     log_epoch: 1
-    epoch: 100
+    # 30, down from 100. The useful region ends around ep16-20: val_gain_repr
+    # peaked at ep16 on the last run and every later epoch traded collaborative
+    # signal for a few thousandths of gain_llm. 30 leaves room for early stopping
+    # (patience 10) to fire on its own after a ~ep16-20 peak rather than being
+    # cut off by the cap.
+    epoch: 30
     pretrained_rec_path: ${model.rec_config.pretrained_path}
     freeze_rec: True
     output_dir: "/content/SigLLM/ckpt/qformer_stage1/"

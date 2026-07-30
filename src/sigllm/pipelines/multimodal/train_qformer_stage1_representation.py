@@ -248,6 +248,49 @@ DIAG_EXPORTED_METRICS = (
     "gain_itc", "gain_llm", "L_itc", "L_llm", "itc_top1", "llm_top1", "itg_title_acc",
 )
 
+# Components of the composite ``val_gain_repr`` selection metric.
+GAIN_REPR_ALIGN_KEY = "val_sem_off_gain_llm"
+GAIN_REPR_COLLAB_KEYS = ("val_gain_ii", "val_gain_ui")
+
+
+def add_gain_repr(metrics, collab_weight):
+    """Add ``val_gain_repr`` = CF-only alignment gain + weighted collaborative
+    gains, in place. No-op (returns False) if a component is missing.
+
+    Every single-term selection metric tried on this model failed by being blind
+    to a different collapse, and the pattern was always the same — the metric
+    kept improving while something else it did not watch fell apart:
+
+      - val_L_repr    : a weighted SUM of raw losses, dominated by the magnitude
+                        of L_ii (~6.2) and L_ui (~5.5). Fell steadily while ITC
+                        overfit. Blind to overfitting.
+      - val_gain_itc  : ITC cannot generalise from CF at all (its target is the
+                        caption's text CLS, dominated by the per-item title,
+                        which MF embeddings do not carry). Selecting on it means
+                        selecting on noise after ~ep2.
+      - val_sem_off_gain_llm : generalises correctly and keeps rising to ep46 —
+                        but it is the ONLY term that does, so it happily rode
+                        past the epoch where g_ii/g_ui collapsed. Measured:
+                        between ep16 and ep46 it gained +0.004 while g_ii went
+                        +0.267 -> -0.015 and g_ui +0.330 -> +0.029.
+
+    The composite fixes that by watching both halves of what Stage 2/3 consume:
+    the alignment head Stage 2 warm-starts (gain_llm, measured with the semantic
+    source OFF so the bank cannot supply it) and the collaborative signal Stage 3
+    scores with (gain_ii, gain_ui). On the ep1-46 run its peak lands at ep16
+    (0.615) with ep46 at 0.327 — i.e. it picks the checkpoint that carries both.
+
+    All three terms are ``gain`` values (``ln(n) - L``), so they are already
+    normalised by their own chance level and can be summed across losses with
+    different candidate counts.
+    """
+    keys = (GAIN_REPR_ALIGN_KEY,) + GAIN_REPR_COLLAB_KEYS
+    if any(key not in metrics for key in keys):
+        return False
+    collab = sum(float(metrics[key]) for key in GAIN_REPR_COLLAB_KEYS)
+    metrics["val_gain_repr"] = float(metrics[GAIN_REPR_ALIGN_KEY]) + collab_weight * collab
+    return True
+
 
 def _selection_weights(w_itc, w_itm, w_itg, w_llm, w_ii=0.0, w_ui=0.0):
     """Weights applied to the ``L_repr`` selection metric."""
@@ -901,37 +944,50 @@ def train_qformer_stage1_representation(cfg):
     outdir = cfg.output_dir
     os.makedirs(outdir, exist_ok=True)
     best_checkpoint_path = os.path.join(outdir, cfg.best_checkpoint_name)
-    # Default selects on the CF-ONLY (sem_off) fixed-n ITC gain — see
-    # run_diagnostics for why a sem_on metric rewards reading the semantic bank
-    # instead of learning from CF. Any key present in the per-epoch metrics dict
-    # works (val_L_repr, val_gain_llm, val_sem_off_gain_llm, ...).
-    selection_metric = cfg.get("selection_metric", "val_sem_off_gain_itc")
+    # Default selects on the COMPOSITE val_gain_repr — the CF-only alignment gain
+    # plus the collaborative gains. See add_gain_repr for the three single-term
+    # metrics this replaces and what each of them was blind to. Any key in the
+    # per-epoch metrics dict works (val_L_repr, val_sem_off_gain_llm, ...).
+    selection_metric = cfg.get("selection_metric", "val_gain_repr")
     selection_mode = cfg.get("selection_mode", "max")
+    # Weight on EACH collaborative gain inside val_gain_repr (see add_gain_repr).
+    select_collab_weight = float(cfg.get("select_collab_weight", 0.5))
 
-    # A diagnostic-derived selection metric only exists on epochs where the
-    # diagnostic ran, and only if a loader was built at all. Fail here, at setup,
-    # rather than on the first epoch that happens to skip it.
-    if any(tag in selection_metric for tag in ("sem_on", "sem_off")):
+    # Metrics that come from (or are built on) the item_text diagnostic only
+    # exist on epochs where it ran, and only if a loader was built at all. Fail
+    # here, at setup, rather than on the first epoch that happens to skip it.
+    # val_gain_repr counts: it reads a sem_off diagnostic key.
+    DIAG_DERIVED_TAGS = ("sem_on", "sem_off", "gain_repr")
+    diag_dependent = [
+        name
+        for name in (selection_metric, str(cfg.get("collapse_metric", selection_metric)))
+        if any(tag in name for tag in DIAG_DERIVED_TAGS)
+    ]
+    if diag_dependent:
         if not item_text_loaders:
             raise ValueError(
-                f"selection_metric={selection_metric!r} comes from the item_text "
-                "diagnostic, but no diagnostic loader was built. Either lower "
+                f"{diag_dependent} depend on the item_text diagnostic, but no "
+                "diagnostic loader was built. Either lower "
                 "item_text_eval_batch_size until every split yields >=1 batch, set "
-                "diagnostic_every_epochs > 0, or pick a selection_metric from the "
-                "main loaders (e.g. val_gain_itc)."
+                "diagnostic_every_epochs > 0, or pick metrics from the main "
+                "loaders (e.g. val_gain_llm)."
             )
         if diag_every != 1:
             raise ValueError(
-                f"selection_metric={selection_metric!r} needs the diagnostic on EVERY "
-                f"evaluated epoch, but diagnostic_every_epochs={diag_every}. Set it to 1."
+                f"{diag_dependent} need the diagnostic on EVERY evaluated epoch, "
+                f"but diagnostic_every_epochs={diag_every}. Set it to 1."
             )
-        split_prefix = selection_metric.split("_", 1)[0]
-        if split_prefix not in item_text_loaders:
-            raise ValueError(
-                f"selection_metric={selection_metric!r} refers to split "
-                f"{split_prefix!r}, which has no diagnostic loader. Available: "
-                f"{sorted(item_text_loaders)}."
+        # val_gain_repr always reads the val split; the others carry their split
+        # in the key name.
+        for name in diag_dependent:
+            split_prefix = (
+                "val" if "gain_repr" in name else name.split("_", 1)[0]
             )
+            if split_prefix not in item_text_loaders:
+                raise ValueError(
+                    f"{name!r} refers to split {split_prefix!r}, which has no "
+                    f"diagnostic loader. Available: {sorted(item_text_loaders)}."
+                )
 
     stopper = EarlyStopping(
         ref_metric=selection_metric,
@@ -1050,6 +1106,7 @@ def train_qformer_stage1_representation(cfg):
                 **{f"train_{key}": value for key, value in avg_train.items()},
                 **diag_metrics,
             }
+            add_gain_repr(metrics, select_collab_weight)
             if selection_metric not in metrics:
                 raise KeyError(
                     f"selection_metric={selection_metric!r} is not among the logged "
@@ -1103,7 +1160,15 @@ def train_qformer_stage1_representation(cfg):
                 f"n_it={val_logs['n_item_text']:.1f}(chance={1.0 / max(val_logs['n_item_text'], 1.0):.4f}) "
                 f"n_ii={val_logs['n_item_item']:.1f} n_ui={val_logs['n_user_item']:.1f} "
                 f"L_repr={val_logs['L_repr']:.4f} "
-                f"[SELECT] {selection_metric}({selection_mode})="
+                + (
+                    f"g_repr={metrics['val_gain_repr']:+.4f}"
+                    f"(g_llm_off={metrics.get(GAIN_REPR_ALIGN_KEY, float('nan')):+.3f}"
+                    f"+{select_collab_weight:g}*[g_ii{metrics['val_gain_ii']:+.3f}"
+                    f" g_ui{metrics['val_gain_ui']:+.3f}]) "
+                    if "val_gain_repr" in metrics
+                    else ""
+                )
+                + f"[SELECT] {selection_metric}({selection_mode})="
                 f"{float(raw_selection_value):+.4f}{ema_note} | "
                 f"w_itc={cfg.w_itc:.3f} w_itm={cfg.w_itm:.3f} w_itg={cfg.w_itg:.3f} "
                 f"w_ii={cfg.w_ii:.3f} w_ui={w_ui:.3f} w_llm={w_llm:.3f} "
