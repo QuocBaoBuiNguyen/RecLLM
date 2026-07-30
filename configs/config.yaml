@@ -384,6 +384,24 @@ run:
     # Semantic second cross-attention source (reuses item_llm_emb_path below).
     sem_source: ${model.qformer_config.sem_source}
     sem_source_dropout: ${model.qformer_config.sem_source_dropout}
+    # Should the semantic bank also feed ITC / ITM / ITG / L_llm? NO.
+    # For those four the target derives from the item caption, and the bank is
+    # the frozen LLM's own reading of that same caption (3584 dims, mean norm
+    # ~289) next to a 256-dim MF vector — so it is the answer, not side
+    # information, and copying it is strictly cheaper than learning from CF.
+    # Measured at epoch 1 with the bank fed everywhere:
+    #     val g_itc  sem_on +2.878  vs  sem_off -0.797
+    #     val g_llm  sem_on +1.051  vs  sem_off +0.013  (LLM@1 sem_off = 0.0000)
+    # The CF path was BELOW chance while the headline numbers looked strong.
+    # sem_source_dropout only changes how OFTEN the shortcut is available, not
+    # that it wins where it is; withholding it from these four removes it.
+    # The collaborative terms (L_ii / L_ui) keep the bank — their targets are
+    # co-watch / interaction CF, so there it is genuinely auxiliary, and that is
+    # what keeps proj_sem trained for Stage 3.
+    # Side effect: the [DIAG] sem_on and sem_off item_text lines become identical
+    # by construction. That is the expected signature, not a bug — if they ever
+    # differ, the bank has leaked back into a text loss.
+    sem_for_text_losses: False
     # L_llm TARGET bank. Must be distilled with --space input (LLM
     # input-embedding space — the space soft tokens are injected into). The
     # last-hidden file stays on model.qformer_config.item_llm_emb_path for the

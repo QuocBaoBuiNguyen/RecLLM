@@ -740,6 +740,10 @@ def train_qformer_stage2_generative(cfg):
                 sem_dropout=sem_dropout,
                 pair_logit_center=bool(cfg.get("pair_logit_center", False)),
                 bpr_logit_center=bool(cfg.get("bpr_logit_center", True)),
+                # This wrapper only runs loss_user_item (the ui keep-alive), which
+                # is a collaborative term — the flag is irrelevant to it, but kept
+                # explicit so the two stages construct the model identically.
+                sem_for_text_losses=bool(cfg.get("sem_for_text_losses", False)),
                 itc_logit_center=bool(cfg.get("itc_logit_center", True)),
             ).to(device)
             ui_condition_on_item = bool(qformer.user_conditioned) and w_ui_cond_keep > 0.0

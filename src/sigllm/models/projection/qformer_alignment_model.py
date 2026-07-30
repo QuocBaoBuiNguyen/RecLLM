@@ -99,6 +99,7 @@ class QRecInstructAlignmentModel(nn.Module):
         pair_logit_center=False,
         itc_logit_center=True,
         bpr_logit_center=True,
+        sem_for_text_losses=False,
     ) -> None:
         super().__init__()
         self.mf = mf
@@ -116,6 +117,10 @@ class QRecInstructAlignmentModel(nn.Module):
         # with a saturated cosine that difference is ~0, so user_proj gets no
         # gradient and L_uic sits at ln 2. Default ON. See loss_user_item.
         self.bpr_logit_center = bool(bpr_logit_center)
+        # Feed the semantic bank to ITC/ITM/ITG/L_llm too? Default False: for
+        # those four the bank IS the target, not side information. See
+        # _sem_for_text_loss for the measured numbers.
+        self.sem_for_text_losses = bool(sem_for_text_losses)
         # Optional semantic cross-attention source (see HFQFormerAdapter.d_sem):
         # the RAW distilled bank, deliberately NOT normalize_item_llm_emb'd —
         # normalization conditions the contrastive TARGET geometry; the source
@@ -216,9 +221,48 @@ class QRecInstructAlignmentModel(nn.Module):
             sem = sem * keep
         return sem
 
+    def _sem_for_text_loss(self, item_ids: torch.Tensor):
+        """Semantic source for the objectives whose TARGET derives from the item
+        caption: ITC, ITM, ITG and L_llm.
+
+        Returns ``None`` unless ``sem_for_text_losses`` is explicitly enabled,
+        because for these four the semantic bank is not side information — it is
+        the answer. The bank is the frozen LLM's own representation of the very
+        caption ITC contrasts against, at 3584 dims and mean norm ~289 next to a
+        256-dim MF vector, so the cheapest way to minimise these losses is to
+        copy the bank through proj_sem and ignore CF entirely. Measured on ml-1m
+        at epoch 1 with the bank on for every loss:
+
+            g_itc   sem_on +3.013 / sem_off -0.633   (train)
+            g_itc   sem_on +2.878 / sem_off -0.797   (val)
+            g_llm   sem_on +1.051 / sem_off +0.013   (val)
+
+        i.e. the CF path had learned nothing at all — below chance — while the
+        headline numbers looked strong. Raising ``sem_dropout`` only changes the
+        FRACTION of rows on which the shortcut is available, not the fact that it
+        wins wherever it is; withholding the bank from these losses removes it.
+
+        The collaborative terms (``loss_item_item_ilm``, ``loss_user_item``) keep
+        the bank via ``_sem_for``: their targets are co-watch / interaction CF,
+        not the caption, so there the bank is genuinely auxiliary — and that is
+        enough to keep ``proj_sem`` trained for Stage 3.
+
+        Consequence for the diagnostic: with this off (the default), the
+        sem_on / sem_off item_text passes become identical BY CONSTRUCTION, and
+        the selection metric ``val_sem_off_gain_itc`` measures the CF-only path
+        either way. Two identical passes is the expected signature here, not a
+        bug — if they ever differ, the bank has leaked back into a text loss.
+        """
+        if not self.sem_for_text_losses:
+            return None
+        return self._sem_for(item_ids)
+
     def encode_item_queries(self, item_ids: torch.Tensor) -> torch.Tensor:
+        """Item queries for the CAPTION-TARGETED losses (ITC via loss_itc,
+        L_llm via loss_llm_align). Uses ``_sem_for_text_loss``, so by default the
+        semantic bank is withheld here — see that method for why."""
         item_cf = self.mf.item_encoder(item_ids)
-        return self.qformer.encode_cf(item_cf, sem_vec=self._sem_for(item_ids))
+        return self.qformer.encode_cf(item_cf, sem_vec=self._sem_for_text_loss(item_ids))
 
     def encode_text_cls(self, text_list) -> torch.Tensor:
         _, text_cls = self.qformer.encode_text(text_list)
@@ -322,7 +366,8 @@ class QRecInstructAlignmentModel(nn.Module):
         ids_concat = torch.cat([item_ids, item_ids, item_ids[neg_item_idx]], dim=0)
 
         query_hidden, _, _, _ = self.qformer.forward_multimodal(
-            cf_concat, text_concat, causal_text=False, sem_vec=self._sem_for(ids_concat)
+            cf_concat, text_concat, causal_text=False,
+            sem_vec=self._sem_for_text_loss(ids_concat),
         )
         pooled = query_hidden.mean(dim=1)
         logits = self.itm_head(pooled)
@@ -391,7 +436,8 @@ class QRecInstructAlignmentModel(nn.Module):
 
         item_cf = self.mf.item_encoder(item_ids)
         _, text_hidden, text_ids, text_attention_mask = self.qformer.forward_multimodal(
-            item_cf, text_list, causal_text=True, sem_vec=self._sem_for(item_ids)
+            item_cf, text_list, causal_text=True,
+            sem_vec=self._sem_for_text_loss(item_ids),
         )
 
         logits = self.lm_head(text_hidden[:, :-1, :])

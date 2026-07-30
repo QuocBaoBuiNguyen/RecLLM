@@ -720,6 +720,7 @@ def train_qformer_stage1_representation(cfg):
         pair_logit_center=bool(cfg.get("pair_logit_center", False)),
         itc_logit_center=bool(cfg.get("itc_logit_center", True)),
         bpr_logit_center=bool(cfg.get("bpr_logit_center", True)),
+        sem_for_text_losses=bool(cfg.get("sem_for_text_losses", False)),
     ).to(device)
 
     # DIN-style pretraining of the candidate-conditioning path: only possible
