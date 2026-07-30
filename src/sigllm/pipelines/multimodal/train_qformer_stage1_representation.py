@@ -751,10 +751,11 @@ def train_qformer_stage1_representation(cfg):
         if anisotropy is not None:
             log_step(
                 f"[DIAG ep{epoch_index}] query geometry",
-                f"n={anisotropy['n']} offdiag_cos_raw={anisotropy['raw']:.4f}"
-                f"offdiag_cos_centered={anisotropy['centered']:.4f}"
-                f"(raw near 1.0 = every item encodes to the same direction; "
-                f"uncentered cosine losses cannot resolve item below ~0.99",
+                f"n={anisotropy['n']} offdiag_cos_raw={anisotropy['raw']:.4f} "
+                f"offdiag_cos_centered={anisotropy['centered']:.4f} "
+                f"(raw near 1.0 = every item encodes to the same direction, so the "
+                f"uncentered cosine losses cannot resolve items; centered is what "
+                f"pair_logit_center/itc_logit_center actually score against)",
             )
         for split, loader in item_text_loaders.items():
             for tag, ctx in (
@@ -946,17 +947,25 @@ def train_qformer_stage1_representation(cfg):
                 run_diagnostics(epoch + 1)
 
             if collapse_patience > 0 and (epoch + 1) >= collapse_warmup:
-                collapse_counter = {
+                collapse_counter = (
                     collapse_counter + 1
                     if float(val_logs["gain_itc"]) < min_gain_itc
                     else 0
-                }
+                )
 
                 if collapse_counter >= collapse_patience:
+                    chance_nats = math.log(max(val_logs["n_item_text"], 1.0))
                     log_step(
                         "ABORTED - item-text objectives collapsed",
-                        f"epoch={epoch + 1}, val gain_itc={val_logs["gain_itc"]:+.3f} < {min_gain_itc} for {collapse_counter} consecutive epochs (ITC is at chance ln(n)={math.log(max(val_logs['n_item_text'], 1.0)):4f}). Check the [DIAG] query geometry line: offdiag_cos_raw near 1.0 means the representation cannot be resolved by the uncentered cosine losses. No weights exported."
+                        f"epoch={epoch + 1}, val gain_itc={val_logs['gain_itc']:+.3f} "
+                        f"< {min_gain_itc} for {collapse_counter} consecutive epochs "
+                        f"(ITC is at chance, ln(n)={chance_nats:.4f}). Check the [DIAG] "
+                        f"query geometry line: offdiag_cos_raw near 1.0 means every item "
+                        f"encodes to the same direction, so the uncentered cosine losses "
+                        f"cannot resolve items. No weights exported.",
                     )
+                    aborted = True
+                    break
 
             improved = stopper.update(metrics)
 
