@@ -114,14 +114,15 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    # Amazon-Book MF LR matched to CoLLM's reference
-    # (baseline_train_mf_ood_amazon.py uses lr=1e-2, wd=1e-4). ML-1M used 1e-3;
-    # book is far sparser, and 1e-3 stalled at chance (val AUC peaked ~0.571 @ep10
-    # then decayed to ~0.50). This aligns the sparse-data LR to the reference.
-    # NOTE: hparam alignment, not a verified cure — if the diagnostic shows the
-    # valid/test sets are mostly cold (few train-seen users/items), a low overall
-    # AUC is expected and warm-subset should be the comparison (as in CoLLM).
-    lr: 1e-2
+    # LR reverted to 1e-3 to match the ML-1M recipe that DEMONSTRABLY breaks out
+    # (movie MF: chance plateau ~0.51 then climb to ~0.67 around epoch ~150 at
+    # lr=1e-3). Diagnostic confirmed book data is healthy — 727k train rows,
+    # pos_rate ~0.63, BOTH_warm ~70% (NOT cold-start). So book should break out
+    # too; the earlier 0.50 was the pre-breakout plateau cut off by early stopping.
+    # Note: book lr=1e-3 peaked 0.571@ep10 vs lr=1e-2 0.5448@ep1, so 1e-3 (movie's
+    # value) fits this codebase better than CoLLM's standalone 1e-2. Pair with the
+    # raised patience below and let it run to epoch ~300-500 to reach the breakout.
+    lr: 1e-3
     wd: 1e-4
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
