@@ -186,17 +186,37 @@ def train_baseline_model(
     #5. Training loop
     for epoch in range(train_config['epoch']):
         model.train()
+        # [diag] track optimization health: is the model even fitting TRAIN?
+        # If train_loss falls / train_AUC rises while valid stays ~0.5 -> the model
+        # learns but does not generalize (sparse/hard split). If train_AUC is ALSO
+        # stuck at ~0.5 -> the optimization itself is stuck (not a data/patience issue).
+        _epoch_loss_sum, _n_batches = 0.0, 0
+        _tr_preds, _tr_labels = [], []
         for batch_data in train_loader:
             batch_data = batch_data.to(device)
             optimizer.zero_grad()
-            
+
             ui_matching = model(batch_data[:, 0].long(), batch_data[:, 1].long())
             loss = criterion(ui_matching.squeeze(), batch_data[:, -1].float())
 
             loss.backward()
             optimizer.step()
 
+            _epoch_loss_sum += float(loss.item())
+            _n_batches += 1
+            _tr_preds.append(ui_matching.detach().float().cpu())
+            _tr_labels.append(batch_data[:, -1].detach().float().cpu())
+
         if epoch % train_config['eval_epoch'] == 0:
+            _avg_loss = _epoch_loss_sum / max(_n_batches, 1)
+            _tp = torch.cat(_tr_preds).numpy()
+            _tl = torch.cat(_tr_labels).numpy()
+            try:
+                _train_auc = roc_auc_score(_tl, _tp)
+            except Exception:
+                _train_auc = float("nan")
+            log_step(f"[diag] Epoch {epoch}: train_loss={_avg_loss:.4f}, train_AUC={_train_auc:.4f}")
+
             v_users, v_preds, v_labels = get_model_predictions(model, valid_loader, device)
             valid_auc = roc_auc_score(v_labels, v_preds)
             valid_uauc, _, _ = calculate_user_auc(v_users, v_preds, v_labels)
