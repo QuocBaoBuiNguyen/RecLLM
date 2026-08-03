@@ -114,31 +114,25 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    # Book MF-alone tops out ~0.55-0.60 valid AUC — this is NORMAL, not broken:
-    # even CoLLM's own MF config (lr=1e-2, wd=1e-4) yields ~0.54 here, so the ~0.71
-    # figure reported for book is the FULL LLM model, not MF-alone. Book is a weak-CF
-    # dataset by design (uAUC ~0.55) — that is exactly why we chose it: the headroom
-    # to ~0.71 belongs to the Q-Former+LLM pipeline, not the teacher.
-    # This lr/wd reaches the best MF teacher we found (valid AUC ~0.571 @ ~epoch 10),
-    # then it collapses — but selection is by valid_auc (train_rec_baseline.py:164)
-    # so the ~0.571 peak is what gets saved. Stop MF hyperparameter tuning here; a
-    # >chance teacher is enough to un-freeze Stage-1. Watch [diag]: grab the peak
-    # around epoch ~10-20 (Ctrl-C is fine once valid AUC turns down).
+    # Standalone MF on Amazon-Book DOES reach AUC 0.7105 / uAUC 0.5543 (CoRA/CoLLM
+    # paper, "Collab. -> MF" row). So our 0.571-then-collapse is broken, not normal.
+    # Root cause found in CoLLM's own repo: their SAVED best book-MF checkpoint is
+    # named "..._book_oodv2_best_model_d256lr-0.001wd1e-06.pth" -> lr=1e-3, wd=1e-6.
+    # We were running wd=1e-4 — 100x too high. That is exactly the collapse driver:
+    # once the sigmoid saturates and the BCE gradient vanishes, weight_decay drags
+    # the embeddings to zero (train_loss freezes at ln2). At wd=1e-6 that pull is
+    # 100x weaker, so the climb that reached 0.571 @ep10 should CONTINUE toward 0.71
+    # instead of collapsing. Match CoLLM exactly: lr=1e-3, wd=1e-6, emb 256, bs 1024.
     lr: 1e-3
-    wd: 1e-4
+    wd: 1e-6
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
     eval_epoch: 1
-    # Raised 100 -> 500. MF on this data sits at a chance plateau (val uAUC ~0.50,
-    # pure noise) for a long time before breaking out — ML-1M did the same,
-    # climbing from ~0.51 to ~0.67 only around epoch ~150. On ML-1M the plateau's
-    # tiny per-epoch uAUC creep kept resetting the patience counter so it survived
-    # to the breakout; on the noisier book metric the "best" is hit early by noise
-    # and never beaten, so patience=100 early-stopped at ~ep101/110 BEFORE any
-    # breakout. 500 gives the plateau room to resolve. Watch: if val AUC/uAUC
-    # starts climbing above ~0.52 let it run; if it stays flat past ~500 the split
-    # is genuinely cold-start (unlearnable) — confirm with the warm-overlap diagnostic.
-    patience: 500
+    # Match CoLLM's book MF (patience 50). With wd=1e-6 the collapse is gone, so the
+    # model climbs then eventually overfits — patience 50 catches the valid_auc peak
+    # (which is the saved checkpoint) and stops. Watch [diag]: valid AUC should climb
+    # toward ~0.71 and train_loss must NOT freeze at 0.6924 (=ln2 = re-collapse).
+    patience: 50
     batch_size: 1024
   qformer_stage1:
     # BLIP-2 representation pretraining: ITC + ITM + ITG using the Q-Former's
