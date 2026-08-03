@@ -114,22 +114,18 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    # Book MF has TWO failure modes, and the fix must thread between them:
-    #   (A) lr=1e-3, wd=1e-4  -> valid climbs to 0.571 @ep10 then COLLAPSES to chance
-    #       (train_loss freezes at ln2=0.6924; sigmoid saturates -> BCE grad vanishes
-    #        -> weight_decay drags embeddings to 0).
-    #   (B) lr=1e-4, wd=0     -> NO collapse but pure MEMORISATION: train_AUC 0.99,
-    #       valid 0.496 (256-dim embeddings overfit the sparse OOD split; with no
-    #       regularisation the model memorises train and never generalises).
-    # So weight_decay is what BUYS generalisation (it gave the 0.571 in mode A), and
-    # low lr is what avoids the saturation-collapse. Keep BOTH: lr=1e-4 (no collapse)
-    # + wd=1e-3 (stronger reg than the 1e-4 that overfit here, to curb the 0.99
-    # train memorisation and push valid up). Watch [diag]: train_AUC should stay
-    # MODERATE (~0.7-0.85, not 0.99) and valid should climb and HOLD > ~0.55.
-    # If train still hits 0.99 with valid ~0.5, the 256-dim capacity is the problem
-    # (would need a smaller rec embedding_size, which ripples the whole pipeline).
-    lr: 1e-4
-    wd: 1e-3
+    # Book MF-alone tops out ~0.55-0.60 valid AUC — this is NORMAL, not broken:
+    # even CoLLM's own MF config (lr=1e-2, wd=1e-4) yields ~0.54 here, so the ~0.71
+    # figure reported for book is the FULL LLM model, not MF-alone. Book is a weak-CF
+    # dataset by design (uAUC ~0.55) — that is exactly why we chose it: the headroom
+    # to ~0.71 belongs to the Q-Former+LLM pipeline, not the teacher.
+    # This lr/wd reaches the best MF teacher we found (valid AUC ~0.571 @ ~epoch 10),
+    # then it collapses — but selection is by valid_auc (train_rec_baseline.py:164)
+    # so the ~0.571 peak is what gets saved. Stop MF hyperparameter tuning here; a
+    # >chance teacher is enough to un-freeze Stage-1. Watch [diag]: grab the peak
+    # around epoch ~10-20 (Ctrl-C is fine once valid AUC turns down).
+    lr: 1e-3
+    wd: 1e-4
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
     eval_epoch: 1
