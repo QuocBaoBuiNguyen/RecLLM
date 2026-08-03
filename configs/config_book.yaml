@@ -126,7 +126,16 @@ run:
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
     eval_epoch: 1
-    patience: 100
+    # Raised 100 -> 500. MF on this data sits at a chance plateau (val uAUC ~0.50,
+    # pure noise) for a long time before breaking out — ML-1M did the same,
+    # climbing from ~0.51 to ~0.67 only around epoch ~150. On ML-1M the plateau's
+    # tiny per-epoch uAUC creep kept resetting the patience counter so it survived
+    # to the breakout; on the noisier book metric the "best" is hit early by noise
+    # and never beaten, so patience=100 early-stopped at ~ep101/110 BEFORE any
+    # breakout. 500 gives the plateau room to resolve. Watch: if val AUC/uAUC
+    # starts climbing above ~0.52 let it run; if it stays flat past ~500 the split
+    # is genuinely cold-start (unlearnable) — confirm with the warm-overlap diagnostic.
+    patience: 500
     batch_size: 1024
   qformer_stage1:
     # BLIP-2 representation pretraining: ITC + ITM + ITG using the Q-Former's
