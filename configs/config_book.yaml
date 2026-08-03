@@ -114,16 +114,19 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    # LR reverted to 1e-3 to match the ML-1M recipe that DEMONSTRABLY breaks out
-    # (movie MF: chance plateau ~0.51 then climb to ~0.67 around epoch ~150 at
-    # lr=1e-3). Diagnostic confirmed book data is healthy — 727k train rows,
-    # pos_rate ~0.63, BOTH_warm ~70% (NOT cold-start). So book should break out
-    # too; the earlier 0.50 was the pre-breakout plateau cut off by early stopping.
-    # Note: book lr=1e-3 peaked 0.571@ep10 vs lr=1e-2 0.5448@ep1, so 1e-3 (movie's
-    # value) fits this codebase better than CoLLM's standalone 1e-2. Pair with the
-    # raised patience below and let it run to epoch ~300-500 to reach the breakout.
-    lr: 1e-3
-    wd: 1e-4
+    # LR 1e-4 + weight_decay 0 to STOP the "learn-then-collapse" seen at lr=1e-3.
+    # [diag] proved book MF DOES learn: train_AUC 0.50->0.75 and valid 0.50->0.571
+    # over epochs 0-10, then it COLLAPSES back to chance — train_loss freezes at
+    # exactly 0.6924 (=ln 2, i.e. all outputs 0.5, embeddings pulled to zero).
+    # Mechanism: lr=1e-3 grows embeddings so fast the sigmoid saturates by ~ep8, the
+    # BCE gradient vanishes on the (75%-correct) train, and only weight_decay=1e-4
+    # is left — it drags every embedding to 0 -> logits 0 -> ln2 -> AUC 0.5.
+    # Fix (pure tuning): lr=1e-4 slows the growth so the sigmoid does not saturate,
+    # and wd=0 removes the pull-to-zero, so the model should climb and HOLD its peak
+    # (data is healthy: 727k rows, pos 0.63, ~70% warm). Selection is by valid_auc
+    # (train_rec_baseline.py:164), so the best-AUC epoch is saved regardless.
+    lr: 1e-4
+    wd: 0.0
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
     eval_epoch: 1
