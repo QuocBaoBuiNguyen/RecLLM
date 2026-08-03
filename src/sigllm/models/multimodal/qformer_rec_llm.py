@@ -1007,7 +1007,11 @@ class QRecLLM(Rec2Base):
         neg_id = self.llm_tokenizer(ans_map[0], add_special_tokens=False).input_ids[0]
         label_seq_len = label_tokens.input_ids.shape[-1]
 
-        prediction_logits = outputs.logits[:, -(label_seq_len + 1), :]
+        # fp32 upcast (eval path only): fp16 logits saturate — margins >~7.6 round
+        # to the same value, creating within-user ties that roc_auc_score scores at
+        # 0.5, collapsing uAUC. Upcast before softmax so eval scores are exact. The
+        # training loss path (calculate_recommendation_loss) deliberately stays fp16.
+        prediction_logits = outputs.logits[:, -(label_seq_len + 1), :].float()
         binary_logits = torch.stack(
             [prediction_logits[:, neg_id], prediction_logits[:, pos_id]],
             dim=1,
