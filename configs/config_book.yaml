@@ -114,7 +114,14 @@ run:
     need_train: True
     warm_or_cold: "warm"
     seed: 2025
-    lr: 1e-3
+    # Amazon-Book MF LR matched to CoLLM's reference
+    # (baseline_train_mf_ood_amazon.py uses lr=1e-2, wd=1e-4). ML-1M used 1e-3;
+    # book is far sparser, and 1e-3 stalled at chance (val AUC peaked ~0.571 @ep10
+    # then decayed to ~0.50). This aligns the sparse-data LR to the reference.
+    # NOTE: hparam alignment, not a verified cure — if the diagnostic shows the
+    # valid/test sets are mostly cold (few train-seen users/items), a low overall
+    # AUC is expected and warm-subset should be the comparison (as in CoLLM).
+    lr: 1e-2
     wd: 1e-4
     embedding_size: ${model.rec_config.embedding_size}
     epoch: 5000
