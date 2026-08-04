@@ -139,8 +139,12 @@ run:
     # own text branch (no external BERT). Item-item contrastive (w_ii) is a
     # SigLLM-specific addition for co-watch collaborative signal.
     seed: 2025
-    batch_size: 256
-    num_workers: 4
+    # Stage-1 speed/convergence tune for A100-80GB (was 256/4 on T4). Contrastive
+    # (ITC/II/UI) quality scales with #in-batch negatives, so a big batch both
+    # speeds up (fewer steps/epoch) AND lifts val ITC@1 (sharper alignment, less
+    # overfit). A100 sat at ~13/80GB with bs=256; bump to 2048 (drop to 1024 if OOM).
+    batch_size: 2048
+    num_workers: 8
     embedding_size: ${model.rec_config.embedding_size}
     user_num: ${model.rec_config.user_num}
     item_num: ${model.rec_config.item_num}
@@ -157,7 +161,8 @@ run:
     max_item_item_pairs: 1000000
     max_user_item_pairs: 1000000
     include_user_item: True
-    lr: 5e-5
+    # Scaled up with the 8x larger batch (linear-scaling rule) for faster convergence.
+    lr: 2e-4
     w_itc: 1.0
     w_itm: 1.0
     w_itg: 1.0
