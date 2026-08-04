@@ -145,7 +145,7 @@ run:
     # overfit). bs=2048 + lr=2e-4 DIVERGED (ITC@1 stuck ~0.017, L_itc frozen ~4.08):
     # contrastive can't take an 8x-scaled lr. Use bs=1024 (4x negatives, ~4x faster)
     # with the ORIGINAL lr=5e-5 (below) for stability.
-    batch_size: 1024
+    batch_size: 256
     num_workers: 8
     embedding_size: ${model.rec_config.embedding_size}
     user_num: ${model.rec_config.user_num}
@@ -160,8 +160,8 @@ run:
     item_pair_window: 2
     # Amazon-Book is ~10x larger than ML-1M — uncapped pairs blow up Stage-1
     # contrastive pretraining. Cap both (amz-book branch used 1M). Tune on Colab.
-    max_item_item_pairs: 1000000
-    max_user_item_pairs: 1000000
+    max_item_item_pairs: 500000
+    max_user_item_pairs: 500000
     include_user_item: True
     # Kept at the proven 5e-5: the 8x-scaled 2e-4 diverged with the big batch.
     lr: 5e-5
