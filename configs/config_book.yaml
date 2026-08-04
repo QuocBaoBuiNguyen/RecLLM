@@ -142,8 +142,10 @@ run:
     # Stage-1 speed/convergence tune for A100-80GB (was 256/4 on T4). Contrastive
     # (ITC/II/UI) quality scales with #in-batch negatives, so a big batch both
     # speeds up (fewer steps/epoch) AND lifts val ITC@1 (sharper alignment, less
-    # overfit). A100 sat at ~13/80GB with bs=256; bump to 2048 (drop to 1024 if OOM).
-    batch_size: 2048
+    # overfit). bs=2048 + lr=2e-4 DIVERGED (ITC@1 stuck ~0.017, L_itc frozen ~4.08):
+    # contrastive can't take an 8x-scaled lr. Use bs=1024 (4x negatives, ~4x faster)
+    # with the ORIGINAL lr=5e-5 (below) for stability.
+    batch_size: 1024
     num_workers: 8
     embedding_size: ${model.rec_config.embedding_size}
     user_num: ${model.rec_config.user_num}
@@ -161,8 +163,8 @@ run:
     max_item_item_pairs: 1000000
     max_user_item_pairs: 1000000
     include_user_item: True
-    # Scaled up with the 8x larger batch (linear-scaling rule) for faster convergence.
-    lr: 2e-4
+    # Kept at the proven 5e-5: the 8x-scaled 2e-4 diverged with the big batch.
+    lr: 5e-5
     w_itc: 1.0
     w_itm: 1.0
     w_itg: 1.0
