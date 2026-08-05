@@ -57,9 +57,12 @@ class QRecLLM(Rec2Base):
         "pretrain_vicuna": "configs/models/minigpt4rec.yaml",
     }    
     
-    # TEMP_DISABLED_USER_CF: old prompt order included a user soft-token slot.
-    # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
-    PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
+    # SeLLa-style user token RE-ENABLED (feat/sella-user-token). The MF user
+    # embedding is injected as an explicit prompt soft-token slot so the LLM can
+    # attend user<->item and form the user x item interaction directly — the uAUC
+    # lever. This is the channel SeLLa uses; the prior additive query-shift
+    # (user_conditioned) cancels within-user and left uAUC flat.
+    PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
 
     # Item-text instructions for the Q-Former. Must match the distribution
     # the Q-Former was trained on in stage 1 (see
@@ -557,9 +560,8 @@ class QRecLLM(Rec2Base):
         self.run_mode_ = mode
 
     def to_be_trained(self):
-        # TEMP_DISABLED_USER_CF: old trainable placeholders included "<UserID>".
-        # id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
-        id_terms = ["<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
+        # SeLLa-style user token re-enabled: "<UserID>" is a trainable soft slot.
+        id_terms = ["<UserID>", "<ItemIDList>", "<TargetItemID>", "<DCNFeature>"]
         for prompt in self.prompt_list:
             for id_term in id_terms:
                 if id_term in prompt:
@@ -645,28 +647,30 @@ class QRecLLM(Rec2Base):
 
         with self.maybe_autocast():
             # Stage-2 uses the in-tree rec encoder API: direct embedding lookup from ids.
-            # TEMP_DISABLED_USER_CF: old path injected a user CF token into the LLM prompt.
-            # user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
-            user_q = None
-            user_llm = None
+            # SeLLa-style user token: pull the MF user embedding and turn it into a
+            # soft token, exactly as we do for items. SeLLa injects small_model.
+            # user_encoder(user_id) as a <User_ID> prompt token; here the same MF
+            # user embedding is summarized by the Q-Former + llm_proj (consistent
+            # with how items are encoded) so the LLM sees an explicit user vector to
+            # attend against the item -> user x item interaction -> uAUC.
+            user_cf = self.rec_encoder.user_encoder(batch_data["UserID"])          # [B,d_cf]
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
 
             # User-conditioned queries: user_cf shifts the base Q tokens so the
             # same queries extract per-user-relevant aspects of each item. Pulled
             # ONLY when the flag is on so the vanilla path stays untouched.
-            user_cf_for_q = None
-            if self.user_conditioned:
-                user_cf_for_q = self.rec_encoder.user_encoder(batch_data["UserID"])  # [B,d_cf]
+            user_cf_for_q = user_cf if self.user_conditioned else None
 
             # 2) QFormer outputs (instruction-conditioned)
-            # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
+            user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
             target_q = self.qformer(target_cf, ins_list, user_cf=user_cf_for_q)  # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
-            # user_llm = self.llm_proj(user_q)               # [B,Q,H]
+            user_llm = self.llm_proj(user_q)               # [B,Q,H]
             target_llm = self.llm_proj(target_q)           # [B,Q,H]
 
             if self.ablate_soft_tokens:
+                user_llm = torch.zeros_like(user_llm)
                 target_llm = torch.zeros_like(target_llm)
 
             interacted_llm_flat = None
@@ -711,13 +715,12 @@ class QRecLLM(Rec2Base):
                 ones_q = torch.ones((B, Q), device=device, dtype=item_mask.dtype)         # [B,Q]
 
                 ph2emb = {
-                    # TEMP_DISABLED_USER_CF: old merge map included "<UserID>": user_llm.
-                    # "<UserID>": user_llm,                 # [B,Q,H]
+                    "<UserID>": user_llm,                 # [B,Q,H]  (SeLLa-style user token)
                     "<ItemIDList>": interacted_llm_flat,  # [B,L*Q,H]
                     "<TargetItemID>": target_llm          # [B,Q,H]
                 }
                 ph2mask = {
-                    # "<UserID>": ones_q,
+                    "<UserID>": ones_q,
                     "<ItemIDList>": item_mask_q,
                     "<TargetItemID>": ones_q
                 }
@@ -749,10 +752,10 @@ class QRecLLM(Rec2Base):
         unk_token = self._soft_token_str
         unk_seq = " ".join([unk_token] * self.proj_token_num)
         
-        prompt_template = bos + prompt_template 
-        # TEMP_DISABLED_USER_CF: old prompt path replaced <UserID> with soft tokens.
-        # prompt_template = prompt_template.replace("<UserID>", unk_seq)
-        prompt_template = prompt_template.replace("<UserID>", "")
+        prompt_template = bos + prompt_template
+        # SeLLa-style user token: reserve Q soft-token slots for <UserID>, filled
+        # with user_llm at injection time (same mechanism as <TargetItemID>).
+        prompt_template = prompt_template.replace("<UserID>", unk_seq)
         prompt_template = prompt_template.replace("<TargetItemID>", unk_seq)
         # prompt_template = prompt_template.replace("<DCNFeature>", unk_seq)
 
