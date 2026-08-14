@@ -73,6 +73,20 @@ model:
     weight: 0.2
     tau: 1.0
 
+  # P0 cold-ITEM token — this is the book-side lever. 29.3% of Amazon-Book test
+  # rows have a target item absent from train_ood2, so the frozen MF teacher
+  # never trained that row; Adam's coupled weight_decay then decays it to ~0
+  # (dense embedding grads), and proj_cf maps EVERY such item onto the same
+  # constant token. The CF channel therefore cannot separate two cold items of
+  # one user — which is what pins test_cold uAUC at 0.5258 (vs test_warm 0.6238)
+  # while global AUC survives on cross-user spread. When True those rows get a
+  # learned zero-init "no-CF" vector instead, so "no signal" becomes a state the
+  # LLM can recognise rather than a bias vector it reads as an item id.
+  # Pair with `datasets.book_ood.build_info.mark_cold_items: true`.
+  # Zero-init => at step 0 the token is 0, numerically what the decayed MF row
+  # already supplied, so there is no warm-start jolt. Step-2 retrain only.
+  cold_item_token: false
+
   proj_token_num: ${model.qformer_config.num_queries}
 
   rec_model: "MF"
@@ -114,6 +128,12 @@ datasets:
       # CoLLM parity: CoLLM keeps ALL rows and zero-pads short histories (does
       # NOT drop <2-history like SeLLa). False -> test population matches CoLLM.
       match_sella_history_filter: false
+      # Emit TargetItemIsCold per row (29.3% of test rows on book) and remap cold
+      # history ids to the padding index so their soft tokens are dropped by the
+      # existing mask (10.0% of book history tokens). Reads train_ood2.pkl once
+      # and caches the id set as train_item_ids.npy — worth it here, that pickle
+      # is 505 MB. Must be flipped together with `model.cold_item_token`.
+      mark_cold_items: false
 
 run:
   task: rec_pretrain

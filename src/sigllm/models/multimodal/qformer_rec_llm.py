@@ -111,6 +111,7 @@ class QRecLLM(Rec2Base):
         lora_dropout=0.05,
         tuning_step=None,
         user_conditioned=False,
+        cold_item_token=False,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -142,6 +143,8 @@ class QRecLLM(Rec2Base):
         self.lora_dropout = float(lora_dropout)
         self.tuning_step = tuning_step
         self.user_conditioned = bool(user_conditioned)
+        self.cold_item_token = bool(cold_item_token)
+        self.cold_item_emb = None
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
         # Yes/No margin; align_rank_loss shapes the aligned CF soft tokens. Both
@@ -195,6 +198,7 @@ class QRecLLM(Rec2Base):
         # Built after the LLM (reads hidden_size) and after the step policy so it
         # co-trains with the unfrozen Q-Former/projection at Step 2.
         self._init_align_rank_head()
+        self._init_cold_item_token(rec_config.embedding_size)
 
     def _init_rec_model(self, rec_model, rec_config, pretrained_rec, freeze_rec):
         log_step("Loading Rec_model")
@@ -661,6 +665,27 @@ class QRecLLM(Rec2Base):
             user_llm = None
             target_cf = self.rec_encoder.item_encoder(batch_data["TargetItemID"])  # [B,d_cf]
 
+            # Cold target items: replace the untrained MF row — which is ~0 after
+            # weight-decay and therefore IDENTICAL for every cold item — with the
+            # learned no-CF token. The <TargetItemID> mask stays `ones_q`: the
+            # slot still exists, it just carries an honest "no signal" vector
+            # instead of proj_cf's bias masquerading as an item id.
+            # Cold HISTORY items need no branch here: the dataset remaps them to
+            # the padding index, so the `ids != padding_index` mask below already
+            # drops those soft tokens.
+            if self.cold_item_emb is not None:
+                if "TargetItemIsCold" not in batch_data:
+                    raise KeyError(
+                        "model.cold_item_token=True but the batch carries no "
+                        "'TargetItemIsCold' field. Set "
+                        "datasets.<name>.build_info.mark_cold_items=True so the "
+                        "dataset emits it (both flags must be flipped together)."
+                    )
+                is_cold = batch_data["TargetItemIsCold"].bool().unsqueeze(-1)   # [B,1]
+                target_cf = torch.where(
+                    is_cold, self.cold_item_emb.to(target_cf.dtype), target_cf
+                )
+
             # User-conditioned queries: user_cf shifts the base Q tokens so the
             # same queries extract per-user-relevant aspects of each item. Pulled
             # ONLY when the flag is on so the vanilla path stays untouched.
@@ -913,6 +938,52 @@ class QRecLLM(Rec2Base):
             f"aux per-user BPR on the aligned CF tokens "
             f"(weight={self.align_rank_loss_weight}, tau={self.align_rank_loss_tau}). "
             f"Needs a user-grouped batch sampler, same as ranking_loss.",
+        )
+
+    def _init_cold_item_token(self, d_cf):
+        """Build the learned "no collaborative signal" vector for cold items.
+
+        The frozen MF teacher only ever saw items present in ``train_ood2``, so
+        an item absent from train keeps an untrained row — and Adam's coupled
+        weight_decay decays those rows toward 0 on every step (``nn.Embedding``
+        produces DENSE gradients, so never-sampled rows are still updated).
+        Measured on the ML-1M MF checkpoint: trained item rows have norm mean
+        0.749 vs 0.038 for untrained ones, and untrained USER rows are exactly
+        0.0. ``proj_cf(~0)`` is therefore the same constant token for every cold
+        item, so the CF channel cannot tell two cold items of one user apart —
+        which is what flattens cold uAUC on Amazon-Book (test_cold 0.5258 vs
+        test_warm 0.6238) while global AUC survives on cross-user spread.
+
+        Swapping in a learned token does not invent collaborative information
+        for a cold item; it makes "no CF signal" a state the LLM can recognise
+        instead of a bias vector it has been trained to read as an item id.
+
+        Zero-init so warm-start behaviour is preserved: at step 0 the token is
+        0, i.e. numerically what the decayed MF row already supplied (norm ~0.038
+        on ML-1M), so the Q-Former sees no jolt and the token only diverges as it
+        learns. NB this is *near*-identical, not bit-identical, to the vanilla
+        path — same spirit as the ``user_proj`` / ``align_rank_head`` zero-init
+        safeguards.
+
+        Being 1-D, the optimizer builder puts it in the no-weight-decay group,
+        which matters here: decaying this vector is precisely the failure mode it
+        exists to undo.
+        """
+        if not self.cold_item_token:
+            self.cold_item_emb = None
+            return
+
+        self.cold_item_emb = nn.Parameter(torch.zeros(int(d_cf)))
+        if self.tuning_step is not None and int(self.tuning_step) == 1:
+            # Step 1 trains on the text-only prompt, which has no
+            # <TargetItemID> placeholder, so no CF token is ever built and this
+            # parameter would only sit dead in the optimizer state.
+            self.cold_item_emb.requires_grad = False
+        log_step(
+            "COLD-ITEM TOKEN ACTIVE",
+            f"d_cf={int(d_cf)}, zero-init, trainable={self.cold_item_emb.requires_grad}. "
+            f"Rows with TargetItemIsCold=1 get this learned vector instead of the "
+            f"untrained MF embedding (needs build_info.mark_cold_items=True).",
         )
 
     def _per_user_pairwise_loss(self, scores, users, labels, tau=None):
@@ -1209,6 +1280,7 @@ class QRecLLM(Rec2Base):
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
+        cold_item_token = bool(cfg.get("cold_item_token", False))
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1255,6 +1327,7 @@ class QRecLLM(Rec2Base):
             lora_dropout=lora_dropout,
             tuning_step=tuning_step,
             user_conditioned=user_conditioned,
+            cold_item_token=cold_item_token,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,

@@ -8,6 +8,8 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
+import pandas as pd
 from torch import dist
 
 from sigllm.common.config import Config
@@ -21,6 +23,44 @@ def log_step(title: str, detail: Optional[str] = None) -> None:
 
     message = title if detail is None else f"{title} | {detail}"
     LOGGER.info(message)
+
+TRAIN_ITEM_IDS_CACHE = "train_item_ids.npy"
+
+
+def load_train_item_ids(storage_path) -> set:
+    """Item ids that appear in ``train_ood2.pkl``, i.e. the items the frozen MF
+    teacher actually received gradients for.
+
+    Cached as a small sidecar ``.npy`` next to the pickles: Amazon-Book's
+    ``train_ood2.pkl`` is 505 MB and eval-only runs never load the train split
+    otherwise, so paying that read on every run (and in every DDP rank) is not
+    acceptable. Delete the sidecar to force a rebuild after re-preprocessing.
+    """
+
+    storage = Path(storage_path)
+    cache_path = storage / TRAIN_ITEM_IDS_CACHE
+    if cache_path.exists():
+        ids = np.load(cache_path)
+        log_step("Loaded train item ids (cached)", f"{cache_path} | {ids.size} items")
+        return set(ids.tolist())
+
+    train_path = storage / "train_ood2.pkl"
+    if not train_path.exists():
+        raise FileNotFoundError(
+            f"mark_cold_items=True needs {train_path} (or a prebuilt "
+            f"{cache_path}) to know which items the MF teacher was trained on."
+        )
+
+    log_step("Building train item ids", f"reading {train_path} (one-off)")
+    ids = np.unique(pd.read_pickle(train_path)["iid"].to_numpy())
+    if is_main_process():
+        try:
+            np.save(cache_path, ids)
+            log_step("Cached train item ids", f"{cache_path} | {ids.size} items")
+        except OSError as exc:  # read-only mount etc. — cache is an optimization
+            log_step("Could not cache train item ids", str(exc))
+    return set(ids.tolist())
+
 
 class RecBaseDatasetBuilder(ABC):
     """Abstract base for dataset builders."""
@@ -45,24 +85,37 @@ class RecBaseDatasetBuilder(ABC):
 
         datasets = dict()
 
+        # Cold-ITEM gating (P0). When on, every split learns which items the MF
+        # teacher was actually trained on, so the model can swap a learned
+        # "no-CF" token in for untrained embeddings instead of injecting them as
+        # if they were valid. Must be paired with model.cold_item_token=True.
+        mark_cold_items = bool(
+            getattr(build_info, "get", lambda *a: False)("mark_cold_items", False)
+        )
+        train_item_ids = load_train_item_ids(storage_path) if mark_cold_items else None
+
         if not evaluate_only:
             datasets["train"] = dataset_cls(
                 dataset_config=self.dataset_config,
                 filename="train_ood2.pkl",
+                train_item_ids=train_item_ids,
             )
 
             datasets["valid"] = dataset_cls(
                 dataset_config=self.dataset_config,
                 filename="valid_ood2.pkl",
+                train_item_ids=train_item_ids,
             )
             datasets["test"] = dataset_cls(
                 dataset_config=self.dataset_config,
                 filename="test_ood2.pkl",
+                train_item_ids=train_item_ids,
             )
         else:
             datasets["test"] = dataset_cls(
                 dataset_config=self.dataset_config,
                 filename="test_ood2.pkl",
+                train_item_ids=train_item_ids,
             )
             warm_cold_filename = "test_warm_cold_ood2.pkl"
             warm_cold_path = Path(storage_path) / warm_cold_filename
@@ -71,11 +124,13 @@ class RecBaseDatasetBuilder(ABC):
                     dataset_config=self.dataset_config,
                     filename=warm_cold_filename,
                     subset="warm",
+                    train_item_ids=train_item_ids,
                 )
                 datasets["test_cold"] = dataset_cls(
                     dataset_config=self.dataset_config,
                     filename=warm_cold_filename,
                     subset="cold",
+                    train_item_ids=train_item_ids,
                 )
             else:
                 log_step("Skipping warm/cold subsets", f"file not found: {warm_cold_path}")

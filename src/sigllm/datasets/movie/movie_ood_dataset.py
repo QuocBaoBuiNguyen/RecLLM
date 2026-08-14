@@ -21,11 +21,16 @@ def log_step(title: str, detail: Optional[str] = None) -> None:
 
 class MovieOODDataset(RecBaseDataset):
 
+	# Length of the history window the loader actually feeds the model (the last
+	# MAX_HISTORY_LEN ids; CoLLM uses the same cap in rec_datasets.py).
+	MAX_HISTORY_LEN = 10
+
 	def __init__(
 		self,
 		dataset_config,
 		filename: str = None,
-		subset: Literal["all", "warm", "cold"] = "all"
+		subset: Literal["all", "warm", "cold"] = "all",
+		train_item_ids: Optional[set] = None,
 	) -> None:
 		ann_path = Path(dataset_config.build_info.storage) / filename
 		
@@ -105,6 +110,79 @@ class MovieOODDataset(RecBaseDataset):
 			self.annotation = self.annotation[used_columns]
 			self.annotation.columns = renamed_columns
 		
+		# P0 cold-ITEM gating. Opt-in: the builder passes `train_item_ids` only
+		# when `build_info.mark_cold_items` is set, so the vanilla path is
+		# untouched when the flag is off.
+		#
+		# WHY this exists: the MF teacher is trained on train_ood2 ONLY, so an
+		# item absent from train never receives a real gradient. Adam's coupled
+		# weight_decay still decays those rows every step (nn.Embedding produces
+		# DENSE grads), so they end up ~0 — measured on the ML-1M MF ckpt,
+		# trained item rows have norm mean 0.749 vs 0.038 for untrained ones,
+		# and untrained USER rows are exactly 0.0. proj_cf(~0) is then the same
+		# constant token for EVERY cold item, so the CF channel cannot separate
+		# two cold items of the same user. That is what flattens cold uAUC
+		# (book: test_cold 0.5258 vs test_warm 0.6238) while global AUC survives
+		# on cross-user spread.
+		#
+		# NB: deliberately keyed on the ITEM, not on `not_cold`/`prompt_flag`.
+		# `not_cold` = (uid in train) AND (iid in train); on Amazon-Book that is
+		# ~item-cold (7,545 item-cold of 8,308 not_cold==0 test rows), but on
+		# ML-1M it is dominated by cold-USER (42.4% of test rows vs only 1.3%
+		# item-cold), so reusing it would mislabel 42% of the movie rows.
+		self.mark_cold_items = train_item_ids is not None
+		if self.mark_cold_items:
+			pad = 0
+			self.annotation['TargetItemIsCold'] = (
+				~self.annotation['TargetItemID'].isin(train_item_ids)
+			).astype(int)
+
+			cold_hist = 0
+			total_hist = 0
+			if self.use_his:
+				# Remap cold history ids to the padding index so the existing
+				# `ids != padding_index` mask in the model drops those soft
+				# tokens outright (10.0% of book history tokens, 0.8% on ML-1M)
+				# instead of injecting a constant. The TITLES are intentionally
+				# left in place: the text is informative, only the untrained CF
+				# vector is not.
+				def _pad_cold_history(ids_):
+					nonlocal cold_hist, total_hist
+					# Remap the whole list, but COUNT only inside the last
+					# MAX_HISTORY_LEN window: that is what __getitem__ keeps, so
+					# a rate over the full history would understate the share of
+					# soft tokens actually affected (ML-1M: 0.6% full vs 0.8%
+					# in-window; book: 10.0% in-window).
+					window_start = max(0, len(ids_) - self.MAX_HISTORY_LEN)
+					out = []
+					for pos, x in enumerate(ids_):
+						if x == pad:
+							out.append(pad)
+							continue
+						is_cold_item = x not in train_item_ids
+						if pos >= window_start:
+							total_hist += 1
+							cold_hist += int(is_cold_item)
+						out.append(pad if is_cold_item else x)
+					return out
+
+				self.annotation['InteractedItemIDs'] = (
+					self.annotation['InteractedItemIDs'].map(_pad_cold_history)
+				)
+
+			_n_cold = int(self.annotation['TargetItemIsCold'].sum())
+			_n_rows = len(self.annotation)
+			_detail = (
+				f"subset={subset}: target cold {_n_cold}/{_n_rows} rows "
+				f"({100.0 * _n_cold / max(_n_rows, 1):.1f}%)"
+			)
+			if self.use_his:
+				_detail += (
+					f", history ids cold {cold_hist}/{max(total_hist, 1)} "
+					f"({100.0 * cold_hist / max(total_hist, 1):.1f}%) -> padded"
+				)
+			log_step("Cold-item gating ACTIVE", _detail)
+
 		log_step("data path", f"{ann_path} | data size: {self.annotation.shape}")
 		self.user_num = self.annotation['UserID'].max() + 1
 		self.item_num = self.annotation['TargetItemID'].max() + 1
@@ -113,16 +191,19 @@ class MovieOODDataset(RecBaseDataset):
 			max_length = 0
 			for his in self.annotation['InteractedItemIDs']:
 				max_length = max(max_length, len(his))
-			self.max_length = min(max_length, 10)
+			self.max_length = min(max_length, self.MAX_HISTORY_LEN)
 			log_step("Movie OOD datasets, max history length:", str(self.max_length))
 	
 	def __getitem__(self, index):
 		
 		row = self.annotation.iloc[index]
 
-		def _add_prompt_flag(sample: dict) -> dict:
+		def _add_aux_fields(sample: dict) -> dict:
 			if self.prompt_flag:
 				sample["prompt_flag"] = row["prompt_flag"]
+			if self.mark_cold_items:
+				# Consumed by QRecLLM when model.cold_item_token=True.
+				sample["TargetItemIsCold"] = int(row["TargetItemIsCold"])
 			return sample
 
 		user_id = row["UserID"]
@@ -160,7 +241,7 @@ class MovieOODDataset(RecBaseDataset):
 				"InteractedNum": interacted_count,
 				"label": row["label"],
 			}
-			return _add_prompt_flag(sample)
+			return _add_aux_fields(sample)
 		else:
 			sample = {
 				"UserID": user_id,
@@ -168,5 +249,5 @@ class MovieOODDataset(RecBaseDataset):
 				"TargetItemTitle": target_title,
 				"label": label,
 			}
-			return _add_prompt_flag(sample)
+			return _add_aux_fields(sample)
 		

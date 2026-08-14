@@ -65,6 +65,20 @@ model:
     weight: 0.0
     tau: 1.0
 
+  # P0 cold-ITEM token. The frozen MF teacher never trained rows for items
+  # absent from train_ood2, and Adam's coupled weight_decay decays those rows to
+  # ~0 (dense embedding grads), so proj_cf maps EVERY cold item onto the same
+  # constant token — the CF channel cannot separate two cold items of one user,
+  # which is what flattens cold uAUC. When True, such rows get a learned
+  # zero-init "no-CF" vector instead. Pair with
+  # `datasets.*.build_info.mark_cold_items: true` (the model raises if the
+  # dataset is not emitting TargetItemIsCold). Zero-init => at step 0 the token
+  # is 0, numerically what the decayed MF row already supplied (no warm-start
+  # jolt). Low impact on ML-1M by construction (only 1.3% of
+  # test rows have an unseen target item; ML-1M's cold is cold-USER, 42.4%),
+  # aimed at Amazon-Book where 29.3% of test rows do.
+  cold_item_token: false
+
   proj_token_num: ${model.qformer_config.num_queries}
 
   rec_model: "MF"
@@ -111,6 +125,11 @@ datasets:
       # population matches CoLLM's Table numbers. Flip to True to reproduce
       # SeLLa's easier (cold-start-dropped) population instead.
       match_sella_history_filter: false
+      # Emit TargetItemIsCold per row and remap cold history ids to the padding
+      # index (so their soft tokens are dropped by the existing mask). Reads
+      # train_ood2.pkl once and caches the id set as train_item_ids.npy. Must be
+      # flipped together with `model.cold_item_token`.
+      mark_cold_items: false
 
 run:
   task: rec_pretrain
