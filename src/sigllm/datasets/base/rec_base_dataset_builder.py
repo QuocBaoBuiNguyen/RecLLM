@@ -101,9 +101,20 @@ class RecBaseDatasetBuilder(ABC):
                 train_item_ids=train_item_ids,
             )
 
+            # Validation split is configurable purely for SPEED: per-epoch eval
+            # dominates Step-2 wall clock on Amazon-Book (valid is 25,747 rows vs
+            # 400 iters x bs 16 = 6,400 training samples per epoch), and
+            # valid_small_ood2.pkl (6,437 rows, 25%) is already shipped by the
+            # preprocessing. CoLLM validates on valid_small too, so this is
+            # reference-parity rather than a shortcut — but it DOES change
+            # best-checkpoint selection, so keep it fixed across runs you intend
+            # to compare. Default keeps the full split (no behaviour change).
+            valid_filename = getattr(build_info, "get", lambda *a: "valid_ood2.pkl")(
+                "valid_filename", "valid_ood2.pkl"
+            )
             datasets["valid"] = dataset_cls(
                 dataset_config=self.dataset_config,
-                filename="valid_ood2.pkl",
+                filename=valid_filename,
                 train_item_ids=train_item_ids,
             )
             datasets["test"] = dataset_cls(
