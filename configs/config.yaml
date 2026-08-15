@@ -111,6 +111,11 @@ model:
     # ablation, never bundled with book work.
     item_text_instruction: false
 
+    # D2: domain noun used in the Q-Former instruction templates (Stage 1 and
+    # Stage 3 render from the SAME templates). Must match what Stage 1 was
+    # trained with — changing it requires re-running Stage 1 + Stage 2.
+    item_noun: movie
+
   rec_config:
     user_num: 839
     item_num: 3256

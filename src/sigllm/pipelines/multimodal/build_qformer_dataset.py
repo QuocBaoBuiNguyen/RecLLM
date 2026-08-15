@@ -60,6 +60,8 @@ def build_qformer_pkls(cfg) -> None:
     max_item_item_pairs = stage1_cfg.get("max_item_item_pairs", None)
     max_user_item_pairs = stage1_cfg.get("max_user_item_pairs", None)
     include_user_item = bool(stage1_cfg.get("include_user_item", False))
+    # D2: domain noun for the Q-Former instructions (movie / book).
+    item_noun = cfg.model_cfg.get("qformer_config", {}).get("item_noun", None)
 
     log_step(
         "Build config",
@@ -67,7 +69,7 @@ def build_qformer_pkls(cfg) -> None:
             f"data_dir={data_dir}, seed={seed}, item_pair_window={item_pair_window}, "
             f"max_item_item_pairs={max_item_item_pairs}, "
             f"max_user_item_pairs={max_user_item_pairs}, "
-            f"include_user_item={include_user_item}"
+            f"include_user_item={include_user_item}, item_noun={item_noun}"
         ),
     )
 
@@ -82,6 +84,7 @@ def build_qformer_pkls(cfg) -> None:
             max_item_item_pairs=max_item_item_pairs,
             max_user_item_pairs=max_user_item_pairs,
             include_user_item=include_user_item,
+            item_noun=item_noun,
         )
         log_step("Built Q-Former pkl", f"{input_path} -> {output_path}")
 

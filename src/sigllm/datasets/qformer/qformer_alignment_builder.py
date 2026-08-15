@@ -6,8 +6,15 @@ import random
 import pandas as pd
 import torch
 
+from sigllm.common.logging_utils import NotebookLogger
 from sigllm.datasets.base.rec_base_dataset_builder import RecBaseDatasetBuilder
 from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
+
+LOGGER = NotebookLogger.rich_logger("sigllm.qformer_alignment_builder")
+
+
+def log_step(title: str, detail: str | None = None) -> None:
+    LOGGER.info(title if detail is None else f"{title} | {detail}")
 
 
 """Builder for Q-Former phase-1 alignment data.
@@ -60,38 +67,71 @@ Each entry in "samples" has the same schema regardless of objective:
 class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
     """Construct ILM-style Q-Former alignment samples."""
 
-    TEMPL_ITEM_TEXT = [
-        "Represent this movie for recommendation using its title and genres.",
-        "Align this movie metadata with its collaborative filtering representation.",
-        "Given the movie metadata, extract recommendation-relevant item features.",
-        "Use the title and genres to describe this movie in the item embedding space.",
-        "Map this movie's textual attributes to its collaborative recommendation signal.",
-        "Identify the movie preferences implied by its title and genre metadata.",
-        "Create a language-aligned representation of this movie for recommendation.",
-        "Summarize this movie as an item a recommender system can compare.",
-        "Based on the title and genres, represent what kind of users may like this movie.",
-        "Encode the semantic information of this movie for item-language alignment.",
-        "Use a few metadata cues to align this movie with behavioral item signals.",
-        "Produce a recommendation-aware representation from this movie description.",
+    # D2 fix — the domain noun is a PARAMETER, not hardcoded "movie".
+    # These templates were literally telling the Q-Former "this movie" while
+    # processing Amazon books. Templates live here as the single source of
+    # truth; QRecLLM imports them so Stage 1 and Stage 3 can never drift apart
+    # again (that drift is how the bug survived).
+    #
+    # `{meta}` is "title and genres" only when genres actually carry signal.
+    # Amazon-Book ships a CONSTANT synthetic genres field, so promising the
+    # model "genres" there is a lie and wastes instruction budget (D3).
+    ITEM_NOUN_DEFAULT = "movie"
+
+    _TEMPL_ITEM_TEXT = [
+        "Represent this {noun} for recommendation using its {meta}.",
+        "Align this {noun} metadata with its collaborative filtering representation.",
+        "Given the {noun} metadata, extract recommendation-relevant item features.",
+        "Use the {meta} to describe this {noun} in the item embedding space.",
+        "Map this {noun}'s textual attributes to its collaborative recommendation signal.",
+        "Identify the {noun} preferences implied by its {meta}.",
+        "Create a language-aligned representation of this {noun} for recommendation.",
+        "Summarize this {noun} as an item a recommender system can compare.",
+        "Based on the {meta}, represent what kind of users may like this {noun}.",
+        "Encode the semantic information of this {noun} for item-language alignment.",
+        "Use a few metadata cues to align this {noun} with behavioral item signals.",
+        "Produce a recommendation-aware representation from this {noun} description.",
     ]
 
-    TEMPL_ITEM_ITEM = [
-        "Align movies that appear close together in positive user histories.",
-        "Represent these two movies as behaviorally related items.",
-        "Given user interaction patterns, pull these related movies closer together.",
-        "Align two movies that are likely to share audience preferences.",
-        "Use collaborative behavior to represent these movies as similar items.",
-        "Compare these co-watched movies in the recommendation embedding space.",
+    _TEMPL_ITEM_ITEM = [
+        "Align {nouns} that appear close together in positive user histories.",
+        "Represent these two {nouns} as behaviorally related items.",
+        "Given user interaction patterns, pull these related {nouns} closer together.",
+        "Align two {nouns} that are likely to share audience preferences.",
+        "Use collaborative behavior to represent these {nouns} as similar items.",
+        "Compare these co-engaged {nouns} in the recommendation embedding space.",
         "Learn item features that preserve this positive item-item relationship.",
-        "Encode the behavioral connection between these two movies.",
-        "Represent this movie pair using shared recommendation signals.",
-        "Use co-occurrence evidence to align the two movie representations.",
+        "Encode the behavioral connection between these two {nouns}.",
+        "Represent this {noun} pair using shared recommendation signals.",
+        "Use co-occurrence evidence to align the two {noun} representations.",
     ]
 
-    TEMPL_USER_ITEM = [
-        "Align this user with a movie they liked.",
-        "Represent a positive user-movie interaction for recommendation.",
+    _TEMPL_USER_ITEM = [
+        "Align this user with a {noun} they liked.",
+        "Represent a positive user-{noun} interaction for recommendation.",
     ]
+
+    @classmethod
+    def render_templates(cls, which, item_noun=None, has_genres=True):
+        """Render one template family for a domain noun.
+
+        `which` is "item_text" | "item_item" | "user_item". Keep Stage 1 and
+        Stage 3 on the SAME (item_noun, has_genres) pair — the Q-Former is
+        pretrained on whatever wording Stage 1 used, so changing it afterwards
+        creates a train/inference mismatch and requires re-running Stage 1+2.
+        """
+        noun = (item_noun or cls.ITEM_NOUN_DEFAULT).strip().lower()
+        fields = {
+            "noun": noun,
+            "nouns": noun + "s",
+            "meta": "title and genres" if has_genres else "title",
+        }
+        src = {
+            "item_text": cls._TEMPL_ITEM_TEXT,
+            "item_item": cls._TEMPL_ITEM_ITEM,
+            "user_item": cls._TEMPL_USER_ITEM,
+        }[which]
+        return [t.format(**fields) for t in src]
 
     train_dataset_cls = QFormerAlignmentDataset
 
@@ -104,6 +144,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
         max_item_item_pairs: int | None = None,
         max_user_item_pairs: int | None = None,
         include_user_item: bool = False,
+        item_noun: str | None = None,
     ):
         rng = random.Random(seed)
 
@@ -153,8 +194,32 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
             item_titles[int(iid)] = str(title)
             item_genres[int(iid)] = parsed_genres
 
+        # D3: Amazon-Book injects a CONSTANT synthetic genres value, so
+        # ". Genres: Books." is the same ~37% of every caption and is trivially
+        # predictable — it dilutes the ITG/Stage-2 objective and inflates their
+        # loss numbers without teaching anything. Emit genres only when the
+        # field actually varies across items.
+        _distinct_genres = {", ".join(g) for g in item_genres.values()}
+        has_genres = len(_distinct_genres) > 1
+        log_step(
+            "Item text format",
+            f"distinct genres values={len(_distinct_genres)} -> "
+            + ("'Title: X. Genres: Y.'" if has_genres
+               else "'Title: X.' (genres constant, dropped)"),
+        )
+
         def format_item_text(iid: int) -> str:
+            if not has_genres:
+                return f"Title: {item_titles[int(iid)]}."
             return f"Title: {item_titles[int(iid)]}. Genres: {', '.join(item_genres[int(iid)])}."
+
+        templates = {
+            k: QFormerAlignmentBuilder.render_templates(k, item_noun, has_genres)
+            for k in ("item_text", "item_item", "user_item")
+        }
+        log_step("Q-Former instruction domain",
+                 f"item_noun={(item_noun or QFormerAlignmentBuilder.ITEM_NOUN_DEFAULT)}, "
+                 f"has_genres={has_genres} | e.g. {templates['item_text'][0]!r}")
 
         samples = []
 
@@ -186,7 +251,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                     "i_left": int(iid),
                     "i_right": 0,
                     "text": format_item_text(int(iid)),
-                    "instruction": rng.choice(QFormerAlignmentBuilder.TEMPL_ITEM_TEXT),
+                    "instruction": rng.choice(templates["item_text"]),
                     "weight": 1.0,
                 }
             )
@@ -232,7 +297,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                 "i_left": int(i1),
                 "i_right": int(i2),
                 "text": "",
-                "instruction": rng.choice(QFormerAlignmentBuilder.TEMPL_ITEM_ITEM),
+                "instruction": rng.choice(templates["item_item"]),
                 "weight": float(weight),
             }
             for (i1, i2), weight in item_pair_counts.items()
@@ -275,7 +340,7 @@ class QFormerAlignmentBuilder(RecBaseDatasetBuilder):
                     "i_left": int(row.iid),
                     "i_right": 0,
                     "text": format_item_text(int(row.iid)),
-                    "instruction": rng.choice(QFormerAlignmentBuilder.TEMPL_USER_ITEM),
+                    "instruction": rng.choice(templates["user_item"]),
                     "weight": 1.0,
                 }
                 for row in pos_df.itertuples(index=False)

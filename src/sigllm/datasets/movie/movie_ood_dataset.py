@@ -86,7 +86,14 @@ class MovieOODDataset(RecBaseDataset):
 		# Carried through only so the P1 content bridge can rebuild Stage-1's
 		# "Title: X. Genres: Y." string. Unused when the model flag is off; an
 		# extra string field in the sample changes nothing numerically.
-		self.has_genres = 'genres' in self.annotation.columns
+		# D3: a genres column with a single distinct value (Amazon-Book injects a
+		# constant "Books") carries no signal — treat it as absent so the P1
+		# instruction stays "Title: X." instead of promising genres it does not
+		# have. Matches what format_item_text does for Stage 1.
+		self.has_genres = (
+			'genres' in self.annotation.columns
+			and self.annotation['genres'].nunique(dropna=True) > 1
+		)
 
 		if "sessionItems" in self.annotation.columns or "his" in self.annotation.columns:
 			used_columns = ['uid','iid','title','his', 'his_title','label']

@@ -11,6 +11,7 @@ import os
 
 from sigllm.common.logging_utils import NotebookLogger
 from sigllm.common.registry import registry
+from sigllm.datasets.qformer.qformer_alignment_builder import QFormerAlignmentBuilder
 from sigllm.models.multimodal.base.rec_base_model import Rec2Base
 from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
 
@@ -61,25 +62,18 @@ class QRecLLM(Rec2Base):
     # PLACEHOLDERS_FOR_EMBED = ["<UserID>", "<ItemIDList>", "<TargetItemID>"]
     PLACEHOLDERS_FOR_EMBED = ["<ItemIDList>", "<TargetItemID>"]
 
-    # Item-text instructions for the Q-Former. Must match the distribution
-    # the Q-Former was trained on in stage 1 (see
-    # QFormerAlignmentBuilder.TEMPL_ITEM_TEXT). The verbose stage 2 prompt
-    # MUST NOT be passed here — it gets truncated to max_instruction_length
-    # tokens and would carry no per-item signal.
-    QFORMER_ITEM_INSTRUCTIONS = [
-        "Represent this movie for recommendation using its title and genres.",
-        "Align this movie metadata with its collaborative filtering representation.",
-        "Given the movie metadata, extract recommendation-relevant item features.",
-        "Use the title and genres to describe this movie in the item embedding space.",
-        "Map this movie's textual attributes to its collaborative recommendation signal.",
-        "Identify the movie preferences implied by its title and genre metadata.",
-        "Create a language-aligned representation of this movie for recommendation.",
-        "Summarize this movie as an item a recommender system can compare.",
-        "Based on the title and genres, represent what kind of users may like this movie.",
-        "Encode the semantic information of this movie for item-language alignment.",
-        "Use a few metadata cues to align this movie with behavioral item signals.",
-        "Produce a recommendation-aware representation from this movie description.",
-    ]
+    # Item-text instructions for the Q-Former. Must match the distribution the
+    # Q-Former was trained on in Stage 1. The verbose Stage-2 prompt MUST NOT be
+    # passed here — it gets truncated to max_instruction_length tokens and would
+    # carry no per-item signal.
+    # D2 fix: the instruction domain is configurable and the templates are
+    # imported from QFormerAlignmentBuilder — the single source of truth Stage 1
+    # trains on. They used to be a hardcoded copy that said "this movie" for
+    # every dataset, so Amazon-Book was pretrained and served with movie wording.
+    # `item_noun` MUST match what Stage 1 used; changing it without re-running
+    # Stage 1 + Stage 2 creates a train/inference mismatch (a loud warning is
+    # emitted at init when it deviates from the default).
+    ITEM_NOUN_DEFAULT = QFormerAlignmentBuilder.ITEM_NOUN_DEFAULT
 
     def __init__(
         self,
@@ -113,6 +107,7 @@ class QRecLLM(Rec2Base):
         user_conditioned=False,
         cold_item_token=False,
         item_text_instruction=False,
+        item_noun=None,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -147,6 +142,16 @@ class QRecLLM(Rec2Base):
         self.cold_item_token = bool(cold_item_token)
         self.cold_item_emb = None
         self.item_text_instruction = bool(item_text_instruction)
+        self.item_noun = (item_noun or self.ITEM_NOUN_DEFAULT).strip().lower()
+        self._qformer_instructions_cache = {}
+        if self.item_noun != self.ITEM_NOUN_DEFAULT:
+            log_step(
+                "ITEM NOUN OVERRIDE",
+                f"Q-Former instructions rendered for '{self.item_noun}' instead of "
+                f"'{self.ITEM_NOUN_DEFAULT}'. This MUST match the wording Stage 1 was "
+                f"trained with — if the Q-Former checkpoint predates this setting, "
+                f"re-run Stage 1 + Stage 2 or revert item_noun.",
+            )
         self._has_logged_item_text_instruction = False
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
@@ -651,7 +656,7 @@ class QRecLLM(Rec2Base):
         if instruction_list is None:
             instruction_list = batch_data.get(
                 "instruction",
-                self._build_qformer_instructions(B),
+                self._build_qformer_instructions(B, "TargetItemGenres" in batch_data),
             )
         if isinstance(instruction_list, str):
             ins_list = [instruction_list] * B
@@ -1145,16 +1150,26 @@ class QRecLLM(Rec2Base):
 
         return label_embeds, label_tokens, ans_map
 
-    def _build_qformer_instructions(self, batch_size: int) -> list:
+    def _build_qformer_instructions(self, batch_size: int, has_genres: bool = True) -> list:
         """Build short item-text instructions for the Q-Former.
 
         Matches the distribution the Q-Former was trained on in stage 1: a
         fresh sample per row during training, a deterministic fixed string
         during eval/inference so the same input maps to the same embedding.
         """
+        pool = self._instruction_pool(has_genres=has_genres)
         if self.training:
-            return random.choices(self.QFORMER_ITEM_INSTRUCTIONS, k=batch_size)
-        return [self.QFORMER_ITEM_INSTRUCTIONS[0]] * batch_size
+            return random.choices(pool, k=batch_size)
+        return [pool[0]] * batch_size
+
+    def _instruction_pool(self, has_genres):
+        """Stage-3 instruction templates, rendered for this dataset's domain."""
+        key = bool(has_genres)
+        if key not in self._qformer_instructions_cache:
+            self._qformer_instructions_cache[key] = QFormerAlignmentBuilder.render_templates(
+                "item_text", self.item_noun, has_genres=key,
+            )
+        return self._qformer_instructions_cache[key]
 
     def _build_item_text_instructions(self, batch_data, batch_size):
         """P1 content bridge: feed the TARGET item's own text to the Q-Former.
@@ -1219,7 +1234,9 @@ class QRecLLM(Rec2Base):
             }
             rec_atts = None
         else:
-            instruction_list = self._build_qformer_instructions(batch_size)
+            instruction_list = self._build_qformer_instructions(
+                batch_size, "TargetItemGenres" in batch_data
+            )
             rec_embeds, rec_atts = self.encode_rec_features_to_llm_v2(
                 batch_data,
                 feature_order=feature_order,
@@ -1342,6 +1359,7 @@ class QRecLLM(Rec2Base):
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
         cold_item_token = bool(cfg.get("cold_item_token", False))
         item_text_instruction = bool(qformer_config.get("item_text_instruction", False))
+        item_noun = qformer_config.get("item_noun", None)
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1390,6 +1408,7 @@ class QRecLLM(Rec2Base):
             user_conditioned=user_conditioned,
             cold_item_token=cold_item_token,
             item_text_instruction=item_text_instruction,
+            item_noun=item_noun,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,

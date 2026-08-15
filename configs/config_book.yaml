@@ -119,6 +119,15 @@ model:
     # per-item signal here is the TITLE alone.
     item_text_instruction: true
 
+    # D2: was silently using the movie templates — every Q-Former instruction
+    # literally said "Represent this MOVIE..." while processing Amazon books.
+    # WARNING: the shipped Stage-1/Stage-2 book checkpoints were pretrained with
+    # item_noun=movie. Flipping this to "book" is only correct AFTER re-running
+    # Stage 1 + Stage 2; otherwise Stage 3 serves wording the Q-Former never saw.
+    # Set back to `movie` if you reuse the existing qformer_stage1_book ckpt.
+    # (A loud "ITEM NOUN OVERRIDE" line is logged at init as a reminder.)
+    item_noun: book
+
   rec_config:
     # Amazon-Book (CoLLM/BinLLM OOD split) — much sparser than ML-1M (839/3256),
     # which is the point: weak CF -> the LLM/Q-Former bridge has real headroom.
