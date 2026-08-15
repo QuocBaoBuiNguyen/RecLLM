@@ -112,6 +112,7 @@ class QRecLLM(Rec2Base):
         tuning_step=None,
         user_conditioned=False,
         cold_item_token=False,
+        item_text_instruction=False,
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -145,6 +146,8 @@ class QRecLLM(Rec2Base):
         self.user_conditioned = bool(user_conditioned)
         self.cold_item_token = bool(cold_item_token)
         self.cold_item_emb = None
+        self.item_text_instruction = bool(item_text_instruction)
+        self._has_logged_item_text_instruction = False
 
         # uAUC-aligned auxiliary losses (opt-in). ranking_loss shapes the LLM's
         # Yes/No margin; align_rank_loss shapes the aligned CF soft tokens. Both
@@ -657,6 +660,14 @@ class QRecLLM(Rec2Base):
         if len(ins_list) != B:
             raise ValueError(f"Expected {B} instructions, got {len(ins_list)}")
 
+        # P1 content bridge (target only). History keeps the generic instruction
+        # so this stays a one-variable change and avoids B*L distinct texts.
+        target_ins_list = (
+            self._build_item_text_instructions(batch_data, B)
+            if self.item_text_instruction
+            else ins_list
+        )
+
         with self.maybe_autocast():
             # Stage-2 uses the in-tree rec encoder API: direct embedding lookup from ids.
             # TEMP_DISABLED_USER_CF: old path injected a user CF token into the LLM prompt.
@@ -695,7 +706,7 @@ class QRecLLM(Rec2Base):
 
             # 2) QFormer outputs (instruction-conditioned)
             # user_q = self.qformer(user_cf, ins_list)        # [B,Q,d_model]
-            target_q = self.qformer(target_cf, ins_list, user_cf=user_cf_for_q)  # [B,Q,d_model]
+            target_q = self.qformer(target_cf, target_ins_list, user_cf=user_cf_for_q)  # [B,Q,d_model]
 
             # 3) Project to LLM hidden per token
             # user_llm = self.llm_proj(user_q)               # [B,Q,H]
@@ -1145,6 +1156,55 @@ class QRecLLM(Rec2Base):
             return random.choices(self.QFORMER_ITEM_INSTRUCTIONS, k=batch_size)
         return [self.QFORMER_ITEM_INSTRUCTIONS[0]] * batch_size
 
+    def _build_item_text_instructions(self, batch_data, batch_size):
+        """P1 content bridge: feed the TARGET item's own text to the Q-Former.
+
+        Stage 3 currently sends a generic template into the Q-Former text
+        branch, so for an item whose CF row is untrained the Q-Former receives
+        no item-specific input at all: cf_vec ~ 0 plus a constant string, giving
+        every cold item the same soft tokens. That is why cold candidates cannot
+        be ranked against each other (95.2% of the eligible users in book's
+        test_cold have ALL items cold), and why the cold-item token (P0) could
+        not move that split.
+
+        The text branch is the same slot Stage 1 trained with
+        ``"Title: X. Genres: Y."`` via ITC/ITM/ITG, and ``forward()`` routes it
+        through the very same ``forward_multimodal`` path, so this restores the
+        Stage-1 regime rather than inventing a new one. Note Stage 2 fed the
+        branch NO text at all, so neither setting is in-distribution for it.
+
+        Zero new parameters and zero shape changes — only which string enters an
+        already-pretrained encoder. Falls back to title-only when the dataset
+        does not carry genres.
+        """
+        titles = batch_data.get("TargetItemTitle")
+        if titles is None:
+            raise KeyError(
+                "item_text_instruction=True but the batch has no "
+                "'TargetItemTitle'."
+            )
+        genres = batch_data.get("TargetItemGenres")
+
+        if not self._has_logged_item_text_instruction:
+            sample_genres = "<none>" if genres is None else str(genres[0])
+            log_step(
+                "P1 CONTENT BRIDGE ACTIVE (target only)",
+                f"Q-Former text branch now reads the target item's own text "
+                f"instead of a generic template. genres={sample_genres}. "
+                f"NB Amazon-Book ships a CONSTANT synthetic genres field, so on "
+                f"book the per-item signal is the TITLE alone.",
+            )
+            self._has_logged_item_text_instruction = True
+
+        out = []
+        for i in range(batch_size):
+            title = str(titles[i]).strip().strip('"')
+            if genres is None:
+                out.append(f"Title: {title}.")
+            else:
+                out.append(f"Title: {title}. Genres: {str(genres[i])}.")
+        return out
+
     def build_llm_inputs_from_prompt_v2(self, prompt_template, batch_data):
         feature_order = self.get_placeholder_order(prompt_template) if prompt_template else None
         batch_size = batch_data["UserID"].shape[0]
@@ -1281,6 +1341,7 @@ class QRecLLM(Rec2Base):
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
         cold_item_token = bool(cfg.get("cold_item_token", False))
+        item_text_instruction = bool(qformer_config.get("item_text_instruction", False))
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1328,6 +1389,7 @@ class QRecLLM(Rec2Base):
             tuning_step=tuning_step,
             user_conditioned=user_conditioned,
             cold_item_token=cold_item_token,
+            item_text_instruction=item_text_instruction,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,

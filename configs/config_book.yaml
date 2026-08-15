@@ -106,6 +106,19 @@ model:
     num_layers: 4
     user_conditioned: True
 
+    # P1 content bridge (target item only). Stage 3 was sending a GENERIC
+    # template into the Q-Former text branch, so a cold item (29.3% of book test
+    # rows) gave the Q-Former no item-specific input at all: cf_vec ~ 0 plus a
+    # constant string -> identical soft tokens for every cold item. That is why
+    # cold candidates cannot be ranked against each other, and why P0 could not
+    # move test_cold (95.2% of its eligible users have ALL items cold).
+    # This feeds the item's own "Title: X. Genres: Y." — the exact text Stage 1
+    # trained this branch on (ITC/ITM/ITG), through the same forward_multimodal
+    # path. Zero new parameters, zero shape changes.
+    # LIMIT: Amazon-Book ships a CONSTANT synthetic genres field, so the
+    # per-item signal here is the TITLE alone.
+    item_text_instruction: true
+
   rec_config:
     # Amazon-Book (CoLLM/BinLLM OOD split) — much sparser than ML-1M (839/3256),
     # which is the point: weak CF -> the LLM/Q-Former bridge has real headroom.
@@ -134,6 +147,12 @@ datasets:
       # and caches the id set as train_item_ids.npy — worth it here, that pickle
       # is 505 MB. Must be flipped together with `model.cold_item_token`.
       mark_cold_items: false
+      # Validate on valid_small (6,437 rows) instead of valid (25,747). Per-epoch
+      # eval was ~57% of Step-2 compute on book; this cuts epoch time ~1.75x.
+      # CoLLM also validates on valid_small, so this is reference-parity.
+      # NB it changes best-checkpoint selection -> hold it fixed across every run
+      # you intend to compare (re-run the baseline on this setting too).
+      valid_filename: valid_small_ood2.pkl
 
 run:
   task: rec_pretrain

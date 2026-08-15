@@ -103,6 +103,14 @@ model:
     # NOT read user_cf, so only Step-2 needs retraining to adopt this.
     user_conditioned: True
 
+    # P1 content bridge — OFF for ML-1M on purpose. It changes the Q-Former
+    # input for 100% of rows (unlike cold_item_token, which is gated to the 1.3%
+    # of movie test rows with an unseen target item), so it carries real
+    # regression risk against the movie SOTA while having almost nothing to win:
+    # ML-1M's cold is cold-USER (42.4%), not cold-item. Enable only as its own
+    # ablation, never bundled with book work.
+    item_text_instruction: false
+
   rec_config:
     user_num: 839
     item_num: 3256

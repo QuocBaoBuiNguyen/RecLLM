@@ -83,10 +83,18 @@ class MovieOODDataset(RecBaseDataset):
 
 		self.use_his = False
 		self.prompt_flag = False
+		# Carried through only so the P1 content bridge can rebuild Stage-1's
+		# "Title: X. Genres: Y." string. Unused when the model flag is off; an
+		# extra string field in the sample changes nothing numerically.
+		self.has_genres = 'genres' in self.annotation.columns
 
 		if "sessionItems" in self.annotation.columns or "his" in self.annotation.columns:
 			used_columns = ['uid','iid','title','his', 'his_title','label']
 			renamed_columns = ['UserID','TargetItemID','TargetItemTitle', 'InteractedItemIDs', 'InteractedItemTitles','label']
+
+			if self.has_genres:
+				used_columns.append('genres')
+				renamed_columns.append('TargetItemGenres')
 
 			if 'not_cold' in self.annotation.columns:
 				used_columns.append('not_cold')
@@ -102,6 +110,10 @@ class MovieOODDataset(RecBaseDataset):
 		else:
 			used_columns = ['uid','iid','title','label']
 			renamed_columns = ['UserID','TargetItemID','TargetItemTitle','label']
+
+			if self.has_genres:
+				used_columns.append('genres')
+				renamed_columns.append('TargetItemGenres')
 			if 'not_cold' in self.annotation.columns:
 				used_columns.append('not_cold')
 				renamed_columns.append('prompt_flag')
@@ -204,6 +216,9 @@ class MovieOODDataset(RecBaseDataset):
 			if self.mark_cold_items:
 				# Consumed by QRecLLM when model.cold_item_token=True.
 				sample["TargetItemIsCold"] = int(row["TargetItemIsCold"])
+			if self.has_genres:
+				# Consumed by QRecLLM when qformer_config.item_text_instruction=True.
+				sample["TargetItemGenres"] = str(row["TargetItemGenres"]).replace("|", ", ")
 			return sample
 
 		user_id = row["UserID"]
