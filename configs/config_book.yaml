@@ -45,6 +45,16 @@ model:
   end_sym: "###"
   ans_type: "v2"
 
+  # Ranking function used at EVAL. "margin" = softmax(pos,neg)[:,1] = the
+  # sigmoid of the Yes-No logit gap (this repo's default since 8531bd3).
+  # "pos_logit" = the RAW "Yes" logit, which is what CoLLM ranks by
+  # (minigpt4rec_v2.py: outputs.logits[:,-t_posi,:][:,pos_ans_id]) — use it to
+  # place AUC/uAUC next to CoLLM's table 1:1. Eval-only: the training objective
+  # is unchanged, so an existing checkpoint can simply be re-scored.
+  # NB under pos_logit the acc / pred_pos_rate@0.5 diagnostics are meaningless
+  # (a logit is not a probability); AUC and uAUC are rank-based and fine.
+  score_mode: margin
+
   # uAUC-aligned objective for Stage 3. L = BCE + weight * per-user pairwise BPR
   # (a differentiable AUC surrogate over the Yes/No margin). weight=0.0 -> the
   # original pointwise BCE. Requires run.user_grouped_batch so batches contain

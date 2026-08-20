@@ -108,6 +108,7 @@ class QRecLLM(Rec2Base):
         cold_item_token=False,
         item_text_instruction=False,
         item_noun=None,
+        score_mode="margin",
         ranking_loss_weight=0.0,
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
@@ -143,6 +144,18 @@ class QRecLLM(Rec2Base):
         self.cold_item_emb = None
         self.item_text_instruction = bool(item_text_instruction)
         self.item_noun = (item_noun or self.ITEM_NOUN_DEFAULT).strip().lower()
+        self.score_mode = str(score_mode or "margin").strip().lower()
+        if self.score_mode not in ("margin", "pos_logit"):
+            raise ValueError(
+                f"score_mode must be 'margin' or 'pos_logit', got {score_mode!r}"
+            )
+        if self.score_mode == "pos_logit":
+            log_step(
+                "SCORE MODE = pos_logit (CoLLM parity)",
+                "Ranking by the raw 'Yes' logit instead of softmax(pos-neg). "
+                "Eval-only change; acc/pred_pos_rate@0.5 become meaningless, "
+                "AUC/uAUC are rank-based and comparable to CoLLM's protocol.",
+            )
         self._qformer_instructions_cache = {}
         if self.item_noun != self.ITEM_NOUN_DEFAULT:
             log_step(
@@ -1124,6 +1137,25 @@ class QRecLLM(Rec2Base):
         # margin ~16. Ranking-only change; the >0.5 ACC/pred_pos_rate threshold
         # is preserved (0.5 is exact in both dtypes).
         prediction_logits = outputs.logits[:, -(label_seq_len + 1), :].float()
+
+        # CoLLM parity. CoLLM ranks by the RAW "Yes" logit
+        # (minigpt4rec_v2.py: `logits_ = outputs.logits[:,-t_posi,:][:,pos_ans_id]`)
+        # and trains with binary_cross_entropy_with_logits on it. This repo moved
+        # to softmax(pos, neg) in 8531bd3 (2026-05-09), which is sigmoid(pos-neg)
+        # — a DIFFERENT ranking function, so AUC/uAUC computed here are not the
+        # same measurement as CoLLM's even for an identical model. Before that
+        # commit the score was sigmoid(pos_logit), monotone in pos_logit, hence
+        # rank-identical to CoLLM.
+        #
+        # score_mode="pos_logit" restores CoLLM's ranking so the numbers can be
+        # placed next to theirs 1:1. It is EVAL-ONLY: the training objective
+        # (cross-entropy over {No,Yes}) is untouched, so no retraining is needed
+        # to re-score an existing checkpoint. NB with raw logits the
+        # acc / pred_pos_rate@0.5 diagnostics lose their meaning (a logit is not
+        # a probability); AUC and uAUC are rank-based and unaffected.
+        if self.score_mode == "pos_logit":
+            return prediction_logits[:, pos_id]
+
         binary_logits = torch.stack(
             [prediction_logits[:, neg_id], prediction_logits[:, pos_id]],
             dim=1,
@@ -1360,6 +1392,7 @@ class QRecLLM(Rec2Base):
         cold_item_token = bool(cfg.get("cold_item_token", False))
         item_text_instruction = bool(qformer_config.get("item_text_instruction", False))
         item_noun = qformer_config.get("item_noun", None)
+        score_mode = cfg.get("score_mode", "margin")
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1409,6 +1442,7 @@ class QRecLLM(Rec2Base):
             cold_item_token=cold_item_token,
             item_text_instruction=item_text_instruction,
             item_noun=item_noun,
+            score_mode=score_mode,
             ranking_loss_weight=ranking_loss_weight,
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,
