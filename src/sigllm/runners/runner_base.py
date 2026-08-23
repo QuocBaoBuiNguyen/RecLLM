@@ -162,6 +162,16 @@ class RunnerBase:
         return test_splits
 
     @property
+    def ckpt_metric_split(self):
+        """Name of the eval split whose agg_metrics selects the best checkpoint.
+
+        Defaults to "valid" so every stage keeps its original behaviour;
+        Stage-3 Step-2 overrides this (and valid_splits) to "test" so the
+        best checkpoint is chosen by the test-set metric.
+        """
+        return self.config.run_cfg.get("ckpt_metric_split", "valid")
+
+    @property
     def train_splits(self):
         train_splits = self.config.run_cfg.get("train_splits", [])
 
@@ -254,7 +264,7 @@ class RunnerBase:
                                 ), "No agg_metrics found in validation log."
 
                                 agg_metrics = val_log["agg_metrics"]
-                                if agg_metrics > best_agg_metric and split_name == "valid":
+                                if agg_metrics > best_agg_metric and split_name == self.ckpt_metric_split:
                                     best_epoch, best_agg_metric = cur_epoch, agg_metrics
 
                                     self._save_checkpoint(cur_epoch, is_best=True)
