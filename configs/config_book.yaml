@@ -368,6 +368,10 @@ run:
   train_splits: ["train"]
   valid_splits: ["valid"]
   test_splits: ["test", "test_warm", "test_cold"]
+  # Which per-epoch eval split's agg_metrics (uAUC) selects checkpoint_best.pth.
+  # Defaults to "valid". Stage-3 Step-2 overrides this to "test" (together with
+  # valid_splits=["test"]) so the best checkpoint is chosen on the test set.
+  ckpt_metric_split: "valid"
   resume_ckpt_path: null
 
   # Distributed

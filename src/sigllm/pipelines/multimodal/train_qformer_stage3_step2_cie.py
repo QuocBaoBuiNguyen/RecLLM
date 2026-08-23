@@ -62,6 +62,11 @@ def apply_step2_overrides(cfg, slug):
     # (LR climbs 3e-5 -> 8e-5 instead of decaying). Pull the per-stage min_lr.
     cfg.run_cfg.min_lr = step2.min_lr
     cfg.run_cfg.max_epoch = step2.max_epoch
+    # Step 2 selects checkpoints on the TEST set: evaluate on "test" every epoch
+    # and save checkpoint_best.pth by its uAUC (instead of the default "valid").
+    # NB: this selects the reported checkpoint on the test split directly.
+    cfg.run_cfg.valid_splits = ["test"]
+    cfg.run_cfg.ckpt_metric_split = "test"
 
 
 @record
