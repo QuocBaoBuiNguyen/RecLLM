@@ -5,7 +5,7 @@
 Chương này trình bày kiến trúc CoQLLM -- mô hình được đề xuất trong luận văn -- cùng
 lý do thiết kế và quy trình huấn luyện. Xuất phát từ hạn chế đã phân tích ở
 Chương~\ref{Chapter2}, trục lập luận của chương là: lớp chiếu tuyến tính của CoLLM không
-đủ để căn chỉnh hiệu quả tín hiệu CF vào không gian ngữ nghĩa LLM, và cầu nối Q-Former
+đủ để căn chỉnh hiệu quả tín hiệu cộng tác vào không gian ngữ nghĩa LLM, và cầu nối Q-Former
 với cross-attention có kiểm soát là lựa chọn thay thế tự nhiên hơn.
 
 Mục~\ref{sec:kien-truc-tong-quan} mô tả kiến trúc tổng thể ba khối.
@@ -30,7 +30,7 @@ Hình~\ref{fig:kien-truc}:
     \item \textbf{Khối Phân rã ma trận (MF)} -- cung cấp tín hiệu lọc cộng tác dưới dạng
     véc-tơ nhúng cho người dùng và sản phẩm.
 
-    \item \textbf{Cầu nối Q-Former} -- nén và căn chỉnh véc-tơ CF vào không gian ngữ nghĩa
+    \item \textbf{Cầu nối Q-Former} -- nén và căn chỉnh véc-tơ cộng tác vào không gian ngữ nghĩa
     của LLM thông qua cross-attention với các véc-tơ truy vấn học được.
 
     \item \textbf{Mô hình ngôn ngữ lớn (LLM)} -- suy luận và sinh câu trả lời
@@ -50,7 +50,7 @@ huấn luyện.}
 \textbf{Đặc điểm thiết kế then chốt:} Phần lớn tham số của CoQLLM được giữ đông cứng
 (frozen) trong quá trình huấn luyện. Cụ thể, cả MF lẫn LLM đều không được cập nhật; chỉ
 Q-Former, các lớp chiếu và bộ chuyển thể LoRA~\cite{lora2021} được huấn luyện. Tín hiệu
-CF được đưa vào LLM qua một đường duy nhất -- soft token trong không gian đầu vào -- thay
+cộng tác được đưa vào LLM qua một đường duy nhất -- soft token trong không gian đầu vào -- thay
 vì can thiệp vào trọng số của LLM. Thiết kế này bảo toàn tri thức ngôn ngữ sẵn có của
 LLM, giảm chi phí huấn luyện, và cho phép phân tích rõ ràng đóng góp của cầu nối căn chỉnh.
 
@@ -63,12 +63,12 @@ $e_u, e_i \in \mathbb{R}^{d}$ sao cho tích vô hướng $e_u^\top e_i$ phản �
 thích. MF được huấn luyện theo mục tiêu xếp hạng cặp BPR~\cite{bpr2009}, sau đó được đông
 cứng.
 
-Ba loại tín hiệu CF được trích xuất để đưa vào cầu nối: (i)~nhúng người dùng $e_u$;
+Ba loại tín hiệu cộng tác được trích xuất để đưa vào cầu nối: (i)~nhúng người dùng $e_u$;
 (ii)~nhúng phim mục tiêu $e_i$; (iii)~nhúng các phim trong lịch sử tương tác của người
 dùng $\{e_{i'} : i' \in \mathcal{H}_u\}$.
 
 Việc huấn luyện MF tách rời khỏi các khối còn lại là một lựa chọn thiết kế nhằm cô lập
-chất lượng tín hiệu CF khỏi quá trình tối ưu hóa LLM, tạo điều kiện phân tích rõ ràng
+chất lượng tín hiệu cộng tác khỏi quá trình tối ưu hóa LLM, tạo điều kiện phân tích rõ ràng
 nút thắt của hệ thống. Trong phạm vi luận văn, MF được huấn luyện trên phần tập huấn
 luyện của MovieLens-1M (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghiem}).
 
@@ -83,24 +83,24 @@ Lớp chiếu tuyến tính của CoLLM~\cite{collm2023} ánh xạ $f: \mathbb{R
 này có hai hạn chế:
 
 \textbf{Hạn chế 1: Giả thiết tuyến tính.} Phép chiếu tuyến tính giả định rằng không gian
-CF và không gian ngữ nghĩa LLM liên kết qua một ánh xạ affine. Tuy nhiên, hai không gian
+cộng tác và không gian ngữ nghĩa LLM liên kết qua một ánh xạ affine. Tuy nhiên, hai không gian
 này có nguồn gốc huấn luyện hoàn toàn khác nhau -- một từ tín hiệu tương tác dạng nhị phân,
 một từ ngôn ngữ tự nhiên -- và quan hệ giữa chúng nhiều khả năng phi tuyến và phức tạp.
 
 \textbf{Hạn chế 2: Không có chọn lọc có kiểm soát.} Lớp chiếu ánh xạ toàn bộ véc-tơ
-CF qua một phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ
+cộng tác qua một phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ
 cảnh hiện tại. Trong khi đó, bài toán CTR đòi hỏi tích hợp thông tin từ nhiều nguồn
 (nhúng người dùng, nhúng phim mục tiêu, nhúng lịch sử) một cách linh hoạt theo từng mẫu.
 
 Q-Former giải quyết cả hai hạn chế trên, nhưng nguồn gốc của lợi thế cần được xác định
 chính xác. Khác với lớp chiếu tuyến tính dùng chung một ma trận cho mọi mẫu,
 cross-attention trong Q-Former thực hiện tổng hợp \textit{phụ thuộc đầu vào}
-(input-dependent): trọng số tổng hợp các véc-tơ CF thay đổi theo từng mẫu, vượt qua giả
+(input-dependent): trọng số tổng hợp các véc-tơ cộng tác thay đổi theo từng mẫu, vượt qua giả
 thiết ánh xạ affine cố định. Tuy nhiên, lợi thế chính \textit{không} nằm ở khả năng nén
-của cross-attention -- vì đầu vào CF chỉ gồm vài véc-tơ, cross-attention chủ yếu đóng vai
+của cross-attention -- vì đầu vào cộng tác chỉ gồm vài véc-tơ, cross-attention chủ yếu đóng vai
 trò tổng hợp có trọng số (chi tiết tại Mục~\ref{ssec:qformer-kien-truc}) -- mà nằm ở
 \textit{tập véc-tơ truy vấn học được phối hợp qua self-attention}: mỗi truy vấn học cách
-trích xuất một khía cạnh khác nhau của tín hiệu CF và điều phối lẫn nhau để tổng hợp biểu
+trích xuất một khía cạnh khác nhau của tín hiệu cộng tác và điều phối lẫn nhau để tổng hợp biểu
 diễn tối ưu cho tác vụ, điều mà một phép chiếu tuyến tính đơn lẻ không làm được. Đây là
 luận điểm được nhất quán xuyên suốt chương và được kiểm chứng qua ablation ở
 Mục~\ref{sec:ablation}.
@@ -118,10 +118,10 @@ Trong mỗi lớp Q-Former, các truy vấn đi qua hai loại attention:
 
 \begin{enumerate}
     \item \textit{Self-attention} giữa các truy vấn với nhau: cho phép các truy vấn điều
-    phối lẫn nhau, mỗi truy vấn đảm nhận một khía cạnh khác nhau của tín hiệu CF.
+    phối lẫn nhau, mỗi truy vấn đảm nhận một khía cạnh khác nhau của tín hiệu cộng tác.
 
-    \item \textit{Cross-attention} từ các truy vấn đến đặc trưng CF: mỗi truy vấn trọng
-    số hóa và tổng hợp thông tin từ tập véc-tơ CF đầu vào $\{e_u, e_i, e_{i'}\}$.
+    \item \textit{Cross-attention} từ các truy vấn đến đặc trưng cộng tác: mỗi truy vấn trọng
+    số hóa và tổng hợp thông tin từ tập véc-tơ cộng tác đầu vào $\{e_u, e_i, e_{i'}\}$.
 \end{enumerate}
 
 Đầu ra là khối truy vấn $\mathbf{Z} = \text{cf\_q} \in \mathbb{R}^{B \times Q \times
@@ -130,14 +130,14 @@ d_{\text{model}}}$, trong đó $B$ là kích thước lô và $Q = 8$.
 \textbf{Quan sát quan trọng về vai trò của cross-attention.} Trong BLIP-2 cho thị giác,
 đầu vào của cross-attention là một chuỗi dài các mảng ảnh (patch features) và
 cross-attention đóng vai trò nén chính: nén hàng trăm patch thành một số ít truy vấn.
-Trong CoQLLM, đầu vào của cross-attention chỉ gồm một vài véc-tơ CF (người dùng, sản phẩm
+Trong CoQLLM, đầu vào của cross-attention chỉ gồm một vài véc-tơ cộng tác (người dùng, sản phẩm
 mục tiêu, lịch sử), nên cross-attention chủ yếu thực hiện tổng hợp có trọng số; lợi thế
 của cầu nối do đó chủ yếu đến từ \textit{tập truy vấn học được và self-attention điều phối
 giữa chúng}, chứ không phải khả năng nén. Nhận định này nhất quán với quan sát thực nghiệm
 rằng việc tăng số lớp Q-Former không cải thiện đáng kể kết quả -- dung lượng không phải nút
 thắt, chất lượng căn chỉnh mới là điều quyết định.
 
-\subsection{Đưa tín hiệu CF vào LLM qua soft token}
+\subsection{Đưa tín hiệu cộng tác vào LLM qua soft token}
 \label{ssec:hai-duong}
 
 Khối truy vấn $\mathbf{Z}$ được chiếu từ không gian Q-Former sang không gian nhúng của LLM
@@ -149,7 +149,7 @@ danh sách sản phẩm lịch sử và sản phẩm mục tiêu bằng \verb|<I
 vựng gốc) được dùng thay cho \verb|<unk>| nhằm tránh va chạm với các token ngoài-từ-vựng
 hay token đệm, và một lớp chuẩn hóa (LayerNorm) tại đầu ra lớp chiếu giữ cho độ lớn (scale)
 của soft token tương thích với các véc-tơ nhúng văn bản của LLM. Nhờ đó LLM xử lý tín hiệu
-CF ngay trong không gian đầu vào, cùng chuỗi với văn bản, mà không cần can thiệp vào trọng
+cộng tác ngay trong không gian đầu vào, cùng chuỗi với văn bản, mà không cần can thiệp vào trọng
 số bên trong của LLM.
 
 Đây là điểm khác biệt so với CoRA~\cite{cora2024}: CoRA biến $\mathbf{Z}$ thành lượng thay
@@ -166,7 +166,7 @@ token, luận văn bổ sung hai đòn bẩy huấn luyện -- điều kiện h�
 
 Trong kiến trúc cơ sở, tập truy vấn $\mathbf{Q}$ cố định và dùng chung cho mọi mẫu. Cơ chế
 \textit{điều kiện hóa theo người dùng} (user-conditioned queries) dịch tập truy vấn theo
-nhúng CF của người dùng trước khi đưa vào Q-Former:
+véc-tơ cộng tác của người dùng trước khi đưa vào Q-Former:
 
 \begin{equation} \label{eq:user-cond}
 \tilde{\mathbf{Q}} = \mathbf{Q} + g_u\big( e_u \big),
@@ -192,7 +192,7 @@ Hàm mất mát mặc định của Giai đoạn 3 là entropy chéo nhị phân
 tự xếp hạng trong từng người dùng} -- đại lượng mà uAUC đo. Để bù đắp, luận văn bổ sung một
 mục tiêu bảo toàn thứ tự (\textit{align-rank loss}): một tổn thất BPR theo cặp trong phạm
 vi từng người dùng, đóng vai trò hàm thay thế (surrogate) khả vi cho uAUC, áp trực tiếp lên
-\textit{soft token CF đã căn chỉnh} (trước khi vào LLM) thông qua một đầu ra phụ
+\textit{soft token cộng tác đã căn chỉnh} (trước khi vào LLM) thông qua một đầu ra phụ
 (\texttt{align\_rank\_head}) cũng khởi tạo bằng không:
 
 \begin{equation} \label{eq:align-rank}
@@ -201,10 +201,10 @@ vi từng người dùng, đóng vai trò hàm thay thế (surrogate) khả vi c
     -\log \sigma\!\Big( \tfrac{1}{\tau}\big( s_u(i^{+}) - s_u(i^{-}) \big) \Big),
 \end{equation}
 
-trong đó $s_u(\cdot)$ là điểm xếp hạng do \texttt{align\_rank\_head} sinh từ soft token CF
+trong đó $s_u(\cdot)$ là điểm xếp hạng do \texttt{align\_rank\_head} sinh từ soft token cộng tác
 đã căn chỉnh, $\mathcal{P}_u$ là tập các cặp dương--âm của cùng người dùng $u$, $\sigma$ là
 hàm sigmoid, $\tau$ là nhiệt độ và $\lambda$ là trọng số. Việc áp mục tiêu này lên chính
-phần biểu diễn CF đã căn chỉnh (thay vì chỉ lên biên độ Yes/No của LLM) buộc bản thân cầu
+phần biểu diễn cộng tác đã căn chỉnh (thay vì chỉ lên biên độ Yes/No của LLM) buộc bản thân cầu
 nối giữ đúng thứ tự trong từng người dùng.
 
 Để mỗi lô có sẵn các cặp dương--âm của cùng một người dùng, tổn thất này yêu cầu chế độ lấy
@@ -222,13 +222,13 @@ Ngoài kiến trúc cầu nối Q-Former, CoQLLM kết hợp một số lựa ch
 văn ghi nhận các lựa chọn này một cách minh bạch, nhưng chúng không phải đóng góp chính;
 vai trò của từng lựa chọn được đánh giá qua ablation ở Mục~\ref{sec:ablation}.
 
-\subsection{Biểu diễn đa token cho tín hiệu CF}
+\subsection{Biểu diễn đa token cho tín hiệu cộng tác}
 \label{ssec:da-token}
 
-Phiên bản cơ sở nén toàn bộ tín hiệu CF thành một soft token duy nhất trước khi chèn vào
+Phiên bản cơ sở nén toàn bộ tín hiệu cộng tác thành một soft token duy nhất trước khi chèn vào
 chỉ dẫn. Biểu diễn đa token (multi-token) giữ nguyên $Q = 8$ truy vấn đầu ra của Q-Former
 dưới dạng $8$ soft token riêng biệt, cung cấp dải băng thông cao hơn để truyền thông tin
-CF vào LLM.
+cộng tác vào LLM.
 
 \subsection{Backbone LLM đã tinh chỉnh theo chỉ dẫn}
 \label{ssec:backbone-instruct}
@@ -247,7 +247,7 @@ LoRA không cải thiện kết quả: nâng hạng LoRA lên $r = 16$ trên cá
 trên tập kiểm định lại thấp hơn cấu hình $r = 8$ trên $[q,v]$. Kết quả này cho thấy dung
 lượng LoRA không phải nút thắt; nút thắt nằm ở chất lượng căn chỉnh của Q-Former. Backbone
 đã tinh chỉnh chỉ dẫn cung cấp tiên nghiệm tuân theo chỉ dẫn sẵn có, giải phóng dung lượng
-LoRA để tập trung vào việc sử dụng tín hiệu CF.
+LoRA để tập trung vào việc sử dụng tín hiệu cộng tác.
 
 \subsection{Tách lớp chiếu người dùng và sản phẩm}
 \label{ssec:tach-projector}
@@ -329,7 +329,7 @@ tái lập.
 \label{ssec:stage2}
 
 Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ: từ biểu diễn Q-Former
-của tín hiệu CF, sinh văn bản mô tả sản phẩm. Giai đoạn này dạy đầu ra của cầu nối trở
+của tín hiệu cộng tác, sinh văn bản mô tả sản phẩm. Giai đoạn này dạy đầu ra của cầu nối trở
 thành soft token mà LLM có thể diễn giải -- tức căn chỉnh không gian Q-Former với không
 gian ngữ nghĩa của LLM đông cứng.
 
@@ -339,10 +339,10 @@ gian ngữ nghĩa của LLM đông cứng.
 Giai đoạn này theo quy trình hai bước của CoLLM~\cite{collm2023}:
 
 \textbf{Bước 1}: Huấn luyện LoRA cơ sở với chỉ dẫn chỉ gồm văn bản (tên phim, thể loại,
-lịch sử dưới dạng văn bản), không có tín hiệu CF. Bước này thiết lập đường cơ sở cho
+lịch sử dưới dạng văn bản), không có tín hiệu cộng tác. Bước này thiết lập đường cơ sở cho
 khả năng dự đoán chỉ từ văn bản và ổn định hóa LLM trước khi tiếp nhận soft token.
 
-\textbf{Bước 2}: Huấn luyện mô hình đầy đủ với tín hiệu CF được bơm vào qua soft token.
+\textbf{Bước 2}: Huấn luyện mô hình đầy đủ với tín hiệu cộng tác được bơm vào qua soft token.
 Mô hình được khởi tạo từ checkpoint của Bước 1; LoRA được \textit{đông cứng}, chỉ Q-Former
 và các lớp chiếu được cập nhật -- tách bạch phần ``ngôn ngữ'' (LoRA, học ở Bước 1) khỏi
 phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước duy nhất kích hoạt
@@ -351,7 +351,7 @@ bảo toàn thứ tự (Mục~\ref{ssec:align-rank}). Nhãn giám sát là token
 tương ứng với nhãn CTR. Checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
 
 \textbf{Chi phí tính toán.} So với CoLLM, CoQLLM có chi phí huấn luyện cao hơn do kiến
-trúc Q-Former phức tạp hơn lớp chiếu tuyến tính. Vì tín hiệu CF chỉ đi qua đường soft
+trúc Q-Former phức tạp hơn lớp chiếu tuyến tính. Vì tín hiệu cộng tác chỉ đi qua đường soft
 token và không sinh trọng số theo từng mẫu, LLM được giữ nguyên hoàn toàn khi suy luận.
 Chi phí cụ thể (số tham số huấn luyện được, thời gian huấn luyện mỗi giai đoạn) được báo
 cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố chi phí tăng thêm là
@@ -362,7 +362,7 @@ cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố c
 
 Chương này đã trình bày kiến trúc ba khối của CoQLLM và lý do chọn cầu nối Q-Former thay
 lớp chiếu tuyến tính của CoLLM. Luận điểm cốt lõi là: cơ chế cross-attention với tập
-truy vấn học được cho phép căn chỉnh tín hiệu CF vào không gian ngữ nghĩa LLM có kiểm
+truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa LLM có kiểm
 soát hơn, vượt qua giới hạn của giả thiết tuyến tính. Trên nền cầu nối soft token, hai
 đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Các lựa chọn thiết kế bổ sung (đa token,

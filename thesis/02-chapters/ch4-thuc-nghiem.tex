@@ -23,7 +23,7 @@ hóa thành nhãn CTR: $\geq 4$ sao được coi là nhấp (click), còn lại 
 \textbf{Amazon-Book}~\cite{cora2024} là một tập dữ liệu thưa hơn nhiều so với MovieLens-1M,
 theo đúng phân chia dùng trong CoLLM và CoRA. Tập này có khoảng $23$ nghìn người dùng và
 $34$ nghìn sản phẩm sách, với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn hẳn -- đây
-chính là điều kiện để kiểm chứng cầu nối CF--LLM trên miền khó, nơi tín hiệu CF yếu và
+chính là điều kiện để kiểm chứng cầu nối CF--LLM trên miền khó, nơi tín hiệu cộng tác yếu và
 LLM/Q-Former có nhiều dư địa đóng góp. Nhãn CTR được nhị phân hóa tương tự. Việc bổ sung
 Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim và làm nổi
 bật vai trò của mục tiêu bảo toàn thứ tự trong từng người dùng (Mục~\ref{ssec:align-rank}).
@@ -41,10 +41,10 @@ báo cáo trên tập kiểm tra.
 
 \textbf{Baseline chính:}
 \begin{itemize}
-    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp CF vào LLM qua MLP một lớp; cùng giao
+    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP một lớp; cùng giao
     thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của cầu nối
     Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN.
-    \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân CF vào LLM -- SOTA gần nhất
+    \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân tín hiệu cộng tác vào LLM -- SOTA gần nhất
     theo quy trình này, có mặt trên cả hai tập dữ liệu.
 \end{itemize}
 
@@ -53,7 +53,7 @@ báo cáo trên tập kiểm tra.
     \item \textbf{CoRA}~\cite{cora2024}: đại diện hướng \textit{sinh trọng số} (không soft
     token). Trên Amazon-Book, biến thể CoRA-MF được đưa vào bảng so sánh như một điểm tham
     chiếu cho hướng thiết kế khác với CoQLLM (Mục~\ref{ssec:cora-rel}).
-    \item \textbf{MF}~\cite{bpr2009} và \textbf{DIN}: các mô hình CF thuần (không LLM),
+    \item \textbf{MF}~\cite{bpr2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
     làm mốc sàn để đo phần đóng góp thêm của cầu nối CF--LLM.
     \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone
     Qwen2-7B-Base; \textit{lưu ý: CoQLLM dùng Vicuna-7B-v1.5, khác họ backbone, nên so sánh
@@ -131,9 +131,9 @@ CoQLLM chọn checkpoint theo uAUC.}
 \hline
 \textbf{Phương pháp} & \textbf{AUC} & \textbf{uAUC} \\
 \hline
-MF (chỉ CF)~\cite{bpr2009} & 0{,}6482 & 0{,}6361 \\
+MF (chỉ cộng tác)~\cite{bpr2009} & 0{,}6482 & 0{,}6361 \\
 \hline
-DIN (chỉ CF) & 0{,}7166 & 0{,}6459 \\
+DIN (chỉ cộng tác) & 0{,}7166 & 0{,}6459 \\
 \hline
 CoLLM-MF~\cite{collm2023} & 0{,}7295 & 0{,}6875 \\
 \hline
@@ -204,7 +204,7 @@ tranh/vượt baseline dưới quy trình có kiểm soát'' thay vì đuổi th
 
 uAUC tính AUC trong phạm vi từng người dùng rồi lấy trung bình, nên bất biến với các
 phép biến đổi đơn điệu riêng theo người dùng. Điều này dẫn đến một đặc điểm quan trọng:
-tín hiệu CF nếu chỉ giúp phân biệt giữa các người dùng (thay đổi \textit{mức nền} điểm
+tín hiệu cộng tác nếu chỉ giúp phân biệt giữa các người dùng (thay đổi \textit{mức nền} điểm
 dự đoán của mỗi người dùng) thì cải thiện AUC nhưng không cải thiện uAUC. Mô hình cần
 học thứ tự xếp hạng \textit{trong} từng người dùng -- cặp sản phẩm nào người dùng này
 thích hơn -- thay vì chỉ phân biệt người dùng với nhau.
@@ -215,7 +215,7 @@ hẳn nhóm \textit{nguội} (cold): trên Amazon-Book, uAUC warm đạt $0{,}62
 CoRA-MF ($0{,}6262$) -- trong khi uAUC cold chỉ $0{,}5258$, tức xấp xỉ mức ngẫu nhiên. Nhóm
 cold kéo trung bình toàn tập xuống $0{,}6062$. Điều này cho thấy trần của uAUC không nằm ở
 cầu nối Q-Former (nếu Q-Former yếu thì AUC cũng phải sập, nhưng AUC vẫn cao $\approx 0{,}81$)
-mà ở \textit{chất lượng nhúng CF của MF cho người dùng/sản phẩm nguội}. Đây là căn cứ để
+mà ở \textit{chất lượng véc-tơ cộng tác của MF cho người dùng/sản phẩm nguội}. Đây là căn cứ để
 định hướng cải thiện uAUC về phía MF teacher (Mục~\ref{sec:huong-phat-trien}) thay vì tinh
 chỉnh thêm kiến trúc cầu nối.
 
@@ -274,11 +274,11 @@ vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số
 \label{ssec:cosine-sim}
 
 Để kiểm chứng rằng cầu nối Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
-gian CF và không gian LLM, luận văn đo cosine similarity giữa:
-(i)~véc-tơ CF thô (đầu ra MF) và véc-tơ nhúng token LLM tương ứng trước khi huấn luyện
+gian cộng tác và không gian LLM, luận văn đo cosine similarity giữa:
+(i)~véc-tơ cộng tác thô (đầu ra MF) và véc-tơ nhúng token LLM tương ứng trước khi huấn luyện
 cầu nối; (ii)~soft token đầu ra Q-Former và véc-tơ nhúng token LLM sau khi huấn luyện.
 Kết quả kỳ vọng: cosine similarity tăng sau huấn luyện, cho thấy Q-Former thực sự căn
-chỉnh không gian CF về phía không gian ngữ nghĩa LLM.
+chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 
 \subsection{Phân tích theo nhóm người dùng (warm/cold)}
 \label{ssec:user-group}
@@ -316,7 +316,7 @@ Amazon-Book & cold & $630$ & 0{,}7928 & 0{,}5258 \\
 Kết quả nhất quán trên cả hai tập dữ liệu: nhóm warm đạt uAUC cao hơn hẳn nhóm cold
 ($0{,}7254$ vs $0{,}5969$ trên MovieLens-1M; $0{,}6238$ vs $0{,}5258$ trên Amazon-Book). Trên
 Amazon-Book, uAUC nhóm warm ($0{,}6238$) gần chạm CoRA-MF ($0{,}6262$), trong khi nhóm cold
-xấp xỉ mức ngẫu nhiên. Điều này khẳng định uAUC bị chặn trên bởi \textit{chất lượng nhúng CF
+xấp xỉ mức ngẫu nhiên. Điều này khẳng định uAUC bị chặn trên bởi \textit{chất lượng véc-tơ cộng tác
 cho người dùng/sản phẩm nguội} chứ không phải bởi cầu nối: ở nhóm warm -- nơi MF cung cấp tín
 hiệu tốt -- CoQLLM khai thác hiệu quả và tiệm cận baseline mạnh nhất. Nhận định này khớp với
 phân tích nghịch lý AUC/uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra đòn bẩy cải thiện tiếp theo
@@ -336,7 +336,7 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \label{ssec:diem-manh-han-che}
 
 So với lớp chiếu tuyến tính của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
-ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu CF chỉ đi qua đường soft token, LLM
+ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM
 được giữ nguyên khi suy luận -- không có chi phí sinh trọng số theo từng mẫu như hướng sinh
 trọng số của CoRA. Đánh đổi là chi phí huấn luyện cầu nối cao hơn lớp MLP đơn giản, cần cân
 nhắc tùy điều kiện triển khai.

@@ -6,9 +6,9 @@ Chương này xây dựng nền tảng lý thuyết cho luận văn qua bốn nh
 nhau. \textit{Nhánh đầu tiên} (Mục~\ref{sec:cf-truyen-thong}) trình bày lọc cộng tác
 truyền thống và các hạn chế cố hữu của nó, dẫn đến nhu cầu kết hợp LLM. \textit{Nhánh
 thứ hai} (Mục~\ref{sec:llm-rec}) phân tích hai hướng khai thác LLM cho hệ thống tư vấn
-và chỉ ra rào cản về độ dài ngữ cảnh -- yếu tố buộc tín hiệu CF phải được biểu diễn
+và chỉ ra rào cản về độ dài ngữ cảnh -- yếu tố buộc tín hiệu cộng tác phải được biểu diễn
 dưới dạng véc-tơ nén thay vì văn bản. \textit{Nhánh thứ ba}
-(Mục~\ref{sec:cach-noi-cf-llm}) phân tích năm cách tích hợp CF vào LLM qua không gian
+(Mục~\ref{sec:cach-noi-cf-llm}) phân tích năm cách tích hợp tín hiệu cộng tác vào LLM qua không gian
 véc-tơ, làm nổi bật điểm mạnh và hạn chế của từng hướng. \textit{Nhánh thứ tư}
 (Mục~\ref{sec:nen-tang-qformer}) trình bày nền tảng kiến trúc Q-Former từ BLIP-2 -- cơ sở
 lý thuyết cho phương pháp đề xuất ở Chương~\ref{Chapter3}.
@@ -24,7 +24,7 @@ dựa trên ma trận tương tác người dùng--sản phẩm~\cite{zhang2019d
 \subsection{Phân rã ma trận}
 \label{ssec:mf}
 
-Phân rã ma trận (matrix factorization -- MF)~\cite{mf2009} là phương pháp CF nền tảng,
+Phân rã ma trận (matrix factorization -- MF)~\cite{mf2009} là phương pháp lọc cộng tác nền tảng,
 đạt được thành công lớn trong cuộc thi Netflix Prize. MF học ánh xạ mỗi người dùng $u$
 và sản phẩm $i$ thành các véc-tơ nhúng ẩn $e_u, e_i \in \mathbb{R}^d$ sao cho tích vô
 hướng $e_u^\top e_i$ xấp xỉ mức độ tương thích. Hàm mục tiêu phổ biến là hồi quy bình
@@ -50,18 +50,18 @@ tin cấu trúc bậc cao của đồ thị tương tác.
 \subsection{Hạn chế của lọc cộng tác thuần túy}
 \label{ssec:han-che-cf}
 
-Mặc dù đạt hiệu quả tốt, các phương pháp CF truyền thống tồn tại ba hạn chế cơ bản:
+Mặc dù đạt hiệu quả tốt, các phương pháp lọc cộng tác truyền thống tồn tại ba hạn chế cơ bản:
 
 \textbf{Vấn đề thưa dữ liệu.} Ma trận tương tác người dùng--sản phẩm trong thực
 tế cực kỳ thưa: tỉ lệ quan sát trên tổng số cặp thường dưới 1\%. Dữ liệu thưa dẫn đến
 ước lượng nhúng kém chất lượng cho người dùng và sản phẩm ít tương tác.
 
 \textbf{Vấn đề khởi động nguội.} Người dùng mới và sản phẩm mới không có lịch sử tương
-tác, nên các phương pháp CF không thể xây dựng biểu diễn nhúng cho họ. Đây là hạn chế
+tác, nên các phương pháp lọc cộng tác không thể xây dựng biểu diễn nhúng cho họ. Đây là hạn chế
 nghiêm trọng trong hệ thống thực tế, nơi người dùng mới và sản phẩm mới liên tục xuất
 hiện.
 
-\textbf{Thiếu hiểu biết ngữ nghĩa.} Biểu diễn CF học thuần từ tín hiệu tương tác nhị
+\textbf{Thiếu hiểu biết ngữ nghĩa.} Biểu diễn cộng tác học thuần từ tín hiệu tương tác nhị
 phân, không nắm được nội dung văn bản mô tả sản phẩm hay sở thích người dùng. Điều này
 hạn chế khả năng gợi ý cho sản phẩm mới (zero interaction) và khả năng giải thích gợi ý
 bằng ngôn ngữ tự nhiên.
@@ -84,7 +84,7 @@ Có thể phân loại các phương pháp kết hợp LLM và hệ thống tư 
 \textbf{LLM-enhanced}: dùng LLM như bộ mã hóa để tạo biểu diễn ngữ nghĩa cho người
 dùng và sản phẩm, sau đó tích hợp vào pipeline gợi ý truyền thống. Trong hướng này, LLM
 chủ yếu đóng vai trò trích xuất đặc trưng ngôn ngữ; quyết định gợi ý vẫn do các mô hình
-CF hoặc xếp hạng đảm nhận.
+lọc cộng tác hoặc xếp hạng đảm nhận.
 
 \textbf{LLMs-as-RS}: đặt bài toán gợi ý trực tiếp như một tác vụ sinh ngôn ngữ, trong
 đó LLM vừa hiểu ngữ cảnh vừa đưa ra gợi ý. P5~\cite{p52022} là một trong những công
@@ -110,39 +110,39 @@ lượng tính toán rất lớn nếu dùng mô hình ngữ cảnh dài.
 
 Đây là rào cản cơ bản đã được nhận diện trong CoLLM~\cite{collm2023}: dù LLM có khả
 năng hiểu ngữ nghĩa, ta không thể đơn giản đưa toàn bộ lịch sử tương tác vào chỉ dẫn
-dưới dạng văn bản. Giải pháp là biểu diễn tín hiệu hành vi dưới dạng \textit{véc-tơ CF
+dưới dạng văn bản. Giải pháp là biểu diễn tín hiệu hành vi dưới dạng \textit{véc-tơ cộng tác
 nén} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này vào LLM như soft token.
-Rào cản này đặt ra vấn đề trung tâm: làm thế nào để \textit{căn chỉnh} véc-tơ CF vào
+Rào cản này đặt ra vấn đề trung tâm: làm thế nào để \textit{căn chỉnh} véc-tơ cộng tác vào
 không gian ngữ nghĩa LLM một cách hiệu quả?
 
-\section{Các phương pháp tích hợp CF vào LLM qua không gian véc-tơ}
+\section{Các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ}
 \label{sec:cach-noi-cf-llm}
 
-Nhiều công trình đã đề xuất các cơ chế khác nhau để đưa véc-tơ CF vào LLM. Mục này phân
+Nhiều công trình đã đề xuất các cơ chế khác nhau để đưa véc-tơ cộng tác vào LLM. Mục này phân
 tích năm hướng chính và điểm phản biện của từng hướng.
 
 \subsection{Chiếu tuyến tính: CoLLM}
 \label{ssec:collm}
 
 CoLLM~\cite{collm2023} là baseline nền tảng của luận văn này. CoLLM dùng một lớp chiếu
-tuyến tính (lớp MLP một lớp) để ánh xạ véc-tơ CF từ không gian MF sang không gian nhúng
+tuyến tính (lớp MLP một lớp) để ánh xạ véc-tơ cộng tác từ không gian MF sang không gian nhúng
 của LLM, tạo thành soft token được chèn vào chỉ dẫn. LLM (Llama-2~\cite{llama2}) sau đó
 dự đoán CTR dưới dạng trả lời ``Yes'' hoặc ``No''. Quy trình huấn luyện của
-CoLLM gồm hai bước: bước đầu tiên huấn luyện LoRA cơ sở chỉ với văn bản (không CF), bước
-thứ hai huấn luyện mô hình đầy đủ với soft token CF được bơm vào.
+CoLLM gồm hai bước: bước đầu tiên huấn luyện LoRA cơ sở chỉ với văn bản (không dùng tín hiệu cộng tác), bước
+thứ hai huấn luyện mô hình đầy đủ với soft token cộng tác được bơm vào.
 
 Điểm mạnh của CoLLM là sự đơn giản và hiệu quả như một baseline mạnh. Tuy nhiên, lớp
 chiếu tuyến tính có hai hạn chế cơ bản: (i)~phép biến đổi tuyến tính không thể nắm được
-các quan hệ phi tuyến phức tạp giữa không gian CF và không gian ngữ nghĩa LLM; và
-(ii)~không có cơ chế chọn lọc có kiểm soát -- toàn bộ véc-tơ CF được ánh xạ qua một
+các quan hệ phi tuyến phức tạp giữa không gian cộng tác và không gian ngữ nghĩa LLM; và
+(ii)~không có cơ chế chọn lọc có kiểm soát -- toàn bộ véc-tơ cộng tác được ánh xạ qua một
 phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ cảnh hiện tại.
 
 \subsection{Học tương phản: SellaRec}
 \label{ssec:sellarec}
 
-SellaRec~\cite{sellarec2024} căn chỉnh biểu diễn CF và biểu diễn ngôn ngữ thông qua học
+SellaRec~\cite{sellarec2024} căn chỉnh biểu diễn cộng tác và biểu diễn ngôn ngữ thông qua học
 tương phản (contrastive learning) với mục tiêu InfoNCE: kéo gần biểu diễn của cùng sản
-phẩm trong không gian CF và không gian ngôn ngữ, đồng thời đẩy xa các sản phẩm khác nhau.
+phẩm trong không gian cộng tác và không gian ngôn ngữ, đồng thời đẩy xa các sản phẩm khác nhau.
 Cách tiếp cận này cung cấp một tín hiệu huấn luyện toàn cục mạnh hơn so với chiếu trực
 tiếp.
 
@@ -152,7 +152,7 @@ MovieLens-1M -- cùng độ đo và tập dữ liệu với luận văn này. Đ
 mà đặc thù cho \textit{cầu nối Q-Former}: SellaRec lấp khoảng trống bằng cơ chế học tương
 phản, trong khi hướng Q-Former (ILM) vẫn chưa được kiểm chứng dưới quy trình này. Hai cơ
 chế khác nhau về bản chất -- học tương phản căn chỉnh hai không gian qua hàm mất mát toàn
-cục, còn Q-Former chọn lọc và tổng hợp tín hiệu CF qua tập truy vấn học được -- nên
+cục, còn Q-Former chọn lọc và tổng hợp tín hiệu cộng tác qua tập truy vấn học được -- nên
 CoQLLM và SellaRec bổ sung cho nhau hơn là trùng lặp.
 
 Tuy nhiên, SellaRec dùng Qwen2-7B-Base~\cite{qwen2} làm backbone LLM. Luận văn này dùng
@@ -165,32 +165,32 @@ quả quan sát được.
 \subsection{Mã hóa dạng văn bản: BinLLM}
 \label{ssec:binllm}
 
-BinLLM~\cite{binllm2024} đề xuất mã hóa véc-tơ CF thành chuỗi ký tự nhị phân, cho phép
-đưa tín hiệu CF vào LLM dưới dạng văn bản thông thường mà không cần soft token. Cách
+BinLLM~\cite{binllm2024} đề xuất mã hóa véc-tơ cộng tác thành chuỗi ký tự nhị phân, cho phép
+đưa tín hiệu cộng tác vào LLM dưới dạng văn bản thông thường mà không cần soft token. Cách
 tiếp cận này có ưu điểm về tính đơn giản trong triển khai và không yêu cầu thay đổi kiến
 trúc LLM.
 
 Hạn chế của BinLLM nằm ở bước rời rạc hóa: mã hóa nhị phân không thể lưu giữ đầy đủ
-thông tin từ véc-tơ CF liên tục, dẫn đến mất mát thông tin không thể khôi phục. Ngoài
+thông tin từ véc-tơ cộng tác liên tục, dẫn đến mất mát thông tin không thể khôi phục. Ngoài
 ra, chuỗi nhị phân không mang ý nghĩa ngữ nghĩa trong từ vựng LLM, nên LLM phải học cách
 diễn giải cú pháp nhị phân -- một bài toán học bổ sung không tầm thường.
 
 \subsection{Hiệu chỉnh trọng số LLM: CoRA}
 \label{ssec:cora-rel}
 
-CoRA~\cite{cora2024} đề xuất một cơ chế khác biệt: thay vì đưa CF vào không gian đầu
-vào của LLM như soft token, CoRA biến đổi véc-tơ CF thành một lượng thay đổi trọng số
+CoRA~\cite{cora2024} đề xuất một cơ chế khác biệt: thay vì đưa tín hiệu cộng tác vào không gian đầu
+vào của LLM như soft token, CoRA biến đổi véc-tơ cộng tác thành một lượng thay đổi trọng số
 hạng thấp, phụ thuộc vào mẫu (sample-specific), cộng trực tiếp vào các lớp attention của
 LLM. Theo đó, mỗi mẫu (cặp người dùng--sản phẩm) có một tập trọng số điều chỉnh riêng,
 cho phép LLM cá nhân hóa tính toán ở mức độ sâu hơn.
 
-Tuy nhiên, CoRA bỏ hoàn toàn cơ chế soft token -- CF chỉ được đưa vào qua đường trọng số.
+Tuy nhiên, CoRA bỏ hoàn toàn cơ chế soft token -- tín hiệu cộng tác chỉ được đưa vào qua đường trọng số.
 Điều này có nghĩa là CoRA không tận dụng được khả năng căn chỉnh ngữ nghĩa mà soft token
 trong không gian đầu vào cung cấp. CoRA vì thế đại diện cho một \textit{hướng thiết kế
-khác} với luận văn: can thiệp vào trọng số attention của LLM thay vì căn chỉnh tín hiệu CF
+khác} với luận văn: can thiệp vào trọng số attention của LLM thay vì căn chỉnh tín hiệu cộng tác
 trong không gian đầu vào.
 
-CoQLLM đi theo hướng soft token: tín hiệu CF được căn chỉnh qua cầu nối Q-Former rồi chèn
+CoQLLM đi theo hướng soft token: tín hiệu cộng tác được căn chỉnh qua cầu nối Q-Former rồi chèn
 vào chỉ dẫn dưới dạng soft token, giữ LLM hoàn toàn đông cứng và không sinh trọng số theo
 từng mẫu (chi tiết tại Chương~\ref{Chapter3}). Luận văn không hiện thực cơ chế sinh trọng
 số của CoRA; thay vào đó, \textit{mô hình} CoRA nguyên bản được dùng như một baseline so
@@ -201,9 +201,9 @@ sánh trong thực nghiệm trên Amazon-Book (Chương~\ref{Chapter4}), đặt 
 \label{ssec:ilm}
 
 ILM~\cite{ilm2024} là công trình đầu tiên áp dụng Q-Former như cầu nối tích hợp tín hiệu
-CF vào LLM cho bài toán gợi ý. Q-Former sử dụng một tập véc-tơ truy vấn học được cùng
-cơ chế cross-attention để trích xuất thông tin từ véc-tơ CF, thay vì chiếu trực tiếp.
-Cơ chế này có khả năng học cách lọc và tổng hợp tín hiệu CF theo cách phù hợp với không
+cộng tác vào LLM cho bài toán gợi ý. Q-Former sử dụng một tập véc-tơ truy vấn học được cùng
+cơ chế cross-attention để trích xuất thông tin từ véc-tơ cộng tác, thay vì chiếu trực tiếp.
+Cơ chế này có khả năng học cách lọc và tổng hợp tín hiệu cộng tác theo cách phù hợp với không
 gian ngữ nghĩa LLM.
 
 Tuy nhiên, ILM chưa đánh giá dưới quy trình CTR với AUC và uAUC như CoLLM và các công
@@ -213,11 +213,11 @@ chiếu tuyến tính.
 \subsection{Tổng hợp so sánh}
 \label{ssec:tong-hop-so-sanh}
 
-Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp tích hợp CF vào LLM
+Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp tích hợp tín hiệu cộng tác vào LLM
 được phân tích ở trên.
 
 \begin{table}[ht]
-\caption{So sánh các phương pháp tích hợp CF vào LLM qua không gian véc-tơ}
+\caption{So sánh các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ}
 \label{tab:so-sanh-phuong-phap}
 \begin{center}
 \begin{tabular}{|L{2cm}|L{3cm}|L{3.5cm}|L{3.5cm}|}
@@ -263,7 +263,7 @@ Q-Former, các truy vấn đi qua hai loại attention:
     \item \textit{Self-attention} giữa các truy vấn với nhau (và với token ngôn ngữ nếu
     có): cho phép các truy vấn trao đổi thông tin và điều phối lẫn nhau.
 
-    \item \textit{Cross-attention} từ các truy vấn đến đặc trưng đầu vào (ảnh hoặc CF):
+    \item \textit{Cross-attention} từ các truy vấn đến đặc trưng đầu vào (ảnh hoặc tín hiệu cộng tác):
     cho phép mỗi truy vấn thu nhận thông tin từ nguồn đầu vào một cách có chọn lọc.
 \end{enumerate}
 
@@ -279,7 +279,7 @@ có thể hiểu. Thiết kế này cho phép BLIP-2 đạt hiệu quả cao tr�
 ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa ảnh và LLM.
 
 Ý nghĩa cho bài toán gợi ý: Q-Former có thể được thích nghi để thay thế bộ mã hóa ảnh
-bằng bộ mã hóa CF (phân rã ma trận), và căn chỉnh CF vào không gian LLM thông
+bằng bộ mã hóa cộng tác (phân rã ma trận), và căn chỉnh tín hiệu cộng tác vào không gian LLM thông
 qua cơ chế cross-attention có kiểm soát.
 
 \subsection{Kỹ thuật ổn định huấn luyện từ Flamingo}
@@ -303,9 +303,9 @@ Mục~\ref{sec:qformer}).
 Nhìn lại bốn nhánh phân tích, có thể rút ra câu kết luận sau:
 
 \begin{quote}
-\textit{Trong các phương pháp tích hợp tín hiệu CF vào LLM qua không gian véc-tơ,
+\textit{Trong các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ,
 Q-Former nổi lên như cầu nối hứa hẹn nhất: cơ chế cross-attention với tập truy vấn học
-được cho phép chọn lọc đặc trưng CF có kiểm soát, thay vì nén thô qua lớp chiếu
+được cho phép chọn lọc đặc trưng cộng tác có kiểm soát, thay vì nén thô qua lớp chiếu
 tuyến tính của CoLLM. Tuy nhiên, hướng này chưa được kiểm chứng dưới quy trình AUC/uAUC
 của dòng CoLLM, nên xứng đáng được nghiên cứu sâu hơn.}
 \end{quote}

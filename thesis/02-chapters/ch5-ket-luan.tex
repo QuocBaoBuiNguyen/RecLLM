@@ -6,12 +6,12 @@
 \label{sec:tom-tat-dong-gop}
 
 Luận văn đặt ra câu hỏi: liệu cầu nối Q-Former -- với cơ chế cross-attention có kiểm
-soát -- có thể căn chỉnh tín hiệu CF vào không gian ngữ nghĩa của LLM hiệu quả
+soát -- có thể căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM hiệu quả
 hơn lớp chiếu tuyến tính của CoLLM hay không? Để trả lời, luận văn thiết kế, hiện thực và đánh
 giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục~\ref{sec:dong-gop}:
 
 \textbf{Đóng góp 1: Cầu nối Q-Former được thích nghi và tăng cường cho bài toán gợi ý.}
-CoQLLM thay thế lớp MLP một lớp của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu CF
+CoQLLM thay thế lớp MLP một lớp của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu cộng tác
 (nhúng người dùng, sản phẩm mục tiêu, lịch sử) thay thế đặc trưng ảnh làm đầu vào
 cross-attention và được đưa vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai
 đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
@@ -49,7 +49,7 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
 
     \item \textbf{Trần uAUC nằm ở MF teacher, không phải cầu nối.} Phân rã warm/cold cho
     thấy uAUC nhóm warm cao hơn hẳn nhóm cold trên cả hai tập dữ liệu (ví dụ Amazon-Book:
-    $0{,}6238$ vs $0{,}5258$), cho thấy đòn bẩy cải thiện tiếp theo nằm ở chất lượng nhúng CF
+    $0{,}6238$ vs $0{,}5258$), cho thấy đòn bẩy cải thiện tiếp theo nằm ở chất lượng véc-tơ cộng tác
     cho người dùng/sản phẩm nguội (cold).
 \end{itemize}
 
@@ -96,7 +96,7 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
     truy vấn học được) để cô lập đóng góp của cấu trúc Q-Former khỏi phần phi tuyến +
     attention đơn thuần.
     \item Phân tích attention map của Q-Former để hiểu truy vấn nào học cách trích xuất
-    thông tin gì từ tín hiệu CF.
+    thông tin gì từ tín hiệu cộng tác.
 \end{itemize}
 
 \textbf{Cải thiện uAUC:}
@@ -113,7 +113,7 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
     \item Bổ sung hàng ablation attention-MLP và các ablation thành phần còn để ngỏ dưới
     cùng backbone Vicuna để cô lập đầy đủ đóng góp của cấu trúc Q-Former.
     \item Khảo sát hướng sinh trọng số kiểu CoRA như một đường \textit{bổ sung} cho soft
-    token (chưa hiện thực trong luận văn này) để so sánh trực tiếp hai cơ chế đưa CF vào LLM.
+    token (chưa hiện thực trong luận văn này) để so sánh trực tiếp hai cơ chế đưa tín hiệu cộng tác vào LLM.
     \item Khảo sát các backbone LLM khác (Llama-3, Mistral) để kiểm chứng tính tổng
     quát của cầu nối Q-Former.
 \end{itemize}
