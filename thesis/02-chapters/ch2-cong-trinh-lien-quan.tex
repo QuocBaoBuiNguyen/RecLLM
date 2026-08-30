@@ -7,7 +7,7 @@ nhau. \textit{Nhánh đầu tiên} (Mục~\ref{sec:cf-truyen-thong}) trình bày
 truyền thống và các hạn chế cố hữu của nó, dẫn đến nhu cầu kết hợp LLM. \textit{Nhánh
 thứ hai} (Mục~\ref{sec:llm-rec}) phân tích hai hướng khai thác LLM cho hệ thống tư vấn
 và chỉ ra rào cản về độ dài ngữ cảnh -- yếu tố buộc tín hiệu CF phải được biểu diễn
-dưới dạng véc-tơ gọn (compact) thay vì văn bản. \textit{Nhánh thứ ba}
+dưới dạng véc-tơ cô đọng thay vì văn bản. \textit{Nhánh thứ ba}
 (Mục~\ref{sec:cach-noi-cf-llm}) phân tích năm cách tích hợp CF vào LLM qua không gian
 véc-tơ, làm nổi bật điểm mạnh và hạn chế của từng hướng. \textit{Nhánh thứ tư}
 (Mục~\ref{sec:nen-tang-qformer}) trình bày nền tảng kiến trúc Q-Former từ BLIP-2 -- cơ sở
@@ -52,7 +52,7 @@ tin cấu trúc bậc cao của đồ thị tương tác.
 
 Mặc dù đạt hiệu quả tốt, các phương pháp CF truyền thống tồn tại ba hạn chế cơ bản:
 
-\textbf{Vấn đề thưa thớt dữ liệu.} Ma trận tương tác người dùng--sản phẩm trong thực
+\textbf{Vấn đề thưa dữ liệu.} Ma trận tương tác người dùng--sản phẩm trong thực
 tế cực kỳ thưa: tỉ lệ quan sát trên tổng số cặp thường dưới 1\%. Dữ liệu thưa dẫn đến
 ước lượng nhúng kém chất lượng cho người dùng và sản phẩm ít tương tác.
 
@@ -111,7 +111,7 @@ lượng tính toán rất lớn nếu dùng mô hình ngữ cảnh dài.
 Đây là rào cản cơ bản đã được nhận diện trong CoLLM~\cite{collm2023}: dù LLM có khả
 năng hiểu ngữ nghĩa, ta không thể đơn giản đưa toàn bộ lịch sử tương tác vào chỉ dẫn
 dưới dạng văn bản. Giải pháp là biểu diễn tín hiệu hành vi dưới dạng \textit{véc-tơ CF
-gọn} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này vào LLM như soft token.
+cô đọng} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này vào LLM như soft token.
 Rào cản này đặt ra vấn đề trung tâm: làm thế nào để \textit{căn chỉnh} véc-tơ CF vào
 không gian ngữ nghĩa LLM một cách hiệu quả?
 
@@ -134,7 +134,7 @@ thứ hai huấn luyện mô hình đầy đủ với soft token CF được bơ
 Điểm mạnh của CoLLM là sự đơn giản và hiệu quả như một baseline mạnh. Tuy nhiên, lớp
 chiếu tuyến tính có hai hạn chế cơ bản: (i)~phép biến đổi tuyến tính không thể nắm được
 các quan hệ phi tuyến phức tạp giữa không gian CF và không gian ngữ nghĩa LLM; và
-(ii)~không có cơ chế trích chọn có kiểm soát -- toàn bộ véc-tơ CF được ánh xạ qua một
+(ii)~không có cơ chế chọn lọc có kiểm soát -- toàn bộ véc-tơ CF được ánh xạ qua một
 phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ cảnh hiện tại.
 
 \subsection{Học tương phản: SellaRec}
@@ -152,7 +152,7 @@ MovieLens-1M -- cùng độ đo và tập dữ liệu với luận văn này. Đ
 mà đặc thù cho \textit{cầu nối Q-Former}: SellaRec lấp khoảng trống bằng cơ chế học tương
 phản, trong khi hướng Q-Former (ILM) vẫn chưa được kiểm chứng dưới quy trình này. Hai cơ
 chế khác nhau về bản chất -- học tương phản căn chỉnh hai không gian qua hàm mất mát toàn
-cục, còn Q-Former trích chọn và tổng hợp tín hiệu CF qua tập truy vấn học được -- nên
+cục, còn Q-Former chọn lọc và tổng hợp tín hiệu CF qua tập truy vấn học được -- nên
 CoQLLM và SellaRec bổ sung cho nhau hơn là trùng lặp.
 
 Tuy nhiên, SellaRec dùng Qwen2-7B-Base~\cite{qwen2} làm backbone LLM. Luận văn này dùng
@@ -224,7 +224,7 @@ Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp t
 \hline
 \textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế} \\
 \hline
-CoLLM \cite{collm2023} & MLP tuyến tính một lớp & Đơn giản; baseline mạnh & Tuyến tính; không có trích chọn có kiểm soát \\
+CoLLM \cite{collm2023} & MLP tuyến tính một lớp & Đơn giản; baseline mạnh & Tuyến tính; không có chọn lọc có kiểm soát \\
 \hline
 SellaRec \cite{sellarec2024} & Học tương phản & Tín hiệu huấn luyện toàn cục & Backbone khác (Qwen); so sánh hạn chế \\
 \hline
@@ -239,7 +239,7 @@ ILM \cite{ilm2024} & Q-Former (cross-attention) & Trích chọn có kiểm soát
 \end{table}
 
 Phân tích trên dẫn đến kết luận: cầu nối Q-Former hứa hẹn nhất về cơ chế căn chỉnh --
-trích chọn có kiểm soát qua cross-attention, không phụ thuộc vào giả thiết tuyến tính --
+chọn lọc có kiểm soát qua cross-attention, không phụ thuộc vào giả thiết tuyến tính --
 nhưng còn thiếu kiểm chứng dưới quy trình AUC/uAUC và chưa được tăng cường bằng các kỹ
 thuật hiện đại. Đây là khoảng trống mà luận văn này nhắm đến.
 
@@ -268,7 +268,7 @@ Q-Former, các truy vấn đi qua hai loại attention:
 \end{enumerate}
 
 Đầu ra là một khối truy vấn $\mathbf{Z} \in \mathbb{R}^{N_q \times d}$ -- một tập hợp
-gọn các véc-tơ đã được ``cất giữ'' thông tin từ đầu vào theo cách tối ưu cho ngữ
+cô đọng các véc-tơ đã được ``cất giữ'' thông tin từ đầu vào theo cách tối ưu cho ngữ
 cảnh hiện tại. $\mathbf{Z}$ sau đó được chiếu vào không gian nhúng của LLM và nối với
 prompt văn bản.
 
@@ -305,7 +305,7 @@ Nhìn lại bốn nhánh phân tích, có thể rút ra câu kết luận sau:
 \begin{quote}
 \textit{Trong các phương pháp tích hợp tín hiệu CF vào LLM qua không gian véc-tơ,
 Q-Former nổi lên như cầu nối hứa hẹn nhất: cơ chế cross-attention với tập truy vấn học
-được cho phép trích chọn đặc trưng CF có kiểm soát, thay vì nén thô qua lớp chiếu
+được cho phép chọn lọc đặc trưng CF có kiểm soát, thay vì nén thô qua lớp chiếu
 tuyến tính của CoLLM. Tuy nhiên, hướng này chưa được kiểm chứng dưới quy trình AUC/uAUC
 của dòng CoLLM, nên xứng đáng được nghiên cứu sâu hơn.}
 \end{quote}

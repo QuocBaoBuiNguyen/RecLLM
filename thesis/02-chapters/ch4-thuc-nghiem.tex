@@ -335,7 +335,7 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \subsection{Điểm mạnh và hạn chế của cầu nối Q-Former}
 \label{ssec:diem-manh-han-che}
 
-So với lớp chiếu tuyến tính của CoLLM, cầu nối Q-Former có cơ chế trích chọn đặc trưng rõ
+So với lớp chiếu tuyến tính của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
 ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu CF chỉ đi qua đường soft token, LLM
 được giữ nguyên khi suy luận -- không có chi phí sinh trọng số theo từng mẫu như hướng sinh
 trọng số của CoRA. Đánh đổi là chi phí huấn luyện cầu nối cao hơn lớp MLP đơn giản, cần cân

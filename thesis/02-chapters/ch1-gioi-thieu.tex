@@ -17,12 +17,12 @@ thống tư vấn hiện đại. Trong đó, phân rã ma trận (matrix factori
 gian đặc trưng thấp chiều, sao cho tích vô hướng giữa hai véc-tơ phản ánh mức độ tương
 thích. Phân rã ma trận cùng các biến thể như LightGCN~\cite{lightgcn2020} -- khai thác
 cấu trúc đồ thị tương tác -- đã đạt được hiệu quả đáng kể trên nhiều bộ dữ liệu chuẩn.
-Tuy vậy, nhóm phương pháp này tồn tại ba hạn chế cố hữu: (i)~\textit{ma trận thưa thớt}
+Tuy vậy, nhóm phương pháp này tồn tại ba hạn chế cố hữu: (i)~\textit{ma trận thưa}
 (data sparsity) -- hầu hết các cặp người dùng--sản phẩm chưa có tương tác, khiến không
 gian huấn luyện cực kỳ thưa; (ii)~\textit{vấn đề khởi động nguội} (cold-start) -- người
 dùng mới hoặc sản phẩm mới không có lịch sử tương tác, nên hệ thống không thể tạo biểu
 diễn nhúng có chất lượng; (iii)~\textit{thiếu hiểu biết ngữ nghĩa} -- các biểu diễn CF
-được học hoàn toàn từ tín hiệu tương tác nhị phân, không nắm được nội dung văn bản mô tả
+được học hoàn toàn từ tín hiệu tương tác dạng nhị phân, không nắm được nội dung văn bản mô tả
 thuộc tính sản phẩm hay sở thích người dùng.
 
 Sự bùng nổ của các mô hình ngôn ngữ lớn (large language model -- LLM) trong những năm
@@ -52,7 +52,7 @@ mất thông tin hoặc tăng chi phí tính toán đáng kể. Đây là trở 
 nhận trong nhiều công trình LLMs-as-RS~\cite{collm2023}.
 
 Giải pháp tự nhiên là biểu diễn thông tin hành vi dưới dạng \textit{véc-tơ đặc trưng
-gọn (compact)}: thay vì liệt kê từng sản phẩm, ta dùng nhúng CF -- tổng hợp từ toàn bộ lịch
+cô đọng}: thay vì liệt kê từng sản phẩm, ta dùng nhúng CF -- tổng hợp từ toàn bộ lịch
 sử tương tác -- để nén tín hiệu cộng tác thành một véc-tơ dày đặc. Véc-tơ này sau đó
 được đưa vào LLM như một \textit{soft token}, bổ sung tín hiệu hành vi mà không làm dài
 ngữ cảnh. Cách tiếp cận này được gọi là \textit{tích hợp CF vào LLM qua không gian véc-tơ}.
@@ -62,11 +62,11 @@ tuyến tính (MLP một lớp) để ánh xạ véc-tơ CF từ không gian MF 
 LLM, tạo thành các soft token được chèn vào chỉ dẫn. Mặc dù đơn giản và hiệu quả như
 một baseline, lớp chiếu tuyến tính có hạn chế cố hữu: nó không nắm được các quan hệ
 phi tuyến phức tạp giữa không gian CF và không gian ngữ nghĩa của LLM, và không có cơ
-chế \textit{trích chọn có kiểm soát} -- toàn bộ véc-tơ CF được chiếu một lần qua một
+chế \textit{chọn lọc có kiểm soát} -- toàn bộ véc-tơ CF được chiếu một lần qua một
 phép biến đổi duy nhất mà không phân biệt các thành phần nào thực sự quan trọng với ngữ
 cảnh hiện tại.
 
-Khoảng cách ngữ nghĩa giữa không gian biểu diễn CF (học từ tín hiệu tương tác nhị phân)
+Khoảng cách ngữ nghĩa giữa không gian biểu diễn CF (học từ tín hiệu tương tác dạng nhị phân)
 và không gian ngữ nghĩa của LLM (học từ ngôn ngữ tự nhiên) là một thách thức căn bản.
 Hai không gian này có nguồn gốc huấn luyện hoàn toàn khác nhau, nên một phép chiếu đơn
 giản khó có thể \textit{căn chỉnh} (alignment) hiệu quả. Điều này đặt ra
