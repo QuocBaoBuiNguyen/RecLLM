@@ -7,7 +7,7 @@ nhau. \textit{Nhánh đầu tiên} (Mục~\ref{sec:cf-truyen-thong}) trình bày
 truyền thống và các hạn chế cố hữu của nó, dẫn đến nhu cầu kết hợp LLM. \textit{Nhánh
 thứ hai} (Mục~\ref{sec:llm-rec}) phân tích hai hướng khai thác LLM cho hệ thống tư vấn
 và chỉ ra rào cản về độ dài ngữ cảnh -- yếu tố buộc tín hiệu CF phải được biểu diễn
-dưới dạng véc-tơ cô đọng thay vì văn bản. \textit{Nhánh thứ ba}
+dưới dạng véc-tơ nén thay vì văn bản. \textit{Nhánh thứ ba}
 (Mục~\ref{sec:cach-noi-cf-llm}) phân tích năm cách tích hợp CF vào LLM qua không gian
 véc-tơ, làm nổi bật điểm mạnh và hạn chế của từng hướng. \textit{Nhánh thứ tư}
 (Mục~\ref{sec:nen-tang-qformer}) trình bày nền tảng kiến trúc Q-Former từ BLIP-2 -- cơ sở
@@ -111,7 +111,7 @@ lượng tính toán rất lớn nếu dùng mô hình ngữ cảnh dài.
 Đây là rào cản cơ bản đã được nhận diện trong CoLLM~\cite{collm2023}: dù LLM có khả
 năng hiểu ngữ nghĩa, ta không thể đơn giản đưa toàn bộ lịch sử tương tác vào chỉ dẫn
 dưới dạng văn bản. Giải pháp là biểu diễn tín hiệu hành vi dưới dạng \textit{véc-tơ CF
-cô đọng} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này vào LLM như soft token.
+nén} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này vào LLM như soft token.
 Rào cản này đặt ra vấn đề trung tâm: làm thế nào để \textit{căn chỉnh} véc-tơ CF vào
 không gian ngữ nghĩa LLM một cách hiệu quả?
 
@@ -268,7 +268,7 @@ Q-Former, các truy vấn đi qua hai loại attention:
 \end{enumerate}
 
 Đầu ra là một khối truy vấn $\mathbf{Z} \in \mathbb{R}^{N_q \times d}$ -- một tập hợp
-cô đọng các véc-tơ đã được ``cất giữ'' thông tin từ đầu vào theo cách tối ưu cho ngữ
+nhỏ gọn các véc-tơ đã được ``cất giữ'' thông tin từ đầu vào theo cách tối ưu cho ngữ
 cảnh hiện tại. $\mathbf{Z}$ sau đó được chiếu vào không gian nhúng của LLM và nối với
 prompt văn bản.
 
