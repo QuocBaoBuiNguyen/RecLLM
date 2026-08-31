@@ -104,7 +104,7 @@ Luận văn này lấp hai khoảng trống nêu trên:
 
 \begin{quote}
 \textit{Mặc dù Q-Former đã được dùng để nối thông tin cộng tác với LLM (ILM), hướng này
-vẫn chưa được đánh giá dưới quy trình CTR với AUC và uAUC như dòng CoLLM, và chưa được
+vẫn chưa được đánh giá theo bài toán CTR với AUC và uAUC như dòng CoLLM, và chưa được
 khảo sát khi tăng cường bằng các kỹ thuật huấn luyện chuyên biệt và biểu diễn đa token.
 Luận văn này lấp khoảng trống đó: xây dựng và tăng cường một cầu nối Q-Former để tích
 hợp thông tin cộng tác vào LLM, đánh giá có hệ thống dưới quy trình AUC/uAUC và đối
@@ -127,7 +127,7 @@ trong từng người dùng (nhằm cải thiện uAUC). Song song, luận văn 
 sát các lựa chọn thiết kế bổ sung (biểu diễn đa token, backbone đã tinh chỉnh chỉ dẫn, tách
 lớp chiếu người dùng và sản phẩm).
 
-\textbf{Mục tiêu 2:} Đánh giá có hệ thống cầu nối Q-Former dưới quy trình CTR với hai
+\textbf{Mục tiêu 2:} Đánh giá có hệ thống cầu nối Q-Former theo bài toán CTR với hai
 độ đo AUC và uAUC trên hai tập dữ liệu MovieLens-1M và Amazon-Book -- điều mà ILM chưa thực
 hiện -- đối chiếu trực tiếp với baseline CoLLM, BinLLM và CoRA.
 
@@ -143,7 +143,7 @@ Từ hai mục tiêu trên, luận văn đóng góp:
     backbone đã tinh chỉnh chỉ dẫn, tách projector).
 
     \item \textbf{Đánh giá có hệ thống dưới quy trình AUC/uAUC:} Luận văn đánh giá
-    cầu nối Q-Former dưới quy trình CTR với AUC và uAUC -- cùng quy trình với CoLLM,
+    cầu nối Q-Former theo bài toán CTR với AUC và uAUC -- cùng quy trình với CoLLM,
     cho phép so sánh trực tiếp -- trên hai tập dữ liệu MovieLens-1M và Amazon-Book. Đây là
     đánh giá mà các công trình Q-Former trước (ILM) chưa thực hiện, đồng thời cung cấp phân
     tích ablation về đóng góp của từng kỹ thuật và phân rã warm/cold làm rõ trần uAUC.
