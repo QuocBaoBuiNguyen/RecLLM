@@ -92,9 +92,9 @@ khoảng cách ngữ nghĩa CF--LLM).
 
 \begin{itemize}
     \item \textbf{LLM backbone}: Vicuna-7B-v1.5~\cite{vicuna2023} (tinh chỉnh chỉ dẫn trên
-    nền Llama-2), đông cứng hoàn toàn; khuôn mẫu chỉ dẫn USER/ASSISTANT.
+    nền Llama-2), đóng băng hoàn toàn; khuôn mẫu chỉ dẫn USER/ASSISTANT.
     \item \textbf{MF}: phân rã ma trận BPR~\cite{bpr2009}, chiều ẩn $d = 256$, được huấn
-    luyện và đông cứng trước khi tích hợp.
+    luyện và đóng băng trước khi tích hợp.
     \item \textbf{Q-Former}: $Q = 8$ truy vấn, $d_{\text{model}} = 768$, $8$ đầu attention,
     $4$ lớp; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased}.
     \item \textbf{LoRA}~\cite{lora2021}: hạng $r = 8$, $\alpha = 16$, dropout $0{,}05$, áp
@@ -109,8 +109,8 @@ khoảng cách ngữ nghĩa CF--LLM).
     \item \textbf{Phần cứng}: một GPU NVIDIA A100 80GB.
     \item \textbf{Tham số huấn luyện được}: chỉ LoRA (khoảng vài triệu tham số trên các lớp
     $[q,v]$ của backbone $7$ tỉ tham số), cầu nối Q-Former và các lớp chiếu được cập nhật;
-    MF và LLM đông cứng. Không có tham số sinh trọng số. Tổng số tham số huấn luyện được rất
-    nhỏ so với $7$ tỉ tham số đông cứng của LLM, phản ánh thiết kế tinh chỉnh hiệu quả tham số.
+    MF và LLM đóng băng. Không có tham số sinh trọng số. Tổng số tham số huấn luyện được rất
+    nhỏ so với $7$ tỉ tham số đóng băng của LLM, phản ánh thiết kế tinh chỉnh hiệu quả tham số.
     \item \textbf{Thời gian huấn luyện}: mỗi epoch mất khoảng $4$--$6$ phút trên phần cứng
     nói trên ($0{,}65$--$0{,}84$ giây/iteration tùy giai đoạn).
 \end{itemize}

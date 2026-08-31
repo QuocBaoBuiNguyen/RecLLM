@@ -40,14 +40,14 @@ Hình~\ref{fig:kien-truc}:
 \begin{figure}[htp]
 \centering
 \includegraphics[width=12cm]{images/coqllm-architecture.drawio.png}
-\caption{Kiến trúc tổng quan của CoQLLM. Khối MF đông cứng cung cấp tín hiệu lọc cộng
+\caption{Kiến trúc tổng quan của CoQLLM. Khối MF đóng băng cung cấp tín hiệu lọc cộng
 tác; cầu nối Q-Former căn chỉnh tín hiệu này thành các soft token được chèn vào chỉ dẫn;
-LLM đông cứng thực hiện suy luận. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được
+LLM đóng băng thực hiện suy luận. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được
 huấn luyện.}
 \label{fig:kien-truc}
 \end{figure}
 
-\textbf{Đặc điểm thiết kế then chốt:} Phần lớn tham số của CoQLLM được giữ đông cứng
+\textbf{Đặc điểm thiết kế then chốt:} Phần lớn tham số của CoQLLM được đóng băng
 (frozen) trong quá trình huấn luyện. Cụ thể, cả MF lẫn LLM đều không được cập nhật; chỉ
 Q-Former, các lớp chiếu và bộ chuyển thể LoRA~\cite{lora2021} được huấn luyện. Tín hiệu
 cộng tác được đưa vào LLM qua một đường duy nhất -- soft token trong không gian đầu vào -- thay
@@ -60,8 +60,8 @@ LLM, giảm chi phí huấn luyện, và cho phép phân tích rõ ràng đóng 
 Khối MF đóng vai trò nguồn tín hiệu lọc cộng tác. Từ ma trận tương tác người dùng--sản
 phẩm, MF học ánh xạ mỗi người dùng $u$ và sản phẩm $i$ thành các véc-tơ nhúng ẩn
 $e_u, e_i \in \mathbb{R}^{d}$ sao cho tích vô hướng $e_u^\top e_i$ phản ánh mức độ tương
-thích. MF được huấn luyện theo mục tiêu xếp hạng cặp BPR~\cite{bpr2009}, sau đó được đông
-cứng.
+thích. MF được huấn luyện theo mục tiêu xếp hạng cặp BPR~\cite{bpr2009}, sau đó được đóng
+băng.
 
 Ba loại tín hiệu cộng tác được trích xuất để đưa vào cầu nối: (i)~nhúng người dùng $e_u$;
 (ii)~nhúng phim mục tiêu $e_i$; (iii)~nhúng các phim trong lịch sử tương tác của người
@@ -155,7 +155,7 @@ số bên trong của LLM.
 Đây là điểm khác biệt so với CoRA~\cite{cora2024}: CoRA biến $\mathbf{Z}$ thành lượng thay
 đổi trọng số hạng thấp theo từng mẫu, cộng vào các lớp attention của LLM
 (Mục~\ref{ssec:cora-rel}), trong khi CoQLLM chỉ dùng đường soft token. Lựa chọn này giữ
-LLM hoàn toàn đông cứng, tránh chi phí và rủi ro bất ổn của việc sinh trọng số theo từng
+LLM hoàn toàn đóng băng, tránh chi phí và rủi ro bất ổn của việc sinh trọng số theo từng
 mẫu, đồng thời tập trung toàn bộ dung lượng học vào cầu nối căn chỉnh. Trên nền đường soft
 token, luận văn bổ sung hai đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) và mục tiêu bảo toàn thứ tự trong từng người dùng
@@ -331,7 +331,7 @@ tái lập.
 Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ: từ biểu diễn Q-Former
 của tín hiệu cộng tác, sinh văn bản mô tả sản phẩm. Giai đoạn này dạy đầu ra của cầu nối trở
 thành soft token mà LLM có thể diễn giải -- tức căn chỉnh không gian Q-Former với không
-gian ngữ nghĩa của LLM đông cứng.
+gian ngữ nghĩa của LLM đóng băng.
 
 \subsection{Giai đoạn 3: Tinh chỉnh CTR}
 \label{ssec:stage3}
@@ -343,7 +343,7 @@ lịch sử dưới dạng văn bản), không có tín hiệu cộng tác. Bư�
 khả năng dự đoán chỉ từ văn bản và ổn định hóa LLM trước khi tiếp nhận soft token.
 
 \textbf{Bước 2}: Huấn luyện mô hình đầy đủ với tín hiệu cộng tác được bơm vào qua soft token.
-Mô hình được khởi tạo từ checkpoint của Bước 1; LoRA được \textit{đông cứng}, chỉ Q-Former
+Mô hình được khởi tạo từ checkpoint của Bước 1; LoRA được \textit{đóng băng}, chỉ Q-Former
 và các lớp chiếu được cập nhật -- tách bạch phần ``ngôn ngữ'' (LoRA, học ở Bước 1) khỏi
 phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước duy nhất kích hoạt
 hai đòn bẩy điều kiện hóa theo người dùng (Mục~\ref{ssec:user-conditioned}) và mục tiêu

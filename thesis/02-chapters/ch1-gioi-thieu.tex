@@ -91,7 +91,7 @@ thông tin cộng tác vào LLM cho bài toán gợi ý. Tuy nhiên, hướng ng
 hai khoảng trống quan trọng chưa được giải quyết:
 
 \textbf{Thứ nhất}, ILM chưa đánh giá dưới quy trình dự đoán tỉ lệ nhấp (click-through
-rate -- CTR) với các độ đo AUC và uAUC như CoLLM và các công trình cùng dòng, nên không
+rate -- CTR) với các độ đo AUC và uAUC như CoLLM và các công trình cùng hướng, nên không
 thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với lớp chiếu tuyến tính trên cùng
 điều kiện thực nghiệm.
 
@@ -118,8 +118,8 @@ Luận văn hướng đến hai mục tiêu chính:
 
 \textbf{Mục tiêu 1:} Thiết kế và hiện thực một mô hình tích hợp tín hiệu cộng tác vào LLM
 thông qua cầu nối Q-Former, thay thế lớp chiếu tuyến tính của CoLLM. Cụ thể, luận văn
-xây dựng kiến trúc CoQLLM gồm ba khối nối tiếp -- phân rã ma trận đông cứng, cầu nối
-Q-Former, và LLM đông cứng (Vicuna-7B-v1.5) với LoRA -- trong đó cầu nối Q-Former đóng vai
+xây dựng kiến trúc CoQLLM gồm ba khối nối tiếp -- phân rã ma trận đóng băng, cầu nối
+Q-Former, và LLM đóng băng (Vicuna-7B-v1.5) với LoRA -- trong đó cầu nối Q-Former đóng vai
 trò căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM. Trên nền cầu nối soft token,
 luận văn bổ sung hai đòn bẩy huấn luyện: điều kiện hóa truy vấn theo người dùng
 (\texttt{user\_conditioned}, nhằm cải thiện AUC) và mục tiêu bảo toàn thứ tự

@@ -191,11 +191,11 @@ khác} với luận văn: can thiệp vào trọng số attention của LLM thay
 trong không gian đầu vào.
 
 CoQLLM đi theo hướng soft token: tín hiệu cộng tác được căn chỉnh qua cầu nối Q-Former rồi chèn
-vào chỉ dẫn dưới dạng soft token, giữ LLM hoàn toàn đông cứng và không sinh trọng số theo
+vào chỉ dẫn dưới dạng soft token, giữ LLM hoàn toàn đóng băng và không sinh trọng số theo
 từng mẫu (chi tiết tại Chương~\ref{Chapter3}). Luận văn không hiện thực cơ chế sinh trọng
 số của CoRA; thay vào đó, \textit{mô hình} CoRA nguyên bản được dùng như một baseline so
 sánh trong thực nghiệm trên Amazon-Book (Chương~\ref{Chapter4}), đặt cạnh CoLLM và BinLLM
-để định vị CoQLLM trong cùng dòng phương pháp.
+để định vị CoQLLM trong cùng hướng nghiên cứu.
 
 \subsection{Cầu nối Q-Former: ILM}
 \label{ssec:ilm}
@@ -207,7 +207,7 @@ Cơ chế này có khả năng học cách lọc và tổng hợp tín hiệu c�
 gian ngữ nghĩa LLM.
 
 Tuy nhiên, ILM chưa đánh giá dưới quy trình CTR với AUC và uAUC như CoLLM và các công
-trình cùng dòng, nên không thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với lớp
+trình cùng hướng, nên không thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với lớp
 chiếu tuyến tính.
 
 \subsection{Tổng hợp so sánh}
@@ -250,7 +250,7 @@ thuật hiện đại. Đây là khoảng trống mà luận văn này nhắm đ
 \label{ssec:blip2}
 
 BLIP-2~\cite{blip2_2023} giới thiệu Q-Former (Querying Transformer) như một cầu nối nhẹ
-(lightweight bridge) giữa bộ mã hóa ảnh đông cứng và LLM đông cứng. Q-Former giải quyết
+(lightweight bridge) giữa bộ mã hóa ảnh đóng băng và LLM đóng băng. Q-Former giải quyết
 bài toán: làm thế nào để trích xuất thông tin từ đặc trưng ảnh (không gian liên tục,
 chiều cao) và chuyển thành biểu diễn mà LLM có thể xử lý, mà không cần huấn luyện lại
 hai khối lớn.
@@ -285,7 +285,7 @@ qua cơ chế cross-attention có kiểm soát.
 \subsection{Kỹ thuật ổn định huấn luyện từ Flamingo}
 \label{ssec:flamingo}
 
-Khi gắn một đường truyền mới lên một LLM đông cứng, việc kiểm soát ổn định là quan
+Khi gắn một đường truyền mới lên một LLM đóng băng, việc kiểm soát ổn định là quan
 trọng. Flamingo~\cite{flamingo2022} -- một mô hình đa phương thức quy mô lớn -- đề xuất
 kỹ thuật cổng tanh khởi tạo không (zero-initialized tanh gate): mỗi đường truyền mới có
 một tham số cổng $g$ khởi tạo bằng $0$, sao cho ban đầu $\Delta = \tanh(0) \cdot (\ldots)
