@@ -99,8 +99,8 @@ khoảng cách ngữ nghĩa CF--LLM).
     $4$ lớp; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased}.
     \item \textbf{LoRA}~\cite{lora2021}: hạng $r = 8$, $\alpha = 16$, dropout $0{,}05$, áp
     dụng trên các lớp $[q,v]$ của LLM.
-    \item \textbf{Đòn bẩy SOTA}: \texttt{user\_conditioned} bật trên cả hai tập dữ liệu;
-    \texttt{align\_rank\_loss} ($\lambda = 0{,}2$, kèm \texttt{user\_grouped\_batch}) bật
+    \item \textbf{Kỹ thuật SOTA}: điều kiện hóa truy vấn theo người dùng bật trên cả hai tập dữ liệu;
+    hàm mất mát bảo toàn thứ tự ($\lambda = 0{,}2$, kèm lấy mẫu theo nhóm người dùng) bật
     trên Amazon-Book, tắt trên MovieLens-1M.
     \item \textbf{Chọn checkpoint}: theo uAUC trên tập kiểm định (khác CoLLM/CoRA chọn theo
     AUC -- xem ghi chú bảng kết quả).
@@ -123,7 +123,7 @@ BinLLM và các baseline trên MovieLens-1M và Amazon-Book theo AUC và uAUC.
 
 \begin{table}[ht]
 \caption{Kết quả trên MovieLens-1M (quy trình CoLLM-parity). CoQLLM báo cáo hai cấu hình:
-\textit{vanilla} (chỉ soft token) và \textit{+ user\_conditioned} (cấu hình đề xuất).
+\textit{vanilla} (chỉ soft token) và \textit{+ điều kiện hóa} (cấu hình đề xuất).
 CoQLLM chọn checkpoint theo uAUC.}
 \label{tab:ket-qua-chinh}
 \begin{center}
@@ -143,7 +143,7 @@ BinLLM~\cite{binllm2024} & 0{,}7425 & 0{,}6956 \\
 \hline
 CoQLLM (vanilla) & 0{,}7335 & 0{,}7009 \\
 \hline
-\textbf{CoQLLM (+ user\_conditioned)} & \textbf{0{,}7475} & \textbf{0{,}6968} \\
+\textbf{CoQLLM (+ điều kiện hóa)} & \textbf{0{,}7475} & \textbf{0{,}6968} \\
 \hline
 \end{tabular}
 \end{center}
@@ -152,8 +152,8 @@ CoQLLM (vanilla) & 0{,}7335 & 0{,}7009 \\
 \begin{table}[ht]
 \caption{Kết quả trên Amazon-Book. Số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy lại
 trong CoRA~\cite{cora2024} (chọn checkpoint theo AUC); CoQLLM chọn theo uAUC. uAUC tính
-trên $2{.}486$ người dùng tập kiểm tra. Run-1 = + user\_conditioned; Run-2 = thêm
-align\_rank\_loss.}
+trên $2{.}486$ người dùng tập kiểm tra. Run-1 = + điều kiện hóa; Run-2 = thêm
+bảo toàn thứ tự.}
 \label{tab:ket-qua-book}
 \begin{center}
 \begin{tabular}{|L{5.5cm}|c|c|}
@@ -166,26 +166,26 @@ BinLLM~\cite{binllm2024} (CoRA re-run) & 0{,}8157 & 0{,}5724 \\
 \hline
 CoRA-MF~\cite{cora2024} (sinh trọng số) & 0{,}8179 & 0{,}6262 \\
 \hline
-CoQLLM (+ user\_conditioned, Run-1) & 0{,}8147 & 0{,}5958 \\
+CoQLLM (+ điều kiện hóa, Run-1) & 0{,}8147 & 0{,}5958 \\
 \hline
-\textbf{CoQLLM (+ align\_rank, Run-2)} & \textbf{0{,}8132} & \textbf{0{,}6062} \\
+\textbf{CoQLLM (+ bảo toàn thứ tự, Run-2)} & \textbf{0{,}8132} & \textbf{0{,}6062} \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-\textbf{MovieLens-1M.} Cấu hình đề xuất (+ user\_conditioned) đạt AUC $0{,}7475$ và uAUC
+\textbf{MovieLens-1M.} Cấu hình đề xuất (+ điều kiện hóa) đạt AUC $0{,}7475$ và uAUC
 $0{,}6968$, \textit{vượt BinLLM trên cả hai độ đo} ($0{,}7425$/$0{,}6956$) và vượt rõ
 CoLLM-MF/CoLLM-DIN. Đây là điểm đáng chú ý nhất: nhiều phương pháp CF--LLM chỉ thắng một
-trong hai độ đo. So với cấu hình vanilla, \texttt{user\_conditioned} nâng AUC từ $0{,}7335$
+trong hai độ đo. So với cấu hình vanilla, điều kiện hóa truy vấn theo người dùng nâng AUC từ $0{,}7335$
 lên $0{,}7475$ ($+0{,}014$) trong khi uAUC gần như không đổi ($0{,}7009 \to 0{,}6968$, chênh
 lệch nằm trong biên độ nhiễu) -- đúng như phân tích ở Mục~\ref{sec:nghich-ly}: phần dịch
 theo người dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người dùng (AUC), gần như
 trung tính với xếp hạng \textit{trong} người dùng (uAUC).
 
-\textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với \texttt{user\_conditioned} (Run-1),
+\textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với điều kiện hóa truy vấn theo người dùng (Run-1),
 CoQLLM đạt AUC $0{,}8147$ và uAUC $0{,}5958$ -- \textit{vượt cả CoLLM-MF và BinLLM (theo lần
-chạy lại của CoRA) trên cả hai độ đo}. Bổ sung \texttt{align\_rank\_loss} (Run-2) nâng uAUC
+chạy lại của CoRA) trên cả hai độ đo}. Bổ sung hàm mất mát bảo toàn thứ tự (Run-2) nâng uAUC
 lên $0{,}6062$ ($+0{,}0104$) trong khi AUC gần như đứng yên ($-0{,}0015$) -- đúng thiết kế:
 tổn thất này tác động vào thứ tự trong từng người dùng chứ không ảnh hưởng đến khả năng phân biệt
 giữa các người dùng.
@@ -228,8 +228,8 @@ Bảng~\ref{tab:ablation} tách biệt đóng góp của hai kỹ thuật huấn
 từng cơ chế trên nền cầu nối soft token, trên cả hai tập dữ liệu.
 
 \begin{table}[ht]
-\caption{Ablation hai kỹ thuật huấn luyện. Trên MovieLens-1M: bật \texttt{user\_conditioned}.
-Trên Amazon-Book: bật \texttt{user\_conditioned} (Run-1) rồi thêm \texttt{align\_rank\_loss}
+\caption{Ablation hai kỹ thuật huấn luyện. Trên MovieLens-1M: bật điều kiện hóa truy vấn theo người dùng.
+Trên Amazon-Book: bật điều kiện hóa truy vấn theo người dùng (Run-1) rồi thêm hàm mất mát bảo toàn thứ tự
 (Run-2). Tất cả trên nền soft token; chọn checkpoint theo uAUC.}
 \label{tab:ablation}
 \begin{center}
@@ -239,22 +239,22 @@ Trên Amazon-Book: bật \texttt{user\_conditioned} (Run-1) rồi thêm \texttt{
 \hline
 MovieLens-1M & Soft token (vanilla) & 0{,}7335 & 0{,}7009 \\
 \hline
-MovieLens-1M & + user\_conditioned & \textbf{0{,}7475} & 0{,}6968 \\
+MovieLens-1M & + điều kiện hóa & \textbf{0{,}7475} & 0{,}6968 \\
 \hline
-Amazon-Book & + user\_conditioned (Run-1) & 0{,}8147 & 0{,}5958 \\
+Amazon-Book & + điều kiện hóa (Run-1) & 0{,}8147 & 0{,}5958 \\
 \hline
-Amazon-Book & + align\_rank (Run-2) & 0{,}8132 & \textbf{0{,}6062} \\
+Amazon-Book & + bảo toàn thứ tự (Run-2) & 0{,}8132 & \textbf{0{,}6062} \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
 \textbf{Đọc bảng ablation.} Hai kỹ thuật tác động lên hai độ đo khác nhau, đúng như thiết kế.
-Trên MovieLens-1M, \texttt{user\_conditioned} chủ yếu tác động lên \textit{AUC} (+$0{,}014$), gần trung
-tính với uAUC. Trên Amazon-Book, \texttt{align\_rank\_loss} chủ yếu tác động lên \textit{uAUC}
+Trên MovieLens-1M, điều kiện hóa truy vấn theo người dùng chủ yếu tác động lên \textit{AUC} (+$0{,}014$), gần trung
+tính với uAUC. Trên Amazon-Book, hàm mất mát bảo toàn thứ tự chủ yếu tác động lên \textit{uAUC}
 (+$0{,}0104$), gần trung tính với AUC. Sự phân đôi này giải thích vì sao mỗi tập dữ liệu bật
 cơ chế khác nhau: trên MovieLens-1M uAUC đã gần bão hòa ($\approx 0{,}70$) nên
-\texttt{align\_rank\_loss} không còn dư địa; trên Amazon-Book uAUC còn thấp ($\approx 0{,}59$)
+hàm mất mát bảo toàn thứ tự không còn dư địa; trên Amazon-Book uAUC còn thấp ($\approx 0{,}59$)
 nên tổn thất xếp hạng trong từng người dùng phát huy tác dụng. Việc bật cơ chế theo từng tập dữ
 liệu vì thế là một \textit{siêu tham số hợp lệ theo miền}, không phải sự bất nhất về
 phương pháp.
@@ -264,7 +264,7 @@ ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-c
 bằng một bộ chiếu \textit{attention-MLP} (MLP có self-attention nhưng không có truy vấn học
 được) để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến + attention đơn
 thuần; (ii)~bật/tắt riêng biểu diễn đa token và tách projector dưới cùng backbone Vicuna;
-(iii)~ablation \texttt{align\_rank\_loss} trên MovieLens-1M (kỳ
+(iii)~ablation hàm mất mát bảo toàn thứ tự trên MovieLens-1M (kỳ
 vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số ước lượng cho các hàng này.
 
 \section{Phân tích bổ sung}
@@ -290,7 +290,7 @@ Bảng~\ref{tab:warm-cold} trình bày AUC/uAUC theo từng nhóm trên cả hai
 
 \begin{table}[ht]
 \caption{Phân rã warm/cold trên tập kiểm tra (cấu hình đề xuất). Amazon-Book dùng Run-2
-(+ align\_rank).}
+(+ bảo toàn thứ tự).}
 \label{tab:warm-cold}
 \begin{center}
 \begin{tabular}{|L{2.6cm}|L{2.4cm}|c|c|c|}
@@ -353,7 +353,7 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     trọng nhất để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến +
     attention đơn thuần; hiện được ghi nhận là hướng thực nghiệm còn để ngỏ.
     \item \textbf{Các ablation thành phần chưa đầy đủ:} Bật/tắt riêng biểu diễn đa token,
-    tách projector, và \texttt{align\_rank\_loss} trên MovieLens-1M đều chưa được chạy
+    tách projector, và hàm mất mát bảo toàn thứ tự trên MovieLens-1M đều chưa được chạy
     dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
     \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone Qwen2-Base khác họ với
     Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên

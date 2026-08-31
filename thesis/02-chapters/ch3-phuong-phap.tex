@@ -172,7 +172,7 @@ véc-tơ cộng tác của người dùng trước khi đưa vào Q-Former:
 \tilde{\mathbf{Q}} = \mathbf{Q} + g_u\big( e_u \big),
 \end{equation}
 
-trong đó $g_u$ là một lớp chiếu tuyến tính (\texttt{user\_proj}) từ không gian MF sang
+trong đó $g_u$ là một lớp chiếu tuyến tính từ không gian MF sang
 không gian truy vấn, được \textit{khởi tạo bằng không} (zero-init). Nhờ khởi tạo bằng
 không, ở bước đầu cơ chế là một phép đồng nhất (no-op), $\tilde{\mathbf{Q}} = \mathbf{Q}$;
 phần dịch chỉ lớn dần nếu tín hiệu CTR thưởng cho nó trong quá trình huấn luyện.
@@ -193,7 +193,7 @@ tự xếp hạng trong từng người dùng} -- đại lượng mà uAUC đo. 
 mục tiêu bảo toàn thứ tự (\textit{align-rank loss}): một tổn thất BPR theo cặp trong phạm
 vi từng người dùng, đóng vai trò hàm thay thế (surrogate) khả vi cho uAUC, áp trực tiếp lên
 \textit{soft token cộng tác đã căn chỉnh} (trước khi vào LLM) thông qua một đầu ra phụ
-(\texttt{align\_rank\_head}) cũng khởi tạo bằng không:
+cũng khởi tạo bằng không:
 
 \begin{equation} \label{eq:align-rank}
 \mathcal{L} = \mathcal{L}_{\text{BCE}}
@@ -201,7 +201,7 @@ vi từng người dùng, đóng vai trò hàm thay thế (surrogate) khả vi c
     -\log \sigma\!\Big( \tfrac{1}{\tau}\big( s_u(i^{+}) - s_u(i^{-}) \big) \Big),
 \end{equation}
 
-trong đó $s_u(\cdot)$ là điểm xếp hạng do \texttt{align\_rank\_head} sinh từ soft token cộng tác
+trong đó $s_u(\cdot)$ là điểm xếp hạng do đầu ra phụ sinh từ soft token cộng tác
 đã căn chỉnh, $\mathcal{P}_u$ là tập các cặp dương--âm của cùng người dùng $u$, $\sigma$ là
 hàm sigmoid, $\tau$ là nhiệt độ và $\lambda$ là trọng số. Việc áp mục tiêu này lên chính
 phần biểu diễn cộng tác đã căn chỉnh (thay vì chỉ lên biên độ Yes/No của LLM) buộc bản thân cầu
@@ -209,7 +209,7 @@ nối giữ đúng thứ tự trong từng người dùng.
 
 Để mỗi lô có sẵn các cặp dương--âm của cùng một người dùng, tổn thất này yêu cầu chế độ lấy
 mẫu theo nhóm người dùng (\textit{user-grouped batch}), và được kích hoạt ở Bước 2 của Giai
-đoạn 3 (nơi Q-Former và lớp chiếu được huấn luyện). Do \texttt{align\_rank\_head} khởi tạo
+đoạn 3 (nơi Q-Former và lớp chiếu được huấn luyện). Do đầu ra phụ khởi tạo
 bằng không, các epoch đầu gần như trung tính và tác dụng hiện dần về sau -- một đặc điểm
 huấn luyện được phân tích ở Chương~\ref{Chapter4}. Đây là một siêu tham số phụ thuộc tập dữ
 liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng người dùng (Amazon-Book) và

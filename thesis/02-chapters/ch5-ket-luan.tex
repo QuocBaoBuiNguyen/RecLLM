@@ -33,17 +33,17 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
 
 \begin{itemize}
     \item \textbf{MovieLens-1M -- vượt SOTA trên cả hai độ đo.} Cấu hình đề xuất
-    (+ \texttt{user\_conditioned}) đạt AUC $0{,}7475$ và uAUC $0{,}6968$, vượt BinLLM
+    (+ điều kiện hóa) đạt AUC $0{,}7475$ và uAUC $0{,}6968$, vượt BinLLM
     ($0{,}7425$/$0{,}6956$) trên cả AUC lẫn uAUC và vượt rõ CoLLM. Đây là điểm đáng chú ý
     vì nhiều phương pháp cùng hướng chỉ thắng một trong hai độ đo.
 
     \item \textbf{Amazon-Book -- cạnh tranh/vượt baseline trên miền khó.} Với
-    \texttt{user\_conditioned} (Run-1), CoQLLM đạt $0{,}8147$/$0{,}5958$, vượt CoLLM-MF và
-    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. Bổ sung \texttt{align\_rank\_loss}
+    điều kiện hóa truy vấn theo người dùng (Run-1), CoQLLM đạt $0{,}8147$/$0{,}5958$, vượt CoLLM-MF và
+    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. Bổ sung hàm mất mát bảo toàn thứ tự
     (Run-2) nâng uAUC lên $0{,}6062$, tiệm cận CoRA-MF ($0{,}6262$).
 
-    \item \textbf{Hai kỹ thuật tác động lên hai độ đo khác nhau.} \texttt{user\_conditioned}
-    chủ yếu cải thiện AUC (biến thiên giữa các người dùng); \texttt{align\_rank\_loss} chủ yếu cải thiện
+    \item \textbf{Hai kỹ thuật tác động lên hai độ đo khác nhau.} Điều kiện hóa truy vấn theo người dùng
+    chủ yếu cải thiện AUC (biến thiên giữa các người dùng); hàm mất mát bảo toàn thứ tự chủ yếu cải thiện
     uAUC (bảo toàn thứ tự trong người dùng). Việc bật theo từng tập dữ liệu là siêu tham số
     hợp lệ theo miền.
 
@@ -65,7 +65,7 @@ Luận văn nêu rõ các hạn chế sau một cách minh bạch:
     \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay Q-Former bằng
     bộ chiếu attention-MLP (không truy vấn học được) -- đối chứng quan trọng nhất để cô lập
     đóng góp của cấu trúc Q-Former. Cùng với các ablation thành phần khác (đa token, tách
-    projector, \texttt{align\_rank} trên MovieLens-1M), đây là phần thực nghiệm còn để ngỏ.
+    projector, bảo toàn thứ tự trên MovieLens-1M), đây là phần thực nghiệm còn để ngỏ.
 
     \item \textbf{Chi phí tính toán cao hơn CoLLM:} Cầu nối Q-Former làm tăng chi phí huấn
     luyện so với lớp MLP đơn giản của CoLLM (dù không sinh trọng số theo từng mẫu như CoRA).
@@ -104,7 +104,7 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
     \item Tiền huấn luyện MF trên dữ liệu dày đặc hơn (nhiều tháng hơn), đặc biệt cho
     nhóm người dùng/sản phẩm nguội -- điều mà phân rã warm/cold chỉ ra là trần thực sự
     của uAUC.
-    \item Mở rộng mục tiêu bảo toàn thứ tự (\texttt{align\_rank\_loss}, đã hiệu quả trên
+    \item Mở rộng mục tiêu bảo toàn thứ tự (đã hiệu quả trên
     Amazon-Book) sang các miền khác và khảo sát trọng số $\lambda$ tối ưu theo từng tập.
 \end{itemize}
 
