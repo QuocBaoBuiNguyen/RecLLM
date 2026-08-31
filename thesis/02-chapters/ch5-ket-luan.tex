@@ -14,7 +14,7 @@ giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục
 CoQLLM thay thế lớp MLP một lớp của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu cộng tác
 (nhúng người dùng, sản phẩm mục tiêu, lịch sử) thay thế đặc trưng ảnh làm đầu vào
 cross-attention và được đưa vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai
-đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
+kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cùng các lựa chọn thiết kế (biểu diễn đa token, backbone đã tinh chỉnh chỉ
 dẫn, tách lớp chiếu người dùng/sản phẩm). Kết quả chi tiết được trình bày ở
 Chương~\ref{Chapter4}.
@@ -22,7 +22,7 @@ Chương~\ref{Chapter4}.
 \textbf{Đóng góp 2: Đánh giá có hệ thống dưới quy trình AUC/uAUC trên hai tập dữ liệu.}
 Luận văn đánh giá cầu nối Q-Former dưới quy trình CTR với AUC và uAUC -- cùng quy trình với
 CoLLM -- trên MovieLens-1M và Amazon-Book, cho phép so sánh trực tiếp với CoLLM, BinLLM và
-CoRA. Phân tích ablation tách biệt đóng góp của từng đòn bẩy, và phân rã warm/cold làm rõ
+CoRA. Phân tích ablation tách biệt đóng góp của từng kỹ thuật, và phân rã warm/cold làm rõ
 trần uAUC nằm ở chất lượng nhúng MF.
 
 \section{Kết quả đạt được}
@@ -42,14 +42,14 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
     BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. Bổ sung \texttt{align\_rank\_loss}
     (Run-2) nâng uAUC lên $0{,}6062$, tiệm cận CoRA-MF ($0{,}6262$).
 
-    \item \textbf{Hai đòn bẩy tác động lên hai độ đo khác nhau.} \texttt{user\_conditioned}
-    là đòn bẩy AUC (biến thiên giữa các người dùng); \texttt{align\_rank\_loss} là đòn bẩy
+    \item \textbf{Hai kỹ thuật tác động lên hai độ đo khác nhau.} \texttt{user\_conditioned}
+    chủ yếu cải thiện AUC (biến thiên giữa các người dùng); \texttt{align\_rank\_loss} chủ yếu cải thiện
     uAUC (bảo toàn thứ tự trong người dùng). Việc bật theo từng tập dữ liệu là siêu tham số
     hợp lệ theo miền.
 
     \item \textbf{Trần uAUC nằm ở MF teacher, không phải cầu nối.} Phân rã warm/cold cho
     thấy uAUC nhóm warm cao hơn hẳn nhóm cold trên cả hai tập dữ liệu (ví dụ Amazon-Book:
-    $0{,}6238$ vs $0{,}5258$), cho thấy đòn bẩy cải thiện tiếp theo nằm ở chất lượng véc-tơ cộng tác
+    $0{,}6238$ vs $0{,}5258$), cho thấy hướng cải thiện tiếp theo nằm ở chất lượng véc-tơ cộng tác
     cho người dùng/sản phẩm nguội (cold).
 \end{itemize}
 
@@ -102,7 +102,7 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
 \textbf{Cải thiện uAUC:}
 \begin{itemize}
     \item Tiền huấn luyện MF trên dữ liệu dày đặc hơn (nhiều tháng hơn), đặc biệt cho
-    nhóm người dùng/sản phẩm nguội -- đòn bẩy được phân rã warm/cold chỉ ra là trần thực sự
+    nhóm người dùng/sản phẩm nguội -- điều mà phân rã warm/cold chỉ ra là trần thực sự
     của uAUC.
     \item Mở rộng mục tiêu bảo toàn thứ tự (\texttt{align\_rank\_loss}, đã hiệu quả trên
     Amazon-Book) sang các miền khác và khảo sát trọng số $\lambda$ tối ưu theo từng tập.

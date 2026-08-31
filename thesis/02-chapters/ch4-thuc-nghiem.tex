@@ -224,11 +224,11 @@ chỉnh thêm kiến trúc cầu nối.
 
 Bảng~\ref{tab:ablation} trình bày phân tích ablation các thành phần của CoQLLM.
 
-Bảng~\ref{tab:ablation} tách biệt đóng góp của hai đòn bẩy huấn luyện bằng cách bật/tắt
+Bảng~\ref{tab:ablation} tách biệt đóng góp của hai kỹ thuật huấn luyện bằng cách bật/tắt
 từng cơ chế trên nền cầu nối soft token, trên cả hai tập dữ liệu.
 
 \begin{table}[ht]
-\caption{Ablation hai đòn bẩy huấn luyện. Trên MovieLens-1M: bật \texttt{user\_conditioned}.
+\caption{Ablation hai kỹ thuật huấn luyện. Trên MovieLens-1M: bật \texttt{user\_conditioned}.
 Trên Amazon-Book: bật \texttt{user\_conditioned} (Run-1) rồi thêm \texttt{align\_rank\_loss}
 (Run-2). Tất cả trên nền soft token; chọn checkpoint theo uAUC.}
 \label{tab:ablation}
@@ -249,9 +249,9 @@ Amazon-Book & + align\_rank (Run-2) & 0{,}8132 & \textbf{0{,}6062} \\
 \end{center}
 \end{table}
 
-\textbf{Đọc bảng ablation.} Hai đòn bẩy tác động lên hai độ đo khác nhau, đúng như thiết kế.
-Trên MovieLens-1M, \texttt{user\_conditioned} là đòn bẩy \textit{AUC} (+$0{,}014$), gần trung
-tính với uAUC. Trên Amazon-Book, \texttt{align\_rank\_loss} là đòn bẩy \textit{uAUC}
+\textbf{Đọc bảng ablation.} Hai kỹ thuật tác động lên hai độ đo khác nhau, đúng như thiết kế.
+Trên MovieLens-1M, \texttt{user\_conditioned} chủ yếu tác động lên \textit{AUC} (+$0{,}014$), gần trung
+tính với uAUC. Trên Amazon-Book, \texttt{align\_rank\_loss} chủ yếu tác động lên \textit{uAUC}
 (+$0{,}0104$), gần trung tính với AUC. Sự phân đôi này giải thích vì sao mỗi tập dữ liệu bật
 cơ chế khác nhau: trên MovieLens-1M uAUC đã gần bão hòa ($\approx 0{,}70$) nên
 \texttt{align\_rank\_loss} không còn dư địa; trên Amazon-Book uAUC còn thấp ($\approx 0{,}59$)
@@ -319,7 +319,7 @@ Amazon-Book, uAUC nhóm warm ($0{,}6238$) gần chạm CoRA-MF ($0{,}6262$), tro
 xấp xỉ mức ngẫu nhiên. Điều này khẳng định uAUC bị chặn trên bởi \textit{chất lượng véc-tơ cộng tác
 cho người dùng/sản phẩm nguội} chứ không phải bởi cầu nối: ở nhóm warm -- nơi MF cung cấp tín
 hiệu tốt -- CoQLLM khai thác hiệu quả và tiệm cận baseline mạnh nhất. Nhận định này khớp với
-phân tích nghịch lý AUC/uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra đòn bẩy cải thiện tiếp theo
+phân tích nghịch lý AUC/uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra hướng cải thiện tiếp theo
 nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
 
 \section{Thảo luận}

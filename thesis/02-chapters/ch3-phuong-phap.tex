@@ -157,7 +157,7 @@ số bên trong của LLM.
 (Mục~\ref{ssec:cora-rel}), trong khi CoQLLM chỉ dùng đường soft token. Lựa chọn này giữ
 LLM hoàn toàn đóng băng, tránh chi phí và rủi ro bất ổn của việc sinh trọng số theo từng
 mẫu, đồng thời tập trung toàn bộ dung lượng học vào cầu nối căn chỉnh. Trên nền đường soft
-token, luận văn bổ sung hai đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng
+token, luận văn bổ sung hai kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) và mục tiêu bảo toàn thứ tự trong từng người dùng
 (Mục~\ref{ssec:align-rank}) -- nhằm cải thiện lần lượt AUC và uAUC.
 
@@ -346,7 +346,7 @@ khả năng dự đoán chỉ từ văn bản và ổn định hóa LLM trước
 Mô hình được khởi tạo từ checkpoint của Bước 1; LoRA được \textit{đóng băng}, chỉ Q-Former
 và các lớp chiếu được cập nhật -- tách bạch phần ``ngôn ngữ'' (LoRA, học ở Bước 1) khỏi
 phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước duy nhất kích hoạt
-hai đòn bẩy điều kiện hóa theo người dùng (Mục~\ref{ssec:user-conditioned}) và mục tiêu
+hai kỹ thuật điều kiện hóa theo người dùng (Mục~\ref{ssec:user-conditioned}) và mục tiêu
 bảo toàn thứ tự (Mục~\ref{ssec:align-rank}). Nhãn giám sát là token ``Yes'' hoặc ``No''
 tương ứng với nhãn CTR. Checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
 
@@ -364,7 +364,7 @@ Chương này đã trình bày kiến trúc ba khối của CoQLLM và lý do ch
 lớp chiếu tuyến tính của CoLLM. Luận điểm cốt lõi là: cơ chế cross-attention với tập
 truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa LLM có kiểm
 soát hơn, vượt qua giới hạn của giả thiết tuyến tính. Trên nền cầu nối soft token, hai
-đòn bẩy huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
+kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Các lựa chọn thiết kế bổ sung (đa token,
 backbone đã tinh chỉnh chỉ dẫn, tách projector) được trình bày như các thành phần đã khảo
 sát, với kết quả thực nghiệm ở Chương~\ref{Chapter4}.

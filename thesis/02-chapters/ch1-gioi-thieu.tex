@@ -105,7 +105,7 @@ Luận văn này lấp hai khoảng trống nêu trên:
 \begin{quote}
 \textit{Mặc dù Q-Former đã được dùng để nối thông tin cộng tác với LLM (ILM), hướng này
 vẫn chưa được đánh giá dưới quy trình CTR với AUC và uAUC như dòng CoLLM, và chưa được
-khảo sát khi tăng cường bằng các đòn bẩy huấn luyện chuyên biệt và biểu diễn đa token.
+khảo sát khi tăng cường bằng các kỹ thuật huấn luyện chuyên biệt và biểu diễn đa token.
 Luận văn này lấp khoảng trống đó: xây dựng và tăng cường một cầu nối Q-Former để tích
 hợp thông tin cộng tác vào LLM, đánh giá có hệ thống dưới quy trình AUC/uAUC và đối
 chiếu trực tiếp với baseline CoLLM.}
@@ -121,7 +121,7 @@ thông qua cầu nối Q-Former, thay thế lớp chiếu tuyến tính của Co
 xây dựng kiến trúc CoQLLM gồm ba khối nối tiếp -- MF đóng băng, cầu nối
 Q-Former, và LLM đóng băng (Vicuna-7B-v1.5) với LoRA -- trong đó cầu nối Q-Former đóng vai
 trò căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM. Trên nền cầu nối soft token,
-luận văn bổ sung hai đòn bẩy huấn luyện: điều kiện hóa truy vấn theo người dùng
+luận văn bổ sung hai kỹ thuật huấn luyện: điều kiện hóa truy vấn theo người dùng
 (\texttt{user\_conditioned}, nhằm cải thiện AUC) và mục tiêu bảo toàn thứ tự
 trong từng người dùng (\texttt{align\_rank\_loss}, nhằm cải thiện uAUC). Song song, luận văn khảo
 sát các lựa chọn thiết kế bổ sung (biểu diễn đa token, backbone đã tinh chỉnh chỉ dẫn, tách
@@ -137,7 +137,7 @@ Từ hai mục tiêu trên, luận văn đóng góp:
     \item \textbf{Cầu nối Q-Former được thích nghi và tăng cường cho bài toán gợi ý:}
     Luận văn thích nghi kiến trúc Q-Former từ miền ảnh-ngôn ngữ sang miền gợi ý,
     trong đó tín hiệu cộng tác thay thế đặc trưng ảnh như đầu vào của cross-attention, và đưa
-    vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai đòn bẩy huấn luyện --
+    vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai kỹ thuật huấn luyện --
     điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự trong từng người dùng --
     cải thiện lần lượt AUC và uAUC, cùng các lựa chọn thiết kế bổ sung (biểu diễn đa token,
     backbone đã tinh chỉnh chỉ dẫn, tách projector).
@@ -146,7 +146,7 @@ Từ hai mục tiêu trên, luận văn đóng góp:
     cầu nối Q-Former dưới quy trình CTR với AUC và uAUC -- cùng quy trình với CoLLM,
     cho phép so sánh trực tiếp -- trên hai tập dữ liệu MovieLens-1M và Amazon-Book. Đây là
     đánh giá mà các công trình Q-Former trước (ILM) chưa thực hiện, đồng thời cung cấp phân
-    tích ablation về đóng góp của từng đòn bẩy và phân rã warm/cold làm rõ trần uAUC.
+    tích ablation về đóng góp của từng kỹ thuật và phân rã warm/cold làm rõ trần uAUC.
 \end{enumerate}
 
 \textit{Về quan điểm trình bày kết quả:} Luận văn tuân thủ nguyên tắc thực nghiệm trung
@@ -167,13 +167,13 @@ này kết luận rằng cầu nối Q-Former đáng được nghiên cứu và 
 
 \textbf{Chương~\ref{Chapter3} --- Phương pháp đề xuất} trình bày kiến trúc CoQLLM với
 ba khối nối tiếp và lý do chọn Q-Former thay lớp chiếu tuyến tính của CoLLM. Chương này
-mô tả cơ chế Q-Former được thích nghi, hai đòn bẩy huấn luyện (điều kiện hóa truy vấn
+mô tả cơ chế Q-Former được thích nghi, hai kỹ thuật huấn luyện (điều kiện hóa truy vấn
 theo người dùng, mục tiêu bảo toàn thứ tự), các lựa chọn thiết kế, và quy trình huấn
 luyện ba giai đoạn.
 
 \textbf{Chương~\ref{Chapter4} --- Thực nghiệm và Kết quả} trình bày thiết lập thực
 nghiệm trên hai tập dữ liệu MovieLens-1M và Amazon-Book, kết quả so sánh với CoLLM, BinLLM
-và CoRA, phân tích ablation hai đòn bẩy huấn luyện, phân rã warm/cold, và thảo luận hạn chế.
+và CoRA, phân tích ablation hai kỹ thuật huấn luyện, phân rã warm/cold, và thảo luận hạn chế.
 
 \textbf{Chương~\ref{Chapter5} --- Kết luận và Hướng phát triển} tóm tắt đóng góp, chỉ
 ra các hạn chế còn tồn tại và đề xuất hướng nghiên cứu tiếp theo.
