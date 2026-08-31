@@ -33,7 +33,7 @@ tiêu BPR~\cite{bpr2009}.
 
 Điểm mạnh của MF là tính đơn giản, khả năng mở rộng và hiệu quả thực nghiệm đã được
 kiểm chứng. Tuy nhiên, MF học biểu diễn tuyến tính qua tích vô hướng, hạn chế khả năng
-mô hình hóa các quan hệ phi tuyến phức tạp. Lọc cộng tác thần kinh (neural collaborative
+mô hình hóa các quan hệ phi tuyến phức tạp. Lọc cộng tác dùng mạng nơ ron (neural collaborative
 filtering -- NCF)~\cite{ncf2017} mở rộng MF bằng cách thay tích vô hướng bởi mạng nơ-ron
 nhiều lớp, cho phép học các tương tác người dùng--sản phẩm phi tuyến.
 
@@ -53,8 +53,8 @@ tin cấu trúc bậc cao của đồ thị tương tác.
 Mặc dù đạt hiệu quả tốt, các phương pháp lọc cộng tác truyền thống tồn tại ba hạn chế cơ bản:
 
 \textbf{Vấn đề thưa dữ liệu.} Ma trận tương tác người dùng--sản phẩm trong thực
-tế cực kỳ thưa: tỉ lệ quan sát trên tổng số cặp thường dưới 1\%. Dữ liệu thưa dẫn đến
-ước lượng nhúng kém chất lượng cho người dùng và sản phẩm ít tương tác.
+tế cực kỳ thưa: chỉ dưới 1\% số cặp có tương tác được ghi nhận. Sự thưa thớt này khiến
+các véc-tơ nhúng học được cho người dùng và sản phẩm ít tương tác trở nên kém tin cậy.
 
 \textbf{Vấn đề khởi động nguội.} Người dùng mới và sản phẩm mới không có lịch sử tương
 tác, nên các phương pháp lọc cộng tác không thể xây dựng biểu diễn nhúng cho họ. Đây là hạn chế
