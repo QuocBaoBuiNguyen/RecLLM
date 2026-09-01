@@ -89,8 +89,10 @@ lọc cộng tác hoặc xếp hạng đảm nhận.
 đó LLM vừa hiểu ngữ cảnh vừa đưa ra gợi ý. P5~\cite{p52022} là một trong những công
 trình đầu tiên theo hướng này, đặt nhiều bài toán gợi ý (xếp hạng, dự đoán đánh giá,
 giải thích) thành các cặp câu hỏi--trả lời và huấn luyện một mô hình T5 duy nhất cho mọi tác vụ.
-BIGRec~\cite{bigrec2023} tinh chỉnh LLM để gợi ý bằng cách ánh xạ đầu ra ngôn ngữ về
-không gian sản phẩm qua cơ chế căn chỉnh.
+BIGRec~\cite{bigrec2023} tinh chỉnh LLM để sinh ra mô tả sản phẩm hợp với sở thích người
+dùng, sau đó đưa kết quả sinh về không gian sản phẩm: nhúng của đoạn mô tả sinh ra được đối
+chiếu với nhúng của các sản phẩm có thật trong hệ thống, và sản phẩm gần nhất theo khoảng
+cách nhúng được chọn làm gợi ý.
 
 Hướng LLMs-as-RS đặc biệt hấp dẫn vì khả năng tận dụng tri thức thế giới sẵn có trong
 LLM để giải quyết cold-start -- người dùng và sản phẩm mới có thể được mô tả bằng văn
@@ -127,9 +129,10 @@ CoLLM~\cite{collm2023} là baseline nền tảng của luận văn này. CoLLM d
 MLP hai lớp (Linear--ReLU--Linear, tầng ẩn gấp mười lần kích thước nhúng cộng tác) để ánh xạ
 véc-tơ cộng tác từ không gian MF sang không gian nhúng của LLM; mỗi véc-tơ cộng tác được nén
 thành đúng một soft token chèn vào chỉ dẫn. LLM (Llama-2~\cite{llama2}) sau đó
-dự đoán CTR dưới dạng trả lời ``Yes'' hoặc ``No''. Quy trình huấn luyện của
-CoLLM gồm hai bước: bước đầu tiên huấn luyện LoRA cơ sở chỉ với văn bản (không dùng tín hiệu cộng tác), bước
-thứ hai huấn luyện mô hình đầy đủ với soft token cộng tác được bơm vào.
+dự đoán CTR dưới dạng trả lời ``Yes'' hoặc ``No''. CoLLM được huấn luyện theo hai giai đoạn:
+trước tiên, LoRA được tinh chỉnh trên dữ liệu văn bản để LLM học nhiệm vụ khuyến nghị; sau đó,
+mô-đun CIE được huấn luyện để đưa các biểu diễn cộng tác của người dùng và sản phẩm vào
+không gian embedding của LLM.
 
 Điểm mạnh của CoLLM là sự đơn giản và hiệu quả như một baseline mạnh. Tuy nhiên, mô-đun
 chiếu này có hai hạn chế cơ bản: (i)~ánh xạ là \textit{pointwise và cố định} -- cùng một hàm
@@ -149,13 +152,14 @@ Cách tiếp cận này cung cấp một tín hiệu huấn luyện toàn cục 
 tiếp.
 
 Đáng chú ý, SellaRec \textit{đã} được đánh giá trên bài toán CTR với AUC và uAUC trên
-MovieLens-1M -- cùng độ đo và tập dữ liệu với luận văn này. Điều này cho thấy khoảng trống
-đánh giá mà luận văn nhắm đến không phải là khoảng trống của \textit{toàn bộ} dòng CF--LLM,
-mà đặc thù cho \textit{cầu nối Q-Former}: SellaRec lấp khoảng trống bằng cơ chế học tương
-phản, trong khi hướng Q-Former (ILM) vẫn chưa được kiểm chứng dưới quy trình này. Hai cơ
-chế khác nhau về bản chất -- học tương phản căn chỉnh hai không gian qua hàm mất mát toàn
-cục, còn Q-Former chọn lọc và tổng hợp tín hiệu cộng tác qua tập truy vấn học được -- nên
-CoQLLM và SellaRec bổ sung cho nhau hơn là trùng lặp.
+MovieLens-1M, cùng độ đo và tập dữ liệu với luận văn. Như vậy, trong các công trình hiện
+có, hướng căn chỉnh dựa trên học tương phản đã được nghiên cứu và kiểm chứng thực nghiệm,
+trong khi hướng sử dụng Q-Former làm mô-đun cầu nối, tiêu biểu như ILM, đại diện cho một
+cơ chế căn chỉnh khác. Mặc dù đều hướng tới việc thu hẹp khoảng cách giữa không gian biểu
+diễn cộng tác và không gian ngôn ngữ, hai phương pháp khác nhau về bản chất: học tương phản
+căn chỉnh hai không gian thông qua một mục tiêu tương phản ở mức toàn cục, trong khi Q-Former
+sử dụng các truy vấn học được để chọn lọc và tổng hợp tín hiệu cộng tác. Do đó, CoQLLM và
+SellaRec có thể được xem là hai hướng tiếp cận mang tính bổ trợ hơn là trùng lặp về cơ chế.
 
 Tuy nhiên, SellaRec dùng Qwen2-7B-Base~\cite{qwen2} làm backbone LLM. Luận văn này dùng
 Vicuna-7B-v1.5~\cite{vicuna2023} -- một mô hình tinh chỉnh chỉ dẫn trên nền Llama-2, cùng
