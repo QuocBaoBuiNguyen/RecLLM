@@ -288,21 +288,6 @@ ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa
 bằng bộ mã hóa cộng tác (phân rã ma trận), và căn chỉnh tín hiệu cộng tác vào không gian LLM thông
 qua cơ chế cross-attention có kiểm soát.
 
-\subsection{Kỹ thuật ổn định huấn luyện từ Flamingo}
-\label{ssec:flamingo}
-
-Khi gắn một đường truyền mới lên một LLM đóng băng, việc kiểm soát ổn định là quan
-trọng. Flamingo~\cite{flamingo2022} -- một mô hình đa phương thức quy mô lớn -- đề xuất
-kỹ thuật cổng tanh khởi tạo không (zero-initialized tanh gate): mỗi đường truyền mới có
-một tham số cổng $g$ khởi tạo bằng $0$, sao cho ban đầu $\Delta = \tanh(0) \cdot (\ldots)
-= 0$, tức LLM không bị ảnh hưởng bởi tín hiệu mới ngay từ đầu. Trong quá trình huấn
-luyện, cổng học dần để tiếp nhận tín hiệu mới, và hàm $\tanh$ giới hạn biên độ thay đổi
-trong khoảng $(-1, 1)$, ngăn mô hình phân kỳ. CoQLLM kế thừa \textit{nguyên tắc khởi tạo
-bằng không} này: cả phần dịch truy vấn theo người dùng lẫn đầu ra phụ của mục tiêu bảo
-toàn thứ tự đều được khởi tạo bằng không, nên mỗi cơ chế mới bắt đầu ở trạng thái trung
-tính (no-op) và chỉ lớn dần nếu tín hiệu huấn luyện thưởng cho nó (chi tiết tại
-Mục~\ref{sec:qformer}).
-
 \section{Tổng kết và định vị luận văn}
 \label{sec:tong-ket-ch2}
 
