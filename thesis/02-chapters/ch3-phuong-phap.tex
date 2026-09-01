@@ -219,18 +219,6 @@ huấn luyện được phân tích ở Chương~\ref{Chapter4}. Đây là một
 liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng người dùng (Amazon-Book) và
 gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
 
-\subsection{Ổn định huấn luyện bằng khởi tạo bằng không}
-\label{ssec:zero-init}
-
-Hai cơ chế bổ sung trên nền soft token -- điều kiện hóa truy vấn theo người dùng
-(Mục~\ref{ssec:user-conditioned}) và mục tiêu bảo toàn thứ tự (Mục~\ref{ssec:align-rank}) --
-đều được \textit{khởi tạo bằng không} (zero-init). Đây là nguyên tắc ổn định khi gắn một
-đường truyền mới vào LLM đóng băng, kế thừa từ cổng tanh khởi tạo-không (zero-initialized
-tanh gate) của Flamingo~\cite{flamingo2022}: mỗi cơ chế mới bắt đầu ở trạng thái trung tính
-(no-op, $\Delta = 0$) nên không làm nhiễu mô hình ở bước đầu, rồi chỉ lớn dần nếu tín hiệu
-CTR thưởng cho nó trong quá trình huấn luyện. Nhờ đó, việc bổ sung hai cơ chế không làm suy
-giảm điểm khởi đầu và tác dụng của chúng hiện dần một cách có kiểm soát.
-
 \section{Lựa chọn thiết kế bổ sung: biểu diễn đa token}
 \label{sec:lua-chon-thiet-ke}
 
