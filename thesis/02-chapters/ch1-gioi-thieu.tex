@@ -123,8 +123,7 @@ trò căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LL
 luận văn bổ sung hai kỹ thuật huấn luyện: điều kiện hóa truy vấn theo người dùng
 (nhằm cải thiện AUC) và mục tiêu bảo toàn thứ tự
 trong từng người dùng (nhằm cải thiện uAUC). Song song, luận văn khảo
-sát các lựa chọn thiết kế bổ sung (biểu diễn đa token, backbone đã tinh chỉnh chỉ dẫn, tách
-lớp chiếu người dùng và sản phẩm).
+sát các lựa chọn thiết kế bổ sung (biểu diễn đa token).
 
 \textbf{Mục tiêu 2:} Đánh giá có hệ thống cầu nối Q-Former trên bài toán CTR với hai
 độ đo AUC và uAUC trên hai tập dữ liệu MovieLens-1M và Amazon-Book -- điều mà ILM chưa thực
@@ -138,8 +137,7 @@ Từ hai mục tiêu trên, luận văn đóng góp:
     trong đó tín hiệu cộng tác thay thế đặc trưng ảnh như đầu vào của cross-attention, và đưa
     vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai kỹ thuật huấn luyện --
     điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự trong từng người dùng --
-    cải thiện lần lượt AUC và uAUC, cùng các lựa chọn thiết kế bổ sung (biểu diễn đa token,
-    backbone đã tinh chỉnh chỉ dẫn).
+    cải thiện lần lượt AUC và uAUC, cùng lựa chọn thiết kế bổ sung là biểu diễn đa token.
 
     \item \textbf{Đánh giá có hệ thống theo độ đo AUC/uAUC:} Luận văn đánh giá
     cầu nối Q-Former trên bài toán CTR với AUC và uAUC -- cùng quy trình với CoLLM,

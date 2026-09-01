@@ -234,25 +234,6 @@ chỉ dẫn. Biểu diễn đa token (multi-token) giữ nguyên $Q = 8$ truy v�
 dưới dạng $8$ soft token riêng biệt, cung cấp dải băng thông cao hơn để truyền thông tin
 cộng tác vào LLM.
 
-\subsection{Backbone LLM đã tinh chỉnh theo chỉ dẫn}
-\label{ssec:backbone-instruct}
-
-CoQLLM dùng backbone Vicuna-7B-v1.5~\cite{vicuna2023} -- một mô hình đã được tinh chỉnh
-theo chỉ dẫn (instruction-tuned) trên nền Llama-2. Việc chọn Vicuna nhằm so sánh trung
-thực với CoLLM~\cite{collm2023} (vốn dùng Llama-2 cùng họ). Chỉ dẫn theo khuôn mẫu hội
-thoại USER/ASSISTANT của Vicuna: phần người dùng chứa chỉ dẫn CTR cùng vị trí
-\verb|<rec_soft_token>|, và phần trợ lý sinh câu trả lời ``Yes/No''. Bộ tách token được
-mở rộng bằng một token chuyên dụng có định danh riêng cho soft token, tách khỏi từ vựng
-gốc để không va chạm với các token điều khiển của khuôn mẫu.
-
-\textit{Lý do dùng backbone đã tinh chỉnh chỉ dẫn:} Thực nghiệm cho thấy tăng dung lượng
-LoRA không cải thiện kết quả: nâng hạng LoRA lên $r = 16$ trên các lớp $[q,k,v,o]$ dẫn
-đến quá khớp (overfitting) -- mất mát huấn luyện giảm nhanh gấp khoảng hai lần nhưng uAUC
-trên tập kiểm định lại thấp hơn cấu hình $r = 8$ trên $[q,v]$. Kết quả này cho thấy dung
-lượng LoRA không phải nút thắt; nút thắt nằm ở chất lượng căn chỉnh của Q-Former. Backbone
-đã tinh chỉnh chỉ dẫn cung cấp tiên nghiệm tuân theo chỉ dẫn sẵn có, giải phóng dung lượng
-LoRA để tập trung vào việc sử dụng tín hiệu cộng tác.
-
 \section{Quy trình huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
 
@@ -355,6 +336,5 @@ mô-đun chiếu MLP của CoLLM. Luận điểm cốt lõi là: cơ chế cross
 truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa LLM có kiểm
 soát hơn, vượt qua giới hạn của phép chiếu pointwise cố định. Trên nền cầu nối soft token, hai
 kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
-trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Các lựa chọn thiết kế bổ sung (đa token,
-backbone đã tinh chỉnh chỉ dẫn) được trình bày như các thành phần đã khảo
+trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Lựa chọn thiết kế bổ sung là biểu diễn đa token, được trình bày như một thành phần đã khảo
 sát, với kết quả thực nghiệm ở Chương~\ref{Chapter4}.
