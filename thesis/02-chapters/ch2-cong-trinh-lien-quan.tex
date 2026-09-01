@@ -230,15 +230,15 @@ Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp t
 \hline
 \textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế} \\
 \hline
-CoLLM \cite{collm2023} & MLP pointwise (1 token/véc-tơ) & Đơn giản; baseline mạnh & Ánh xạ cố định, không theo ngữ cảnh; không có chọn lọc có kiểm soát \\
+CoLLM \cite{collm2023} & Chiếu MLP pointwise (mỗi véc-tơ thành một token) & Đơn giản; baseline mạnh & Ánh xạ cố định, không phụ thuộc ngữ cảnh; thiếu cơ chế chọn lọc có kiểm soát \\
 \hline
-SellaRec \cite{sellarec2024} & Học tương phản & Tín hiệu huấn luyện toàn cục & Backbone khác (Qwen); so sánh hạn chế \\
+SellaRec \cite{sellarec2024} & Học tương phản & Tín hiệu huấn luyện ở mức toàn cục & Khác họ backbone (Qwen2); khó so sánh trực tiếp \\
 \hline
 BinLLM \cite{binllm2024} & Mã hóa nhị phân & Đơn giản; không cần soft token & Mất mát thông tin khi rời rạc hóa \\
 \hline
-CoRA \cite{cora2024} & Tiêm vào trọng số & Cá nhân hóa sâu trong LLM & Bỏ soft token; không tận dụng căn chỉnh đầu vào \\
+CoRA \cite{cora2024} & Sinh trọng số theo mẫu & Cá nhân hóa sâu bên trong LLM & Bỏ soft token; không tận dụng căn chỉnh ở không gian đầu vào \\
 \hline
-ILM \cite{ilm2024} & Q-Former (cross-attention) & Trích chọn có kiểm soát & Chưa báo AUC/uAUC dưới quy trình CoLLM \\
+ILM \cite{ilm2024} & Q-Former (cross-attention) & Chọn lọc có kiểm soát & Chưa báo cáo AUC/uAUC theo quy trình CoLLM \\
 \hline
 \end{tabular}
 \end{center}
