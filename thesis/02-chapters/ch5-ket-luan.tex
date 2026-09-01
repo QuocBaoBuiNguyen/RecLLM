@@ -7,11 +7,11 @@
 
 Luận văn đặt ra câu hỏi: liệu cầu nối Q-Former -- với cơ chế cross-attention có kiểm
 soát -- có thể căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM hiệu quả
-hơn lớp chiếu tuyến tính của CoLLM hay không? Để trả lời, luận văn thiết kế, hiện thực và đánh
+hơn mô-đun chiếu MLP của CoLLM hay không? Để trả lời, luận văn thiết kế, hiện thực và đánh
 giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục~\ref{sec:dong-gop}:
 
 \textbf{Đóng góp 1: Cầu nối Q-Former được thích nghi và tăng cường cho bài toán gợi ý.}
-CoQLLM thay thế lớp MLP một lớp của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu cộng tác
+CoQLLM thay thế mô-đun chiếu MLP pointwise của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu cộng tác
 (nhúng người dùng, sản phẩm mục tiêu, lịch sử) thay thế đặc trưng ảnh làm đầu vào
 cross-attention và được đưa vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai
 kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự

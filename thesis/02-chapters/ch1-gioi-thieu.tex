@@ -56,20 +56,20 @@ sử tương tác -- để cô đọng tín hiệu cộng tác thành một véc
 được đưa vào LLM như một \textit{soft token}, bổ sung tín hiệu hành vi mà không làm dài
 ngữ cảnh. Cách tiếp cận này được gọi là \textit{tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ}.
 
-CoLLM~\cite{collm2023} là công trình tiên phong theo hướng này: sử dụng một lớp chiếu
-tuyến tính (MLP một lớp) để ánh xạ véc-tơ cộng tác từ không gian MF vào không gian nhúng của
+CoLLM~\cite{collm2023} là công trình tiên phong theo hướng này: sử dụng một mô-đun chiếu
+MLP để ánh xạ véc-tơ cộng tác từ không gian MF vào không gian nhúng của
 LLM, tạo thành các soft token được chèn vào chỉ dẫn. Mặc dù đơn giản và hiệu quả như
-một baseline, lớp chiếu tuyến tính có hạn chế cố hữu: nó không nắm được các quan hệ
-phi tuyến phức tạp giữa không gian cộng tác và không gian ngữ nghĩa của LLM, và không có cơ
-chế \textit{chọn lọc có kiểm soát} -- toàn bộ véc-tơ cộng tác được chiếu một lần qua một
-phép biến đổi duy nhất mà không phân biệt các thành phần nào thực sự quan trọng với ngữ
-cảnh hiện tại.
+một baseline, mô-đun chiếu này có hạn chế cố hữu: nó ánh xạ \textit{độc lập theo từng
+véc-tơ} (pointwise) -- mỗi véc-tơ cộng tác được nén thành đúng một soft token bằng cùng một
+hàm cố định, nên không có cơ chế \textit{chọn lọc có kiểm soát} nào phân biệt các thành
+phần nào thực sự quan trọng với ngữ cảnh hiện tại, cũng không có sự phối hợp giữa các
+nguồn tín hiệu cộng tác khác nhau.
 
 Khoảng cách ngữ nghĩa giữa không gian biểu diễn cộng tác (học từ tín hiệu tương tác)
 và không gian ngữ nghĩa của LLM (học từ ngôn ngữ tự nhiên) là một thách thức căn bản.
 Hai không gian này có nguồn gốc huấn luyện hoàn toàn khác nhau, nên một phép chiếu đơn
 giản khó có thể \textit{căn chỉnh} (alignment) hiệu quả. Điều này đặt ra
-câu hỏi: liệu có cơ chế nối cầu nào mạnh hơn lớp chiếu tuyến tính, có khả năng căn chỉnh
+câu hỏi: liệu có cơ chế nối cầu nào mạnh hơn mô-đun chiếu MLP pointwise, có khả năng căn chỉnh
 tín hiệu cộng tác vào không gian ngữ nghĩa LLM một cách có kiểm soát và linh hoạt hơn?
 
 \section{Khoảng trống nghiên cứu}
@@ -91,7 +91,7 @@ hai khoảng trống quan trọng chưa được giải quyết:
 
 \textbf{Thứ nhất}, ILM chưa đánh giá dưới quy trình dự đoán tỉ lệ nhấp (click-through
 rate -- CTR) với các độ đo AUC và uAUC như CoLLM và các công trình cùng hướng, nên không
-thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với lớp chiếu tuyến tính trên cùng
+thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với mô-đun chiếu MLP của CoLLM trên cùng
 điều kiện thực nghiệm.
 
 \textbf{Thứ hai}, cầu nối Q-Former trong ILM chưa được tăng cường bằng: (i)~điều kiện hóa
@@ -116,7 +116,7 @@ chiếu trực tiếp với baseline CoLLM.}
 Luận văn hướng đến hai mục tiêu chính:
 
 \textbf{Mục tiêu 1:} Thiết kế và hiện thực một mô hình tích hợp tín hiệu cộng tác vào LLM
-thông qua cầu nối Q-Former, thay thế lớp chiếu tuyến tính của CoLLM. Cụ thể, luận văn
+thông qua cầu nối Q-Former, thay thế mô-đun chiếu MLP của CoLLM. Cụ thể, luận văn
 xây dựng kiến trúc CoQLLM gồm ba khối nối tiếp -- MF đóng băng, cầu nối
 Q-Former, và LLM đóng băng (Vicuna-7B-v1.5) với LoRA -- trong đó cầu nối Q-Former đóng vai
 trò căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM. Trên nền cầu nối soft token,
@@ -160,7 +160,7 @@ tương phản, sinh trọng số, Q-Former); và nền tảng kiến trúc Q-Fo
 này kết luận rằng cầu nối Q-Former đáng được nghiên cứu và tăng cường sâu hơn.
 
 \textbf{Chương~\ref{Chapter3} --- Phương pháp đề xuất} trình bày kiến trúc CoQLLM với
-ba khối nối tiếp và lý do chọn Q-Former thay lớp chiếu tuyến tính của CoLLM. Chương này
+ba khối nối tiếp và lý do chọn Q-Former thay mô-đun chiếu MLP của CoLLM. Chương này
 mô tả cơ chế Q-Former được thích nghi, hai kỹ thuật huấn luyện (điều kiện hóa truy vấn
 theo người dùng, mục tiêu bảo toàn thứ tự), các lựa chọn thiết kế, và quy trình huấn
 luyện ba giai đoạn.

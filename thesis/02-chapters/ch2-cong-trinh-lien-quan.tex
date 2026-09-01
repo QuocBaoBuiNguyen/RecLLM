@@ -120,21 +120,24 @@ không gian ngữ nghĩa LLM một cách hiệu quả?
 Nhiều công trình đã đề xuất các cơ chế khác nhau để đưa véc-tơ cộng tác vào LLM. Mục này phân
 tích năm hướng chính và điểm phản biện của từng hướng.
 
-\subsection{Chiếu tuyến tính: CoLLM}
+\subsection{Chiếu qua MLP: CoLLM}
 \label{ssec:collm}
 
-CoLLM~\cite{collm2023} là baseline nền tảng của luận văn này. CoLLM dùng một lớp chiếu
-tuyến tính (lớp MLP một lớp) để ánh xạ véc-tơ cộng tác từ không gian MF sang không gian nhúng
-của LLM, tạo thành soft token được chèn vào chỉ dẫn. LLM (Llama-2~\cite{llama2}) sau đó
+CoLLM~\cite{collm2023} là baseline nền tảng của luận văn này. CoLLM dùng một mô-đun chiếu
+MLP hai lớp (Linear--ReLU--Linear, tầng ẩn gấp mười lần kích thước nhúng cộng tác) để ánh xạ
+véc-tơ cộng tác từ không gian MF sang không gian nhúng của LLM; mỗi véc-tơ cộng tác được nén
+thành đúng một soft token chèn vào chỉ dẫn. LLM (Llama-2~\cite{llama2}) sau đó
 dự đoán CTR dưới dạng trả lời ``Yes'' hoặc ``No''. Quy trình huấn luyện của
 CoLLM gồm hai bước: bước đầu tiên huấn luyện LoRA cơ sở chỉ với văn bản (không dùng tín hiệu cộng tác), bước
 thứ hai huấn luyện mô hình đầy đủ với soft token cộng tác được bơm vào.
 
-Điểm mạnh của CoLLM là sự đơn giản và hiệu quả như một baseline mạnh. Tuy nhiên, lớp
-chiếu tuyến tính có hai hạn chế cơ bản: (i)~phép biến đổi tuyến tính không thể nắm được
-các quan hệ phi tuyến phức tạp giữa không gian cộng tác và không gian ngữ nghĩa LLM; và
-(ii)~không có cơ chế chọn lọc có kiểm soát -- toàn bộ véc-tơ cộng tác được ánh xạ qua một
-phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ cảnh hiện tại.
+Điểm mạnh của CoLLM là sự đơn giản và hiệu quả như một baseline mạnh. Tuy nhiên, mô-đun
+chiếu này có hai hạn chế cơ bản: (i)~ánh xạ là \textit{pointwise và cố định} -- cùng một hàm
+được áp cho từng véc-tơ cộng tác một cách độc lập, không phụ thuộc ngữ cảnh chỉ dẫn và không
+cho phép các nguồn tín hiệu (nhúng người dùng, nhúng sản phẩm mục tiêu, nhúng lịch sử) phối
+hợp với nhau trước khi vào LLM; và (ii)~không có cơ chế chọn lọc có kiểm soát -- toàn bộ nội
+dung một véc-tơ cộng tác bị nén vào ngân sách đúng một token, không phân biệt thành phần nào
+quan trọng với ngữ cảnh hiện tại.
 
 \subsection{Học tương phản: SellaRec}
 \label{ssec:sellarec}
@@ -206,8 +209,8 @@ Cơ chế này có khả năng học cách lọc và tổng hợp tín hiệu c�
 gian ngữ nghĩa LLM.
 
 Tuy nhiên, ILM chưa đánh giá trên bài toán CTR với AUC và uAUC như CoLLM và các công
-trình cùng hướng, nên không thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với lớp
-chiếu tuyến tính.
+trình cùng hướng, nên không thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với mô-đun
+chiếu MLP của CoLLM.
 
 \subsection{Tổng hợp so sánh}
 \label{ssec:tong-hop-so-sanh}
@@ -223,7 +226,7 @@ Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp t
 \hline
 \textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế} \\
 \hline
-CoLLM \cite{collm2023} & MLP tuyến tính một lớp & Đơn giản; baseline mạnh & Tuyến tính; không có chọn lọc có kiểm soát \\
+CoLLM \cite{collm2023} & MLP pointwise (1 token/véc-tơ) & Đơn giản; baseline mạnh & Ánh xạ cố định, không theo ngữ cảnh; không có chọn lọc có kiểm soát \\
 \hline
 SellaRec \cite{sellarec2024} & Học tương phản & Tín hiệu huấn luyện toàn cục & Backbone khác (Qwen); so sánh hạn chế \\
 \hline
@@ -238,7 +241,7 @@ ILM \cite{ilm2024} & Q-Former (cross-attention) & Trích chọn có kiểm soát
 \end{table}
 
 Phân tích trên dẫn đến kết luận: cầu nối Q-Former hứa hẹn nhất về cơ chế căn chỉnh --
-chọn lọc có kiểm soát qua cross-attention, không phụ thuộc vào giả thiết tuyến tính --
+chọn lọc có kiểm soát qua cross-attention, với trọng số tổng hợp thay đổi theo từng mẫu --
 nhưng còn thiếu kiểm chứng theo độ đo AUC/uAUC và chưa được tăng cường bằng các kỹ
 thuật hiện đại. Đây là khoảng trống mà luận văn này nhắm đến.
 
@@ -304,8 +307,8 @@ Nhìn lại bốn nhánh phân tích, có thể rút ra câu kết luận sau:
 \begin{quote}
 \textit{Trong các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ,
 Q-Former nổi lên như cầu nối hứa hẹn nhất: cơ chế cross-attention với tập truy vấn học
-được cho phép chọn lọc đặc trưng cộng tác có kiểm soát, thay vì nén thô qua lớp chiếu
-tuyến tính của CoLLM. Tuy nhiên, hướng này chưa được kiểm chứng theo độ đo AUC/uAUC
+được cho phép chọn lọc đặc trưng cộng tác có kiểm soát, thay vì nén thô qua phép chiếu
+MLP pointwise của CoLLM. Tuy nhiên, hướng này chưa được kiểm chứng theo độ đo AUC/uAUC
 của dòng CoLLM, nên xứng đáng được nghiên cứu sâu hơn.}
 \end{quote}
 

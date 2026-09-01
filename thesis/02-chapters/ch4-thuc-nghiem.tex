@@ -41,7 +41,7 @@ báo cáo trên tập kiểm tra.
 
 \textbf{Baseline chính:}
 \begin{itemize}
-    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP một lớp; cùng giao
+    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP pointwise (mỗi véc-tơ cộng tác thành một token); cùng giao
     thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của cầu nối
     Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN.
     \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân tín hiệu cộng tác vào LLM -- SOTA gần nhất
@@ -335,7 +335,7 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \subsection{Điểm mạnh và hạn chế của cầu nối Q-Former}
 \label{ssec:diem-manh-han-che}
 
-So với lớp chiếu tuyến tính của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
+So với mô-đun chiếu MLP của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
 ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM
 được giữ nguyên khi suy luận -- không có chi phí sinh trọng số theo từng mẫu như hướng sinh
 trọng số của CoRA. Đánh đổi là chi phí huấn luyện cầu nối cao hơn lớp MLP đơn giản, cần cân

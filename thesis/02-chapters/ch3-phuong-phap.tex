@@ -4,8 +4,8 @@
 
 Chương này trình bày kiến trúc CoQLLM -- mô hình được đề xuất trong luận văn -- cùng
 lý do thiết kế và quy trình huấn luyện. Xuất phát từ hạn chế đã phân tích ở
-Chương~\ref{Chapter2}, trục lập luận của chương là: lớp chiếu tuyến tính của CoLLM không
-đủ để căn chỉnh hiệu quả tín hiệu cộng tác vào không gian ngữ nghĩa LLM, và cầu nối Q-Former
+Chương~\ref{Chapter2}, trục lập luận của chương là: mô-đun chiếu MLP pointwise của CoLLM
+không đủ để căn chỉnh hiệu quả tín hiệu cộng tác vào không gian ngữ nghĩa LLM, và cầu nối Q-Former
 với cross-attention có kiểm soát là lựa chọn thay thế tự nhiên hơn.
 
 Mục~\ref{sec:kien-truc-tong-quan} mô tả kiến trúc tổng thể ba khối.
@@ -74,33 +74,38 @@ luyện của MovieLens-1M (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghie
 \section{Cầu nối Q-Former: thành phần cốt lõi}
 \label{sec:qformer}
 
-\subsection{Lý do chọn Q-Former thay lớp chiếu tuyến tính}
+\subsection{Lý do chọn Q-Former thay mô-đun chiếu MLP}
 \label{ssec:ly-do-qformer}
 
-Lớp chiếu tuyến tính của CoLLM~\cite{collm2023} ánh xạ $f: \mathbb{R}^d
-\rightarrow \mathbb{R}^{d_{\text{LLM}}}$ qua một ma trận trọng số duy nhất. Thiết kế
-này có hai hạn chế:
+Mô-đun chiếu của CoLLM~\cite{collm2023} là một MLP hai lớp $g_\phi(\mathbf{x}) =
+\mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2$, ánh xạ
+$g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$ và được áp \textit{độc lập}
+cho từng véc-tơ cộng tác, mỗi véc-tơ cho ra đúng một soft token. Mô-đun này đã là phi tuyến;
+hạn chế của nó nằm ở chỗ khác, gồm hai điểm:
 
-\textbf{Hạn chế 1: Giả thiết tuyến tính.} Phép chiếu tuyến tính giả định rằng không gian
-cộng tác và không gian ngữ nghĩa LLM liên kết qua một ánh xạ affine. Tuy nhiên, hai không gian
-này có nguồn gốc huấn luyện hoàn toàn khác nhau -- một từ tín hiệu tương tác,
-một từ ngôn ngữ tự nhiên -- và quan hệ giữa chúng nhiều khả năng phi tuyến và phức tạp.
+\textbf{Hạn chế 1: Ánh xạ cố định, không phụ thuộc ngữ cảnh.} Cùng một hàm $g_\phi$ được áp
+cho mọi véc-tơ cộng tác của mọi mẫu; đầu ra ứng với một véc-tơ không phụ thuộc vào các véc-tơ
+còn lại trong cùng mẫu, cũng không phụ thuộc vào phần chỉ dẫn văn bản đi kèm. Các nguồn tín
+hiệu cộng tác vì thế không có cơ hội phối hợp với nhau trước khi đi vào LLM, dù hai không gian
+cần căn chỉnh có nguồn gốc huấn luyện hoàn toàn khác nhau -- một từ tín hiệu tương tác, một từ
+ngôn ngữ tự nhiên.
 
-\textbf{Hạn chế 2: Không có chọn lọc có kiểm soát.} Lớp chiếu ánh xạ toàn bộ véc-tơ
-cộng tác qua một phép biến đổi duy nhất, không phân biệt thành phần nào quan trọng với ngữ
-cảnh hiện tại. Trong khi đó, bài toán CTR đòi hỏi tích hợp thông tin từ nhiều nguồn
-(nhúng người dùng, nhúng phim mục tiêu, nhúng lịch sử) một cách linh hoạt theo từng mẫu.
+\textbf{Hạn chế 2: Không có chọn lọc có kiểm soát.} Toàn bộ nội dung một véc-tơ cộng tác bị
+nén vào ngân sách đúng một token, qua một phép biến đổi duy nhất, không phân biệt thành phần
+nào quan trọng với ngữ cảnh hiện tại. Trong khi đó, bài toán CTR đòi hỏi tích hợp thông tin
+từ nhiều nguồn (nhúng người dùng, nhúng phim mục tiêu, nhúng lịch sử) một cách linh hoạt theo
+từng mẫu.
 
 Q-Former giải quyết cả hai hạn chế trên, nhưng nguồn gốc của lợi thế cần được xác định
-chính xác. Khác với lớp chiếu tuyến tính dùng chung một ma trận cho mọi mẫu,
+chính xác. Khác với mô-đun chiếu MLP dùng chung một hàm cố định cho mọi véc-tơ và mọi mẫu,
 cross-attention trong Q-Former thực hiện tổng hợp \textit{phụ thuộc đầu vào}
-(input-dependent): trọng số tổng hợp các véc-tơ cộng tác thay đổi theo từng mẫu, vượt qua giả
-thiết ánh xạ affine cố định. Tuy nhiên, lợi thế chính \textit{không} nằm ở khả năng nén
+(input-dependent): trọng số tổng hợp các véc-tơ cộng tác thay đổi theo từng mẫu, vượt qua
+giới hạn của ánh xạ pointwise cố định. Tuy nhiên, lợi thế chính \textit{không} nằm ở khả năng nén
 của cross-attention -- vì đầu vào cộng tác chỉ gồm vài véc-tơ, cross-attention chủ yếu đóng vai
 trò tổng hợp có trọng số (chi tiết tại Mục~\ref{ssec:qformer-kien-truc}) -- mà nằm ở
 \textit{tập véc-tơ truy vấn học được phối hợp qua self-attention}: mỗi truy vấn học cách
 trích xuất một khía cạnh khác nhau của tín hiệu cộng tác và điều phối lẫn nhau để tổng hợp biểu
-diễn tối ưu cho tác vụ, điều mà một phép chiếu tuyến tính đơn lẻ không làm được. Đây là
+diễn tối ưu cho tác vụ, điều mà một MLP pointwise đơn lẻ không làm được. Đây là
 luận điểm được nhất quán xuyên suốt chương và được kiểm chứng qua ablation ở
 Mục~\ref{sec:ablation}.
 
@@ -350,7 +355,7 @@ bảo toàn thứ tự (Mục~\ref{ssec:align-rank}). Nhãn giám sát là token
 tương ứng với nhãn CTR. Checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
 
 \textbf{Chi phí tính toán.} So với CoLLM, CoQLLM có chi phí huấn luyện cao hơn do kiến
-trúc Q-Former phức tạp hơn lớp chiếu tuyến tính. Vì tín hiệu cộng tác chỉ đi qua đường soft
+trúc Q-Former phức tạp hơn mô-đun chiếu MLP. Vì tín hiệu cộng tác chỉ đi qua đường soft
 token và không sinh trọng số theo từng mẫu, LLM được giữ nguyên hoàn toàn khi suy luận.
 Chi phí cụ thể (số tham số huấn luyện được, thời gian huấn luyện mỗi giai đoạn) được báo
 cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố chi phí tăng thêm là
@@ -360,9 +365,9 @@ cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố c
 \label{sec:ket-chuong-3}
 
 Chương này đã trình bày kiến trúc ba khối của CoQLLM và lý do chọn cầu nối Q-Former thay
-lớp chiếu tuyến tính của CoLLM. Luận điểm cốt lõi là: cơ chế cross-attention với tập
+mô-đun chiếu MLP của CoLLM. Luận điểm cốt lõi là: cơ chế cross-attention với tập
 truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa LLM có kiểm
-soát hơn, vượt qua giới hạn của giả thiết tuyến tính. Trên nền cầu nối soft token, hai
+soát hơn, vượt qua giới hạn của phép chiếu pointwise cố định. Trên nền cầu nối soft token, hai
 kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Các lựa chọn thiết kế bổ sung (đa token,
 backbone đã tinh chỉnh chỉ dẫn, tách projector) được trình bày như các thành phần đã khảo
