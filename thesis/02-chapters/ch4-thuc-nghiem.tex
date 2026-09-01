@@ -263,7 +263,7 @@ phương pháp.
 ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-che}): (i)~thay cầu nối Q-Former
 bằng một bộ chiếu \textit{attention-MLP} (MLP có self-attention nhưng không có truy vấn học
 được) để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến + attention đơn
-thuần; (ii)~bật/tắt riêng biểu diễn đa token và tách projector dưới cùng backbone Vicuna;
+thuần; (ii)~bật/tắt riêng biểu diễn đa token dưới cùng backbone Vicuna;
 (iii)~ablation hàm mất mát bảo toàn thứ tự trên MovieLens-1M (kỳ
 vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số ước lượng cho các hàng này.
 
@@ -352,8 +352,8 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là đối chứng quan
     trọng nhất để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến +
     attention đơn thuần; hiện được ghi nhận là hướng thực nghiệm còn để ngỏ.
-    \item \textbf{Các ablation thành phần chưa đầy đủ:} Bật/tắt riêng biểu diễn đa token,
-    tách projector, và hàm mất mát bảo toàn thứ tự trên MovieLens-1M đều chưa được chạy
+    \item \textbf{Các ablation thành phần chưa đầy đủ:} Bật/tắt riêng biểu diễn đa token
+    và hàm mất mát bảo toàn thứ tự trên MovieLens-1M đều chưa được chạy
     dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
     \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone Qwen2-Base khác họ với
     Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên

@@ -253,20 +253,6 @@ lượng LoRA không phải nút thắt; nút thắt nằm ở chất lượng c
 đã tinh chỉnh chỉ dẫn cung cấp tiên nghiệm tuân theo chỉ dẫn sẵn có, giải phóng dung lượng
 LoRA để tập trung vào việc sử dụng tín hiệu cộng tác.
 
-\subsection{Tách lớp chiếu người dùng và sản phẩm}
-\label{ssec:tach-projector}
-
-Trong kiến trúc cơ sở, một lớp chiếu chung ánh xạ cả nhúng người dùng lẫn nhúng sản
-phẩm từ không gian MF sang không gian Q-Former. Tuy nhiên, đặc trưng hình học của
-véc-tơ người dùng (user-factor) và véc-tơ sản phẩm (item-factor) trong không gian MF
-khác nhau: người dùng mã hóa sở thích tổng hợp, trong khi sản phẩm mã hóa thuộc tính
-nội dung. Dùng chung một phép chiếu cho cả hai loại có thể gây xung đột hình học.
-
-Lựa chọn thiết kế này tách thành hai lớp chiếu riêng: một cho nhúng người dùng $e_u$
-và một cho các nhúng sản phẩm $\{e_i, e_{i'}\}$. Để duy trì khả năng nạp từ checkpoint
-cũ (chỉ có một lớp chiếu chung), trọng số của lớp chiếu chung được khởi tạo đồng thời
-cho cả hai lớp mới.
-
 \section{Quy trình huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
 
@@ -370,5 +356,5 @@ truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào kh
 soát hơn, vượt qua giới hạn của phép chiếu pointwise cố định. Trên nền cầu nối soft token, hai
 kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Các lựa chọn thiết kế bổ sung (đa token,
-backbone đã tinh chỉnh chỉ dẫn, tách projector) được trình bày như các thành phần đã khảo
+backbone đã tinh chỉnh chỉ dẫn) được trình bày như các thành phần đã khảo
 sát, với kết quả thực nghiệm ở Chương~\ref{Chapter4}.
