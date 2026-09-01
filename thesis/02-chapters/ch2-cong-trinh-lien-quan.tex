@@ -99,7 +99,7 @@ LLM để giải quyết cold-start -- người dùng và sản phẩm mới có
 bản, và LLM có thể suy luận về sở thích ngay cả khi chưa có lịch sử tương tác. Luận văn
 này theo đuổi hướng LLMs-as-RS.
 
-\subsection{Rào cản về độ dài ngữ cảnh}
+\subsection{Giới hạn độ dài ngữ cảnh}
 \label{ssec:rao-can-context}
 
 Khi đặt bài toán gợi ý như tác vụ ngôn ngữ, cách tự nhiên nhất để cung cấp thông tin
@@ -116,13 +116,13 @@ nén} -- tổng hợp từ toàn bộ lịch sử -- và đưa véc-tơ này và
 Rào cản này đặt ra vấn đề trung tâm: làm thế nào để \textit{căn chỉnh} véc-tơ cộng tác vào
 không gian ngữ nghĩa LLM một cách hiệu quả?
 
-\section{Các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ}
+\section{Tích hợp biểu diễn cộng tác vào LLM}
 \label{sec:cach-noi-cf-llm}
 
 Nhiều công trình đã đề xuất các cơ chế khác nhau để đưa véc-tơ cộng tác vào LLM. Mục này phân
 tích năm hướng chính và điểm phản biện của từng hướng.
 
-\subsection{Chiếu qua MLP: CoLLM}
+\subsection{Ánh xạ MLP: CoLLM}
 \label{ssec:collm}
 
 CoLLM~\cite{collm2023} là baseline nền tảng của luận văn này. CoLLM dùng một mô-đun chiếu
@@ -142,7 +142,7 @@ hợp với nhau trước khi vào LLM; và (ii)~không có cơ chế chọn l�
 dung một véc-tơ cộng tác bị nén vào ngân sách đúng một token, không phân biệt thành phần nào
 quan trọng với ngữ cảnh hiện tại.
 
-\subsection{Học tương phản: SellaRec}
+\subsection{Căn chỉnh tương phản: SellaRec}
 \label{ssec:sellarec}
 
 SellaRec~\cite{sellarec2024} căn chỉnh biểu diễn cộng tác và biểu diễn ngôn ngữ thông qua học
@@ -168,7 +168,7 @@ liệu giữa SellaRec và CoQLLM có thể thực hiện được nhưng cần 
 (Qwen2-Base so với Vicuna/Llama-2) và quy trình phân chia dữ liệu có thể ảnh hưởng đến kết
 quả quan sát được.
 
-\subsection{Mã hóa dạng văn bản: BinLLM}
+\subsection{Mã hóa văn bản: BinLLM}
 \label{ssec:binllm}
 
 BinLLM~\cite{binllm2024} đề xuất mã hóa véc-tơ cộng tác thành chuỗi ký tự nhị phân, cho phép
@@ -181,7 +181,7 @@ thông tin từ véc-tơ cộng tác liên tục, dẫn đến mất mát thông
 ra, chuỗi nhị phân không mang ý nghĩa ngữ nghĩa trong từ vựng LLM, nên LLM phải học cách
 diễn giải cú pháp nhị phân -- một bài toán học bổ sung không tầm thường.
 
-\subsection{Hiệu chỉnh trọng số LLM: CoRA}
+\subsection{Thích nghi tham số LLM: CoRA}
 \label{ssec:cora-rel}
 
 CoRA~\cite{cora2024} đề xuất một cơ chế khác biệt: thay vì đưa tín hiệu cộng tác vào không gian đầu
@@ -203,7 +203,7 @@ số của CoRA; thay vào đó, \textit{mô hình} CoRA nguyên bản được 
 sánh trong thực nghiệm trên Amazon-Book (Chương~\ref{Chapter4}), đặt cạnh CoLLM và BinLLM
 để định vị CoQLLM trong cùng hướng nghiên cứu.
 
-\subsection{Cầu nối Q-Former: ILM}
+\subsection{Căn chỉnh qua Q-Former: ILM}
 \label{ssec:ilm}
 
 ILM~\cite{ilm2024} là công trình đầu tiên áp dụng Q-Former như cầu nối tích hợp tín hiệu
@@ -216,7 +216,7 @@ Tuy nhiên, ILM chưa đánh giá trên bài toán CTR với AUC và uAUC như C
 trình cùng hướng, nên không thể so sánh trực tiếp hiệu quả của cầu nối Q-Former với mô-đun
 chiếu MLP của CoLLM.
 
-\subsection{Tổng hợp so sánh}
+\subsection{So sánh các phương pháp}
 \label{ssec:tong-hop-so-sanh}
 
 Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp so sánh các phương pháp tích hợp tín hiệu cộng tác vào LLM
@@ -249,7 +249,7 @@ chọn lọc có kiểm soát qua cross-attention, với trọng số tổng h�
 nhưng còn thiếu kiểm chứng theo độ đo AUC/uAUC và chưa được tăng cường bằng các kỹ
 thuật hiện đại. Đây là khoảng trống mà luận văn này nhắm đến.
 
-\section{Nền tảng kiến trúc Q-Former (BLIP-2)}
+\section{Cơ sở kiến trúc Q-Former}
 \label{sec:nen-tang-qformer}
 
 BLIP-2~\cite{blip2_2023} giới thiệu Q-Former (Querying Transformer) như một cầu nối nhẹ
@@ -285,7 +285,7 @@ ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa
 bằng bộ mã hóa cộng tác (phân rã ma trận), và căn chỉnh tín hiệu cộng tác vào không gian LLM thông
 qua cơ chế cross-attention có kiểm soát.
 
-\section{Tổng kết và định vị luận văn}
+\section{Khoảng trống nghiên cứu và định hướng đề xuất}
 \label{sec:tong-ket-ch2}
 
 Nhìn lại bốn nhánh phân tích, có thể rút ra câu kết luận sau:

@@ -1,5 +1,5 @@
 % !TEX root = ../main.tex
-\chapter{Thực nghiệm và Kết quả}
+\chapter{Thực nghiệm và kết quả}
 \label{Chapter4}
 
 Chương này trình bày thiết lập thực nghiệm, kết quả đánh giá CoQLLM so với các baseline,
@@ -28,7 +28,7 @@ LLM/Q-Former có nhiều dư địa đóng góp. Nhãn CTR được nhị phân 
 Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim và làm nổi
 bật vai trò của mục tiêu bảo toàn thứ tự trong từng người dùng (Mục~\ref{ssec:align-rank}).
 
-\subsection{Phân chia dữ liệu và quy trình đánh giá}
+\subsection{Phân chia dữ liệu và thiết lập đánh giá}
 \label{ssec:phan-chia}
 
 Theo quy trình của CoLLM~\cite{collm2023}, dữ liệu được sắp xếp theo thời gian và phân
@@ -36,7 +36,7 @@ chia thành tập huấn luyện, kiểm định và kiểm tra theo tỉ lệ 8
 công bằng, các siêu tham số được chọn dựa trên tập kiểm định và số liệu cuối cùng được
 báo cáo trên tập kiểm tra.
 
-\subsection{Các mô hình baseline}
+\subsection{Mô hình so sánh}
 \label{ssec:baseline}
 
 \textbf{Baseline chính:}
@@ -69,7 +69,7 @@ lại (re-run) trong CoRA~\cite{cora2024} để đảm bảo cùng phân chia d�
 khác biệt quy trình: CoQLLM chọn checkpoint tốt nhất theo \textbf{uAUC}, trong khi
 CoLLM/CoRA chọn theo \textbf{AUC}; điều này được ghi chú trực tiếp ở bảng kết quả.
 
-\subsection{Độ đo đánh giá}
+\subsection{Chỉ số đánh giá}
 \label{ssec:do-do}
 
 Luận văn dùng hai độ đo chính theo quy trình CoLLM:
@@ -87,7 +87,7 @@ Bổ sung: Accuracy và F1 (độ đo phân loại nhị phân), Precision@K và
 (độ đo xếp hạng top-K), và cosine similarity trước/sau căn chỉnh (đo mức độ thu hẹp
 khoảng cách ngữ nghĩa CF--LLM).
 
-\subsection{Cài đặt mô hình}
+\subsection{Chi tiết cài đặt}
 \label{ssec:cai-dat}
 
 \begin{itemize}
@@ -117,7 +117,7 @@ khoảng cách ngữ nghĩa CF--LLM).
     nói trên ($0{,}65$--$0{,}84$ giây/iteration tùy giai đoạn).
 \end{itemize}
 
-\section{Kết quả chính}
+\section{Kết quả tổng thể}
 \label{sec:ket-qua-chinh}
 
 Bảng~\ref{tab:ket-qua-chinh} và Bảng~\ref{tab:ket-qua-book} so sánh CoQLLM với CoLLM,
@@ -201,7 +201,7 @@ nhẹ) và cần được đọc kèm khác biệt này. Trên Amazon-Book, số
 cấu hình huấn luyện và cỡ tập người dùng nhiễu); luận văn vì thế định vị kết quả là ``cạnh
 tranh/vượt baseline dưới quy trình có kiểm soát'' thay vì đuổi theo một con số tuyệt đối.
 
-\section{Phân tích nghịch lý AUC/uAUC}
+\section{Phân tích khác biệt AUC--uAUC}
 \label{sec:nghich-ly}
 
 uAUC tính AUC trong phạm vi từng người dùng rồi lấy trung bình, nên bất biến với các
@@ -221,7 +221,7 @@ mà ở \textit{chất lượng véc-tơ cộng tác của MF cho người dùng
 định hướng cải thiện uAUC về phía MF teacher (Mục~\ref{sec:huong-phat-trien}) thay vì tinh
 chỉnh thêm kiến trúc cầu nối.
 
-\section{Phân tích ablation}
+\section{Thí nghiệm loại bỏ thành phần}
 \label{sec:ablation}
 
 Bảng~\ref{tab:ablation} trình bày phân tích ablation các thành phần của CoQLLM.
@@ -272,7 +272,7 @@ vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số
 \section{Phân tích bổ sung}
 \label{sec:phan-tich-bo-sung}
 
-\subsection{Đo lường khoảng cách ngữ nghĩa}
+\subsection{Khoảng cách ngữ nghĩa}
 \label{ssec:cosine-sim}
 
 Để kiểm chứng rằng cầu nối Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
@@ -282,7 +282,7 @@ cầu nối; (ii)~soft token đầu ra Q-Former và véc-tơ nhúng token LLM sa
 Kết quả kỳ vọng: cosine similarity tăng sau huấn luyện, cho thấy Q-Former thực sự căn
 chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 
-\subsection{Phân tích theo nhóm người dùng (warm/cold)}
+\subsection{Phân tích theo nhóm warm/cold}
 \label{ssec:user-group}
 
 Để kiểm chứng động lực cold-start, luận văn phân rã tập kiểm tra thành hai nhóm: người dùng
@@ -327,14 +327,14 @@ nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
 \section{Thảo luận}
 \label{sec:thao-luan}
 
-\subsection{Đối chiếu với ILM về quy trình đánh giá}
+\subsection{Đối chiếu với ILM}
 \label{ssec:doi-chieu-ilm}
 
 ILM~\cite{ilm2024} không báo cáo AUC/uAUC cho bài toán CTR, nên không thể so sánh
 số liệu trực tiếp. Đây là lý do chính luận văn đặt ra mục tiêu đánh giá Q-Former dưới
 quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều kiện thực nghiệm.
 
-\subsection{Điểm mạnh và hạn chế của cầu nối Q-Former}
+\subsection{Ưu điểm và hạn chế của Q-Former}
 \label{ssec:diem-manh-han-che}
 
 So với mô-đun chiếu MLP của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
@@ -343,7 +343,7 @@ ràng hơn qua tập truy vấn học được và self-attention. Vì tín hi�
 trọng số của CoRA. Đánh đổi là chi phí huấn luyện cầu nối cao hơn lớp MLP đơn giản, cần cân
 nhắc tùy điều kiện triển khai.
 
-\section{Hạn chế}
+\section{Hạn chế nghiên cứu}
 \label{sec:han-che}
 
 Luận văn thừa nhận các hạn chế thực nghiệm sau:

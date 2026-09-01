@@ -14,7 +14,7 @@ cầu nối Q-Former và lý do chọn nó thay MLP. Mục~\ref{sec:lua-chon-thi
 lựa chọn thiết kế bổ sung. Mục~\ref{sec:ba-giai-doan} trình bày quy trình huấn luyện
 ba giai đoạn.
 
-\section{Tổng quan kiến trúc}
+\section{Kiến trúc tổng thể}
 \label{sec:kien-truc-tong-quan}
 
 \textbf{Bài toán.} Luận văn giải quyết bài toán dự đoán tỉ lệ nhấp (click-through rate
@@ -54,7 +54,7 @@ cộng tác được đưa vào LLM qua một đường duy nhất -- soft token
 vì can thiệp vào trọng số của LLM. Thiết kế này bảo toàn tri thức ngôn ngữ sẵn có của
 LLM, giảm chi phí huấn luyện, và cho phép phân tích rõ ràng đóng góp của cầu nối căn chỉnh.
 
-\section{Khối Phân rã ma trận}
+\section{Mô-đun phân rã ma trận}
 \label{sec:mf}
 
 Khối MF đóng vai trò nguồn tín hiệu lọc cộng tác. Từ ma trận tương tác người dùng--sản
@@ -71,10 +71,10 @@ chất lượng tín hiệu cộng tác khỏi quá trình tối ưu hóa LLM, t
 nút thắt của hệ thống. Trong phạm vi luận văn, MF được huấn luyện trên phần tập huấn
 luyện của MovieLens-1M (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghiem}).
 
-\section{Cầu nối Q-Former: thành phần cốt lõi}
+\section{Cầu nối Q-Former}
 \label{sec:qformer}
 
-\subsection{Lý do chọn Q-Former thay mô-đun chiếu MLP}
+\subsection{Động cơ lựa chọn Q-Former}
 \label{ssec:ly-do-qformer}
 
 Mô-đun chiếu của CoLLM~\cite{collm2023} là một MLP hai lớp $g_\phi(\mathbf{x}) =
@@ -109,7 +109,7 @@ diễn tối ưu cho tác vụ, điều mà một MLP pointwise đơn lẻ khôn
 luận điểm được nhất quán xuyên suốt chương và được kiểm chứng qua ablation ở
 Mục~\ref{sec:ablation}.
 
-\subsection{Điều chỉnh kiến trúc Q-Former cho bài toán gợi ý}
+\subsection{Q-Former cho bài toán khuyến nghị}
 \label{ssec:qformer-kien-truc}
 
 Cầu nối được xây dựng dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. CoQLLM
@@ -141,7 +141,7 @@ giữa chúng}, chứ không phải khả năng nén. Nhận định này nhất
 rằng việc tăng số lớp Q-Former không cải thiện đáng kể kết quả -- dung lượng không phải nút
 thắt, chất lượng căn chỉnh mới là điều quyết định.
 
-\subsection{Đưa tín hiệu cộng tác vào LLM qua soft token}
+\subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
 
 Khối truy vấn $\mathbf{Z}$ được chiếu từ không gian Q-Former sang không gian nhúng của LLM
@@ -188,7 +188,7 @@ trong khi gần như trung tính với uAUC, vốn bất biến với dịch chu
 người dùng. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng không, cơ chế tương
 thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
 
-\subsection{Hàm mất mát bảo toàn thứ tự trong từng người dùng}
+\subsection{Hàm mất mát bảo toàn thứ hạng theo người dùng}
 \label{ssec:align-rank}
 
 Hàm mất mát mặc định của Giai đoạn 3 là entropy chéo nhị phân (BCE) trên token
@@ -219,7 +219,7 @@ huấn luyện được phân tích ở Chương~\ref{Chapter4}. Đây là một
 liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng người dùng (Amazon-Book) và
 gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
 
-\section{Lựa chọn thiết kế bổ sung: biểu diễn đa token}
+\section{Biểu diễn cộng tác đa token}
 \label{sec:lua-chon-thiet-ke}
 
 Ngoài kiến trúc cầu nối Q-Former, CoQLLM còn dùng một lựa chọn thiết kế bổ sung là biểu
@@ -231,13 +231,13 @@ chỉ dẫn. Biểu diễn đa token (multi-token) giữ nguyên $Q = 8$ truy v�
 dưới dạng $8$ soft token riêng biệt, cung cấp dải băng thông cao hơn để truyền thông tin
 cộng tác vào LLM.
 
-\section{Quy trình huấn luyện ba giai đoạn}
+\section{Huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
 
 CoQLLM được huấn luyện qua ba giai đoạn nối tiếp, theo quy trình của CoLLM~\cite{collm2023}
 với điều chỉnh cho phù hợp với kiến trúc Q-Former.
 
-\subsection{Giai đoạn 1: Tiền huấn luyện biểu diễn}
+\subsection{Tiền huấn luyện biểu diễn}
 \label{ssec:stage1}
 
 Q-Former được huấn luyện với bốn mục tiêu tương phản và căn chỉnh:
@@ -293,7 +293,7 @@ phần đầu danh sách sẽ thiên lệch về các tương tác sớm (phim v
 khi cắt, biến giới hạn $20{.}000$ thành một mẫu ngẫu nhiên đồng nhất mà vẫn bảo đảm tính
 tái lập.
 
-\subsection{Giai đoạn 2: Tiền huấn luyện sinh}
+\subsection{Tiền huấn luyện sinh}
 \label{ssec:stage2}
 
 Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ: từ biểu diễn Q-Former
@@ -301,7 +301,7 @@ của tín hiệu cộng tác, sinh văn bản mô tả sản phẩm. Giai đo�
 thành soft token mà LLM có thể diễn giải -- tức căn chỉnh không gian Q-Former với không
 gian ngữ nghĩa của LLM đóng băng.
 
-\subsection{Giai đoạn 3: Tinh chỉnh CTR}
+\subsection{Tinh chỉnh CTR}
 \label{ssec:stage3}
 
 Giai đoạn này theo quy trình hai bước của CoLLM~\cite{collm2023}:
@@ -325,7 +325,7 @@ Chi phí cụ thể (số tham số huấn luyện được, thời gian huấn 
 cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố chi phí tăng thêm là
 ``không đáng kể''; đây là đánh đổi có chủ đích cho chất lượng căn chỉnh tốt hơn.
 
-\section{Kết chương}
+\section{Tổng kết chương}
 \label{sec:ket-chuong-3}
 
 Chương này đã trình bày kiến trúc ba khối của CoQLLM và lý do chọn cầu nối Q-Former thay
