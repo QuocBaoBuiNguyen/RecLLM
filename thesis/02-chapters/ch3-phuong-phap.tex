@@ -9,7 +9,7 @@ không đủ để căn chỉnh hiệu quả tín hiệu cộng tác vào không
 với cross-attention có kiểm soát là lựa chọn thay thế tự nhiên hơn.
 
 Mục~\ref{sec:kien-truc-tong-quan} mô tả kiến trúc tổng thể ba khối.
-Mục~\ref{sec:mf} trình bày khối phân rã ma trận. Mục~\ref{sec:qformer} là lõi kỹ thuật:
+Mục~\ref{sec:mf} trình bày mô-đun phân rã ma trận. Mục~\ref{sec:qformer} là lõi kỹ thuật:
 cầu nối Q-Former và lý do chọn nó thay MLP. Mục~\ref{sec:lua-chon-thiet-ke} trình bày
 lựa chọn thiết kế bổ sung. Mục~\ref{sec:ba-giai-doan} trình bày quy trình huấn luyện
 ba giai đoạn.
@@ -27,7 +27,7 @@ bằng AUC và uAUC (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghiem}).
 Hình~\ref{fig:kien-truc}:
 
 \begin{enumerate}
-    \item \textbf{Khối Phân rã ma trận (MF)} -- cung cấp tín hiệu lọc cộng tác dưới dạng
+    \item \textbf{Mô-đun Phân rã ma trận (MF)} -- cung cấp tín hiệu lọc cộng tác dưới dạng
     véc-tơ nhúng cho người dùng và sản phẩm.
 
     \item \textbf{Cầu nối Q-Former} -- nén và căn chỉnh véc-tơ cộng tác vào không gian ngữ nghĩa
@@ -40,7 +40,7 @@ Hình~\ref{fig:kien-truc}:
 \begin{figure}[htp]
 \centering
 \includegraphics[width=12cm]{images/coqllm-architecture.drawio.png}
-\caption{Kiến trúc tổng quan của CoQLLM. Khối MF đóng băng cung cấp tín hiệu lọc cộng
+\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF đóng băng cung cấp tín hiệu lọc cộng
 tác; cầu nối Q-Former căn chỉnh tín hiệu này thành các soft token được chèn vào chỉ dẫn;
 LLM đóng băng thực hiện suy luận. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được
 huấn luyện.}
@@ -57,7 +57,7 @@ LLM, giảm chi phí huấn luyện, và cho phép phân tích rõ ràng đóng 
 \section{Mô-đun phân rã ma trận}
 \label{sec:mf}
 
-Khối MF đóng vai trò nguồn tín hiệu lọc cộng tác. Từ ma trận tương tác người dùng--sản
+Mô-đun MF đóng vai trò nguồn tín hiệu lọc cộng tác. Từ ma trận tương tác người dùng--sản
 phẩm, MF học ánh xạ mỗi người dùng $u$ và sản phẩm $i$ thành các véc-tơ nhúng ẩn
 $e_u, e_i \in \mathbb{R}^{d}$ sao cho tích vô hướng $e_u^\top e_i$ phản ánh mức độ ưa thích. MF được huấn luyện theo mục tiêu xếp hạng cặp BPR~\cite{bpr2009}, sau đó được đóng
 băng.
