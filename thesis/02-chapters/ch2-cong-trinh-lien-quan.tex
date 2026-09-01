@@ -162,8 +162,8 @@ sử dụng các truy vấn học được để chọn lọc và tổng hợp t
 SellaRec có thể được xem là hai hướng tiếp cận mang tính bổ trợ hơn là trùng lặp về cơ chế.
 
 Tuy nhiên, SellaRec dùng Qwen2-7B-Base~\cite{qwen2} làm backbone LLM. Luận văn này dùng
-Vicuna-7B-v1.5~\cite{vicuna2023} -- một mô hình tinh chỉnh chỉ dẫn trên nền Llama-2, cùng
-họ với backbone Llama-2 của CoLLM -- để so sánh trung thực với baseline chính. So sánh số
+Vicuna-7B-v1.5~\cite{vicuna2023} -- cùng lớp backbone Vicuna instruction-tuned mà CoLLM
+sử dụng (Vicuna-7B-v1.1) -- để so sánh trung thực với baseline chính. So sánh số
 liệu giữa SellaRec và CoQLLM có thể thực hiện được nhưng cần lưu ý: sự khác biệt backbone
 (Qwen2-Base so với Vicuna/Llama-2) và quy trình phân chia dữ liệu có thể ảnh hưởng đến kết
 quả quan sát được.

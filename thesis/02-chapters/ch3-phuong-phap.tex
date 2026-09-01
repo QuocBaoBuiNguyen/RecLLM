@@ -11,7 +11,7 @@ với cross-attention có kiểm soát là lựa chọn thay thế tự nhiên h
 Mục~\ref{sec:kien-truc-tong-quan} mô tả kiến trúc tổng thể ba khối.
 Mục~\ref{sec:mf} trình bày khối phân rã ma trận. Mục~\ref{sec:qformer} là lõi kỹ thuật:
 cầu nối Q-Former và lý do chọn nó thay MLP. Mục~\ref{sec:lua-chon-thiet-ke} trình bày
-các lựa chọn thiết kế bổ sung. Mục~\ref{sec:ba-giai-doan} trình bày quy trình huấn luyện
+lựa chọn thiết kế bổ sung. Mục~\ref{sec:ba-giai-doan} trình bày quy trình huấn luyện
 ba giai đoạn.
 
 \section{Tổng quan kiến trúc}
@@ -219,15 +219,12 @@ huấn luyện được phân tích ở Chương~\ref{Chapter4}. Đây là một
 liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng người dùng (Amazon-Book) và
 gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
 
-\section{Các lựa chọn thiết kế}
+\section{Lựa chọn thiết kế bổ sung: biểu diễn đa token}
 \label{sec:lua-chon-thiet-ke}
 
-Ngoài kiến trúc cầu nối Q-Former, CoQLLM kết hợp một số lựa chọn thiết kế bổ sung. Luận
-văn ghi nhận các lựa chọn này một cách minh bạch, nhưng chúng không phải đóng góp chính;
-vai trò của từng lựa chọn được đánh giá qua ablation ở Mục~\ref{sec:ablation}.
-
-\subsection{Biểu diễn đa token cho tín hiệu cộng tác}
-\label{ssec:da-token}
+Ngoài kiến trúc cầu nối Q-Former, CoQLLM còn dùng một lựa chọn thiết kế bổ sung là biểu
+diễn đa token; lựa chọn này được ghi nhận minh bạch nhưng không phải đóng góp chính, và
+vai trò của nó được đánh giá qua ablation ở Mục~\ref{sec:ablation}.
 
 Phiên bản cơ sở nén toàn bộ tín hiệu cộng tác thành một soft token duy nhất trước khi chèn vào
 chỉ dẫn. Biểu diễn đa token (multi-token) giữ nguyên $Q = 8$ truy vấn đầu ra của Q-Former
