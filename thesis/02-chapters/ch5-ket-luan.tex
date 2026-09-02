@@ -12,7 +12,7 @@ giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục
 
 \textbf{Đóng góp 1: Cầu nối Q-Former được thích nghi và tăng cường cho bài toán gợi ý.}
 CoQLLM thay thế mô-đun chiếu MLP pointwise của CoLLM bằng kiến trúc Q-Former, trong đó tín hiệu cộng tác
-(nhúng người dùng, sản phẩm mục tiêu, lịch sử) thay thế đặc trưng ảnh làm đầu vào
+(embedding người dùng, sản phẩm mục tiêu, lịch sử) thay thế đặc trưng ảnh làm đầu vào
 cross-attention và được đưa vào LLM qua đường soft token. Trên nền đó, luận văn bổ sung hai
 kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
 trong từng người dùng -- cùng lựa chọn thiết kế bổ sung là biểu diễn đa token. Kết quả chi tiết được trình bày ở
@@ -22,7 +22,7 @@ Chương~\ref{Chapter4}.
 Luận văn đánh giá cầu nối Q-Former trên bài toán CTR với AUC và uAUC -- cùng quy trình với
 CoLLM -- trên MovieLens-1M và Amazon-Book, cho phép so sánh trực tiếp với CoLLM, BinLLM và
 CoRA. Phân tích ablation tách biệt đóng góp của từng kỹ thuật, và phân rã warm/cold làm rõ
-trần uAUC nằm ở chất lượng nhúng MF.
+trần uAUC nằm ở chất lượng embedding MF.
 
 \section{Kết quả chính}
 \label{sec:ket-qua-dat-duoc}
@@ -73,7 +73,7 @@ Luận văn nêu rõ các hạn chế sau một cách minh bạch:
     Amazon-Book số liệu baseline lấy từ lần chạy lại của CoRA (chọn checkpoint theo AUC,
     khác CoQLLM chọn theo uAUC) -- giới hạn khả năng so sánh thuần về cơ chế căn chỉnh.
 
-    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng nhúng MF cho
+    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
     người dùng/sản phẩm nguội, không phải bởi cầu nối.
 \end{enumerate}
 

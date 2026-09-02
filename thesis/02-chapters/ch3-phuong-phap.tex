@@ -2,74 +2,71 @@
 \chapter{Phương pháp đề xuất}
 \label{Chapter3}
 
-Chương này trình bày kiến trúc CoQLLM -- mô hình được đề xuất trong luận văn -- cùng
-lý do thiết kế và quy trình huấn luyện. Xuất phát từ hạn chế đã phân tích ở
-Chương~\ref{Chapter2}, trục lập luận của chương là: mô-đun chiếu MLP pointwise của CoLLM
-không đủ để căn chỉnh hiệu quả tín hiệu cộng tác vào không gian ngữ nghĩa LLM, và cầu nối Q-Former
-với cross-attention có kiểm soát là lựa chọn thay thế tự nhiên hơn.
-
-Mục~\ref{sec:kien-truc-tong-quan} mô tả kiến trúc tổng thể ba khối.
-Mục~\ref{sec:mf} trình bày mô-đun phân rã ma trận. Mục~\ref{sec:qformer} là lõi kỹ thuật:
-cầu nối Q-Former và lý do chọn nó thay MLP. Mục~\ref{sec:lua-chon-thiet-ke} trình bày
-lựa chọn thiết kế bổ sung. Mục~\ref{sec:ba-giai-doan} trình bày quy trình huấn luyện
-ba giai đoạn.
+Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
+Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
+Q-Former như một cầu nối căn chỉnh có khả năng tổng hợp nhiều nguồn tín hiệu cộng tác trước
+khi chuyển chúng thành soft token cho LLM. Các thành phần của mô hình được mô tả lần lượt từ
+kiến trúc tổng thể, mô-đun MF, cầu nối Q-Former và cơ chế soft token đến các kỹ thuật huấn
+luyện bổ sung và quy trình tối ưu ba giai đoạn.
 
 \section{Kiến trúc tổng thể}
 \label{sec:kien-truc-tong-quan}
 
-\textbf{Bài toán.} Luận văn giải quyết bài toán dự đoán tỉ lệ nhấp (click-through rate
--- CTR). Cho người dùng $u$, lịch sử tương tác của người dùng, và một phim mục tiêu $i$,
-mô hình đưa ra dự đoán nhị phân về khả năng người dùng thích phim đó -- biểu diễn dưới
-dạng câu trả lời ``Yes'' hoặc ``No''. Đây là bài toán phân loại nhị phân, được đánh giá
-bằng AUC và uAUC (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghiem}).
+\textbf{Bài toán.} Luận văn xem nhiệm vụ gợi ý dưới dạng dự đoán nhị phân. Với người dùng
+$u$, lịch sử tương tác của người dùng và một sản phẩm mục tiêu $i$, mô hình ước lượng khả
+năng người dùng thích sản phẩm đó và biểu diễn đầu ra của LLM dưới dạng câu trả lời ``Yes''
+hoặc ``No''. Đây là bài toán phân loại nhị phân, được đánh giá chủ yếu bằng AUC và uAUC
+(chi tiết ở Chương~\ref{Chapter4}).
 
-\textbf{Kiến trúc tổng quát.} CoQLLM gồm ba khối nối tiếp, minh họa ở
-Hình~\ref{fig:kien-truc}:
+CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 
 \begin{enumerate}
-    \item \textbf{Mô-đun Phân rã ma trận (MF)} -- cung cấp tín hiệu lọc cộng tác dưới dạng
-    véc-tơ nhúng cho người dùng và sản phẩm.
+    \item \textbf{Mô-đun phân rã ma trận (MF)} cung cấp embedding cộng tác cho người dùng,
+    sản phẩm mục tiêu và các sản phẩm trong lịch sử tương tác.
 
-    \item \textbf{Cầu nối Q-Former} -- nén và căn chỉnh véc-tơ cộng tác vào không gian ngữ nghĩa
-    của LLM thông qua cross-attention với các véc-tơ truy vấn học được.
+    \item \textbf{Cầu nối Q-Former} tổng hợp và biến đổi tín hiệu cộng tác bằng self-attention
+    và cross-attention với tập truy vấn học được.
 
-    \item \textbf{Mô hình ngôn ngữ lớn (LLM)} -- suy luận và sinh câu trả lời
-    ``Yes/No''.
+    \item \textbf{Mô hình ngôn ngữ lớn (LLM)} nhận các soft token cộng tác cùng prompt văn
+    bản và thực hiện dự đoán ``Yes/No''.
 \end{enumerate}
 
 \begin{figure}[htp]
 \centering
 \includegraphics[width=12cm]{images/coqllm-architecture.drawio.png}
-\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF đóng băng cung cấp tín hiệu lọc cộng
-tác; cầu nối Q-Former căn chỉnh tín hiệu này thành các soft token được chèn vào chỉ dẫn;
-LLM đóng băng thực hiện suy luận. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được
+\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; cầu nối
+Q-Former căn chỉnh tín hiệu này thành các soft token được chèn vào prompt; LLM thực hiện dự
+đoán. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được cập nhật theo từng giai đoạn
 huấn luyện.}
 \label{fig:kien-truc}
 \end{figure}
 
-\textbf{Đặc điểm thiết kế then chốt:} Phần lớn tham số của CoQLLM được đóng băng
-(frozen) trong quá trình huấn luyện. Cụ thể, cả MF lẫn LLM đều không được cập nhật; chỉ
-Q-Former, các lớp chiếu và bộ chuyển thể LoRA~\cite{lora2021} được huấn luyện. Tín hiệu
-cộng tác được đưa vào LLM qua một đường duy nhất -- soft token trong không gian đầu vào -- thay
-vì can thiệp vào trọng số của LLM. Thiết kế này bảo toàn tri thức ngôn ngữ sẵn có của
-LLM, giảm chi phí huấn luyện, và cho phép phân tích rõ ràng đóng góp của cầu nối căn chỉnh.
+Phần lớn tham số của hệ thống được giữ cố định trong quá trình huấn luyện. Cả MF lẫn backbone
+LLM đều được đóng băng, trong khi Q-Former, các lớp chiếu và LoRA~\cite{lora2021} được cập
+nhật ở các giai đoạn tương ứng. Tín hiệu cộng tác chỉ đi vào LLM qua soft token trong không
+gian đầu vào, không thông qua cơ chế sinh trọng số theo từng mẫu. Thiết kế này tách tương đối
+rõ vai trò của mô hình cộng tác, cầu nối căn chỉnh và mô hình ngôn ngữ, qua đó thuận lợi cho
+việc phân tích đóng góp của từng thành phần.
 
 \section{Mô-đun phân rã ma trận}
 \label{sec:mf}
 
-Mô-đun MF đóng vai trò nguồn tín hiệu lọc cộng tác. Từ ma trận tương tác người dùng--sản
-phẩm, MF học ánh xạ mỗi người dùng $u$ và sản phẩm $i$ thành các véc-tơ nhúng ẩn
-$e_u, e_i \in \mathbb{R}^{d}$ sao cho tích vô hướng $e_u^\top e_i$ phản ánh mức độ ưa thích. MF được huấn luyện theo mục tiêu xếp hạng cặp BPR~\cite{bpr2009}, sau đó được đóng
-băng.
+Mô-đun MF đóng vai trò cung cấp biểu diễn cộng tác đầu vào cho CoQLLM. Từ ma trận tương tác
+người dùng--sản phẩm, mô hình học các embedding $e_u, e_i \in \mathbb{R}^{d}$ sao cho mức độ
+tương thích giữa hai véc-tơ phản ánh sở thích của người dùng, đo bằng tích vô hướng
+$e_u^\top e_i$. MF được huấn luyện bằng mục tiêu xếp hạng cặp BPR~\cite{bpr2009} và được đóng
+băng trước khi tích hợp với các thành phần còn lại.
 
-Ba loại tín hiệu cộng tác được trích xuất để đưa vào cầu nối: (i)~nhúng người dùng $e_u$;
-(ii)~nhúng phim mục tiêu $e_i$; (iii)~nhúng các phim trong lịch sử tương tác của người
-dùng $\{e_{i'} : i' \in \mathcal{H}_u\}$.
+Ba nhóm tín hiệu được trích xuất từ MF gồm: (i)~embedding người dùng $e_u$; (ii)~embedding
+sản phẩm mục tiêu $e_i$; và (iii)~embedding của các sản phẩm trong lịch sử tương tác
+$\{e_{i'} : i' \in \mathcal{H}_u\}$.
 
-Việc huấn luyện MF tách rời khỏi các khối còn lại là một lựa chọn thiết kế nhằm cô lập
-chất lượng tín hiệu cộng tác khỏi quá trình tối ưu hóa LLM, tạo điều kiện phân tích rõ ràng
-nút thắt của hệ thống. Trong phạm vi luận văn, MF được huấn luyện trên phần tập huấn
-luyện của MovieLens-1M (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghiem}).
+Việc huấn luyện MF tách biệt khỏi Q-Former và LLM nhằm giữ cố định nguồn tín hiệu cộng tác
+trong các thí nghiệm phía sau. Cách thiết kế này giúp giảm sự đan xen giữa thay đổi của mô
+hình cộng tác và thay đổi của cầu nối căn chỉnh, từ đó thuận lợi hơn khi phân tích nguyên
+nhân của các chênh lệch thực nghiệm. Trong phạm vi luận văn, MF được huấn luyện trên phần dữ
+liệu huấn luyện tương ứng của từng tập dữ liệu và sau đó giữ nguyên trong các giai đoạn tích
+hợp.
 
 \section{Cầu nối Q-Former}
 \label{sec:qformer}
@@ -77,127 +74,126 @@ luyện của MovieLens-1M (chi tiết tại Mục~\ref{sec:thiet-lap-thuc-nghie
 \subsection{Động cơ lựa chọn Q-Former}
 \label{ssec:ly-do-qformer}
 
-Mô-đun chiếu của CoLLM~\cite{collm2023} là một MLP hai lớp $g_\phi(\mathbf{x}) =
-\mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2$, ánh xạ
-$g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$ và được áp \textit{độc lập}
-cho từng véc-tơ cộng tác, mỗi véc-tơ cho ra đúng một soft token. Mô-đun này đã là phi tuyến;
-hạn chế của nó nằm ở chỗ khác, gồm hai điểm:
+Mô-đun ánh xạ trong CoLLM~\cite{collm2023} có dạng MLP hai lớp:
+\begin{equation*}
+g_\phi(\mathbf{x}) = \mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1)
++ \mathbf{b}_2,
+\end{equation*}
+với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$. Phép biến đổi này được áp
+dụng độc lập trên từng embedding cộng tác và mỗi embedding tạo ra một soft token. Cần lưu ý
+rằng MLP đã là một phép biến đổi phi tuyến; hạn chế mà luận văn quan tâm không nằm ở tính
+tuyến tính hay phi tuyến, mà ở cách thông tin được tổng hợp.
 
-\textbf{Hạn chế 1: Ánh xạ cố định, không phụ thuộc ngữ cảnh.} Cùng một hàm $g_\phi$ được áp
-cho mọi véc-tơ cộng tác của mọi mẫu; đầu ra ứng với một véc-tơ không phụ thuộc vào các véc-tơ
-còn lại trong cùng mẫu, cũng không phụ thuộc vào phần chỉ dẫn văn bản đi kèm. Các nguồn tín
-hiệu cộng tác vì thế không có cơ hội phối hợp với nhau trước khi đi vào LLM, dù hai không gian
-cần căn chỉnh có nguồn gốc huấn luyện hoàn toàn khác nhau -- một từ tín hiệu tương tác, một từ
-ngôn ngữ tự nhiên.
+Thứ nhất, phép ánh xạ có tính pointwise: đầu ra ứng với một embedding được tính độc lập với
+các embedding còn lại trong cùng mẫu. Vì vậy, embedding người dùng, sản phẩm mục tiêu và lịch
+sử không được phối hợp ở phía mô-đun ánh xạ trước khi đi vào LLM. Thứ hai, mỗi embedding được
+cô đọng thành một soft token duy nhất, nên mô-đun không có một cơ chế riêng để học cách phân
+bổ mức độ chú ý khác nhau cho các nguồn tín hiệu cộng tác theo từng mẫu.
 
-\textbf{Hạn chế 2: Không có chọn lọc có kiểm soát.} Toàn bộ nội dung một véc-tơ cộng tác bị
-nén vào ngân sách đúng một token, qua một phép biến đổi duy nhất, không phân biệt thành phần
-nào quan trọng với ngữ cảnh hiện tại. Trong khi đó, bài toán CTR đòi hỏi tích hợp thông tin
-từ nhiều nguồn (nhúng người dùng, nhúng phim mục tiêu, nhúng lịch sử) một cách linh hoạt theo
-từng mẫu.
+Q-Former cung cấp một cơ chế khác. Cross-attention cho phép trọng số tổng hợp phụ thuộc vào
+đầu vào, trong khi tập truy vấn học được và self-attention tạo ra nhiều kênh biểu diễn có thể
+phối hợp với nhau. Do đó, thay vì xem từng embedding cộng tác như một đầu vào độc lập cần
+chiếu sang không gian LLM, CoQLLM xem tập tín hiệu cộng tác như một nguồn thông tin cần được
+tổng hợp trước khi ánh xạ sang soft token.
 
-Q-Former giải quyết cả hai hạn chế trên, nhưng nguồn gốc của lợi thế cần được xác định
-chính xác. Khác với mô-đun chiếu MLP dùng chung một hàm cố định cho mọi véc-tơ và mọi mẫu,
-cross-attention trong Q-Former thực hiện tổng hợp \textit{phụ thuộc đầu vào}
-(input-dependent): trọng số tổng hợp các véc-tơ cộng tác thay đổi theo từng mẫu, vượt qua
-giới hạn của ánh xạ pointwise cố định. Tuy nhiên, lợi thế chính \textit{không} nằm ở khả năng nén
-của cross-attention -- vì đầu vào cộng tác chỉ gồm vài véc-tơ, cross-attention chủ yếu đóng vai
-trò tổng hợp có trọng số (chi tiết tại Mục~\ref{ssec:qformer-kien-truc}) -- mà nằm ở
-\textit{tập véc-tơ truy vấn học được phối hợp qua self-attention}: mỗi truy vấn học cách
-trích xuất một khía cạnh khác nhau của tín hiệu cộng tác và điều phối lẫn nhau để tổng hợp biểu
-diễn tối ưu cho tác vụ, điều mà một MLP pointwise đơn lẻ không làm được. Đây là
-luận điểm được nhất quán xuyên suốt chương và được kiểm chứng qua ablation ở
-Mục~\ref{sec:ablation}.
+Trong bài toán này, lợi thế kỳ vọng của Q-Former không chủ yếu đến từ khả năng nén một chuỗi
+rất dài như trong thị giác. Đầu vào cộng tác chỉ gồm một số lượng hữu hạn embedding, nên
+cross-attention chủ yếu thực hiện tổng hợp có trọng số (chi tiết ở
+Mục~\ref{ssec:qformer-kien-truc}). Vai trò quan trọng hơn nằm ở các truy vấn học được và
+self-attention giữa chúng, cho phép mô hình phân chia và phối hợp các khía cạnh biểu diễn khác
+nhau trước khi đưa thông tin vào LLM.
 
-\subsection{Q-Former cho bài toán khuyến nghị}
+\subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
 
-Cầu nối được xây dựng dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. CoQLLM
-sử dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in \mathbb{R}^{Q \times
-d_{\text{model}}}$, với $d_{\text{model}} = 768$ và nhánh văn bản khởi tạo từ
-\texttt{bert-base-uncased} (dùng cho các mục tiêu căn chỉnh sản phẩm--văn bản ở
-Giai đoạn 1, Mục~\ref{ssec:stage1}).
+CoQLLM xây dựng cầu nối dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. Mô hình sử
+dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in \mathbb{R}^{Q \times d_{\text{model}}}$,
+với $d_{\text{model}} = 768$. Nhánh văn bản được khởi tạo từ \texttt{bert-base-uncased} và
+được sử dụng trong các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu
+diễn (Mục~\ref{ssec:stage1}).
 
-Trong mỗi lớp Q-Former, các truy vấn đi qua hai loại attention:
+Trong mỗi lớp Q-Former, các truy vấn đi qua hai cơ chế attention:
 
 \begin{enumerate}
-    \item \textit{Self-attention} giữa các truy vấn với nhau: cho phép các truy vấn điều
-    phối lẫn nhau, mỗi truy vấn đảm nhận một khía cạnh khác nhau của tín hiệu cộng tác.
+    \item \textit{Self-attention} giữa các truy vấn với nhau, cho phép các truy vấn trao đổi
+    thông tin và phối hợp vai trò biểu diễn, mỗi truy vấn đảm nhận một khía cạnh khác nhau của
+    tín hiệu cộng tác.
 
-    \item \textit{Cross-attention} từ các truy vấn đến đặc trưng cộng tác: mỗi truy vấn trọng
-    số hóa và tổng hợp thông tin từ tập véc-tơ cộng tác đầu vào $\{e_u, e_i, e_{i'}\}$.
+    \item \textit{Cross-attention} từ các truy vấn đến tín hiệu cộng tác, trong đó mỗi truy vấn
+    trọng số hóa và tổng hợp thông tin từ embedding người dùng, sản phẩm mục tiêu và các
+    embedding lịch sử $\{e_u, e_i, e_{i'}\}$ với trọng số phụ thuộc vào mẫu.
 \end{enumerate}
 
 Đầu ra là khối truy vấn $\mathbf{Z} = \text{cf\_q} \in \mathbb{R}^{B \times Q \times
-d_{\text{model}}}$, trong đó $B$ là kích thước lô và $Q = 8$.
+d_{\text{model}}}$, trong đó $B$ là kích thước batch và $Q = 8$.
 
-\textbf{Quan sát quan trọng về vai trò của cross-attention.} Trong BLIP-2 cho thị giác,
-đầu vào của cross-attention là một chuỗi dài các mảng ảnh (patch features) và
-cross-attention đóng vai trò nén chính: nén hàng trăm patch thành một số ít truy vấn.
-Trong CoQLLM, đầu vào của cross-attention chỉ gồm một vài véc-tơ cộng tác (người dùng, sản phẩm
-mục tiêu, lịch sử), nên cross-attention chủ yếu thực hiện tổng hợp có trọng số; lợi thế
-của cầu nối do đó chủ yếu đến từ \textit{tập truy vấn học được và self-attention điều phối
-giữa chúng}, chứ không phải khả năng nén. Nhận định này nhất quán với quan sát thực nghiệm
-rằng việc tăng số lớp Q-Former không cải thiện đáng kể kết quả -- dung lượng không phải nút
-thắt, chất lượng căn chỉnh mới là điều quyết định.
+So với BLIP-2, vai trò của cross-attention trong CoQLLM có khác biệt. Trong thị giác,
+cross-attention phải tổng hợp hàng trăm patch feature thành số lượng truy vấn nhỏ hơn đáng kể,
+nên đóng vai trò nén chính. Trong CoQLLM, số nguồn biểu diễn cộng tác thấp hơn nhiều, nên cơ
+chế này thiên về tổng hợp có trọng số hơn là nén mạnh về độ dài. Vì vậy, luận văn xem tập truy
+vấn học được và quá trình phối hợp giữa chúng qua self-attention là thành phần quan trọng của
+cầu nối căn chỉnh. Nhận định này nhất quán với quan sát thực nghiệm rằng việc tăng số lớp
+Q-Former không cải thiện đáng kể kết quả -- dung lượng không phải nút thắt, chất lượng căn chỉnh
+mới là điều quyết định.
 
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
 
-Khối truy vấn $\mathbf{Z}$ được chiếu từ không gian Q-Former sang không gian nhúng của LLM
-qua lớp chiếu tuyến tính $W_{\text{proj}} \in \mathbb{R}^{d_{\text{model}} \times
-d_{\text{LLM}}}$, tạo thành $Q$ soft token. Các soft token này được chèn vào chỉ dẫn tại
-vị trí của token chuyên dụng \verb|<rec_soft_token>|; phần văn bản của chỉ dẫn đánh dấu
-danh sách sản phẩm lịch sử và sản phẩm mục tiêu bằng \verb|<ItemIDList>| và
-\verb|<TargetItemID>| tương ứng. Một token chuyên dụng có định danh riêng (tách khỏi từ
-vựng gốc) được dùng thay cho \verb|<unk>| nhằm tránh va chạm với các token ngoài-từ-vựng
-hay token đệm, và một lớp chuẩn hóa (LayerNorm) tại đầu ra lớp chiếu giữ cho độ lớn (scale)
-của soft token tương thích với các véc-tơ nhúng văn bản của LLM. Nhờ đó LLM xử lý tín hiệu
-cộng tác ngay trong không gian đầu vào, cùng chuỗi với văn bản, mà không cần can thiệp vào trọng
-số bên trong của LLM.
+Đầu ra $\mathbf{Z}$ của Q-Former được chiếu từ không gian $d_{\text{model}}$ sang không gian
+embedding của LLM bằng lớp tuyến tính $W_{\text{proj}} \in \mathbb{R}^{d_{\text{model}} \times
+d_{\text{LLM}}}$. Kết quả là $Q$ soft token được chèn vào prompt tại vị trí dành cho biểu diễn
+cộng tác.
 
-Đây là điểm khác biệt so với CoRA~\cite{cora2024}: CoRA biến $\mathbf{Z}$ thành lượng thay
-đổi trọng số hạng thấp theo từng mẫu, cộng vào các lớp attention của LLM
-(Mục~\ref{ssec:cora-rel}), trong khi CoQLLM chỉ dùng đường soft token. Lựa chọn này giữ
-LLM hoàn toàn đóng băng, tránh chi phí và rủi ro bất ổn của việc sinh trọng số theo từng
-mẫu, đồng thời tập trung toàn bộ dung lượng học vào cầu nối căn chỉnh. Trên nền đường soft
-token, luận văn bổ sung hai kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
+Phần văn bản của prompt đánh dấu lịch sử và sản phẩm mục tiêu bằng các token chuyên dụng. Một
+token định danh riêng được sử dụng cho vị trí soft token nhằm tránh phụ thuộc vào
+\verb|<unk>| hoặc các token có chức năng khác trong từ vựng gốc. Sau lớp chiếu, một lớp chuẩn
+hóa (LayerNorm) được áp dụng để giữ thang độ của soft token tương thích hơn với embedding văn
+bản của LLM.
+
+Nhờ cơ chế này, tín hiệu cộng tác được đưa vào cùng không gian đầu vào với văn bản mà không
+cần thay đổi trực tiếp trọng số backbone LLM theo từng mẫu. Đây là điểm khác với
+CoRA~\cite{cora2024}, nơi biểu diễn cộng tác được sử dụng để sinh cập nhật trọng số hạng thấp
+cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
+toàn đóng băng và tập trung phân tích vai trò của cầu nối căn chỉnh. Trên nền đường soft token
+này, luận văn bổ sung hai kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) và mục tiêu bảo toàn thứ tự trong từng người dùng
 (Mục~\ref{ssec:align-rank}) -- nhằm cải thiện lần lượt AUC và uAUC.
 
 \subsection{Điều kiện hóa truy vấn theo người dùng}
 \label{ssec:user-conditioned}
 
-Trong kiến trúc cơ sở, tập truy vấn $\mathbf{Q}$ cố định và dùng chung cho mọi mẫu. Cơ chế
-\textit{điều kiện hóa theo người dùng} (user-conditioned queries) dịch tập truy vấn theo
-véc-tơ cộng tác của người dùng trước khi đưa vào Q-Former:
+Trong cấu hình cơ sở, tập truy vấn $\mathbf{Q}$ là tham số dùng chung cho mọi mẫu. Để tăng khả
+năng thích nghi theo người dùng, luận văn bổ sung một phép dịch chuyển phụ thuộc vào embedding
+người dùng trước khi đưa truy vấn vào Q-Former:
 
 \begin{equation} \label{eq:user-cond}
 \tilde{\mathbf{Q}} = \mathbf{Q} + g_u\big( e_u \big),
 \end{equation}
 
-trong đó $g_u$ là một lớp chiếu tuyến tính từ không gian MF sang
-không gian truy vấn, được \textit{khởi tạo bằng không} (zero-init). Nhờ khởi tạo bằng
-không, ở bước đầu cơ chế là một phép đồng nhất (no-op), $\tilde{\mathbf{Q}} = \mathbf{Q}$;
-phần dịch chỉ lớn dần nếu tín hiệu CTR thưởng cho nó trong quá trình huấn luyện.
+trong đó $g_u$ là một lớp chiếu tuyến tính từ không gian MF sang không gian truy vấn, được
+\textit{khởi tạo bằng không} (zero-init). Với cách khởi tạo này, ở bước đầu cơ chế không làm
+thay đổi truy vấn gốc, tức $\tilde{\mathbf{Q}} = \mathbf{Q}$; mức dịch chuyển chỉ được học khi
+mang lại lợi ích cho hàm mục tiêu trong quá trình huấn luyện.
 
-Cơ chế này gắn với đặc điểm của uAUC (Mục~\ref{sec:nghich-ly}). Phần dịch $g_u(e_u)$
-\textit{thay đổi giữa các người dùng} nhưng \textit{không đổi trong phạm vi một người
-dùng}: nó nâng khả năng phân biệt \textit{giữa} các người dùng -- cải thiện AUC toàn cục --
-trong khi gần như trung tính với uAUC, vốn bất biến với dịch chuyển mức nền riêng theo từng
-người dùng. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng không, cơ chế tương
-thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
+Về mặt trực giác, thành phần $g_u(e_u)$ tạo ra một mức điều chỉnh riêng theo người dùng.
+Vì phần dịch chuyển \textit{thay đổi giữa các người dùng} nhưng \textit{không đổi trong phạm
+vi một người dùng}, cơ chế này có thể nâng khả năng phân biệt giữa các người dùng và do đó tác
+động tích cực đến AUC toàn cục, trong khi tác động lên uAUC -- vốn bất biến với dịch chuyển mức
+nền riêng theo từng người dùng -- có thể nhỏ hơn. Giả thuyết này được đối chiếu với kết quả
+thực nghiệm ở Chương~\ref{Chapter4}. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng
+không, cơ chế tương thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
 
 \subsection{Hàm mất mát bảo toàn thứ hạng theo người dùng}
 \label{ssec:align-rank}
 
-Hàm mất mát mặc định của Giai đoạn 3 là entropy chéo nhị phân (BCE) trên token
-``Yes''/``No''. Mục tiêu này tối ưu biên độ phân loại nhưng không trực tiếp ép \textit{thứ
-tự xếp hạng trong từng người dùng} -- đại lượng mà uAUC đo. Để bù đắp, luận văn bổ sung một
-mục tiêu bảo toàn thứ tự (\textit{align-rank loss}): một tổn thất BPR theo cặp trong phạm
-vi từng người dùng, đóng vai trò hàm thay thế (surrogate) khả vi cho uAUC, áp trực tiếp lên
-\textit{soft token cộng tác đã căn chỉnh} (trước khi vào LLM) thông qua một đầu ra phụ
-cũng khởi tạo bằng không:
+Hàm mất mát mặc định trong giai đoạn tinh chỉnh CTR là entropy chéo nhị phân (BCE) trên nhãn
+``Yes''/``No''. BCE tối ưu khả năng phân loại từng mẫu nhưng không trực tiếp tối ưu thứ tự
+tương đối giữa các sản phẩm của cùng một người dùng, trong khi uAUC đo chính đặc tính xếp hạng
+nội bộ này.
+
+Để bổ sung tín hiệu xếp hạng, luận văn sử dụng một mục tiêu BPR theo cặp trong phạm vi từng
+người dùng (\textit{align-rank loss}), áp trực tiếp lên soft token cộng tác đã căn chỉnh
+(trước khi vào LLM) thông qua một đầu ra phụ cũng khởi tạo bằng không:
 
 \begin{equation} \label{eq:align-rank}
 \mathcal{L} = \mathcal{L}_{\text{BCE}}
@@ -205,66 +201,72 @@ cũng khởi tạo bằng không:
     -\log \sigma\!\Big( \tfrac{1}{\tau}\big( s_u(i^{+}) - s_u(i^{-}) \big) \Big),
 \end{equation}
 
-trong đó $s_u(\cdot)$ là điểm xếp hạng do đầu ra phụ sinh từ soft token cộng tác
-đã căn chỉnh, $\mathcal{P}_u$ là tập các cặp dương--âm của cùng người dùng $u$, $\sigma$ là
-hàm sigmoid, $\tau$ là nhiệt độ và $\lambda$ là trọng số. Việc áp mục tiêu này lên chính
-phần biểu diễn cộng tác đã căn chỉnh (thay vì chỉ lên biên độ Yes/No của LLM) buộc bản thân cầu
-nối giữ đúng thứ tự trong từng người dùng.
+trong đó $s_u(\cdot)$ là điểm xếp hạng được sinh từ soft token cộng tác đã căn chỉnh,
+$\mathcal{P}_u$ là tập các cặp dương--âm của cùng người dùng $u$, $\sigma$ là hàm sigmoid,
+$\tau$ là nhiệt độ và $\lambda$ là trọng số của thành phần xếp hạng.
 
-Để mỗi lô có sẵn các cặp dương--âm của cùng một người dùng, tổn thất này yêu cầu chế độ lấy
-mẫu theo nhóm người dùng (\textit{user-grouped batch}), và được kích hoạt ở Bước 2 của Giai
-đoạn 3 (nơi Q-Former và lớp chiếu được huấn luyện). Do đầu ra phụ khởi tạo
-bằng không, các epoch đầu gần như trung tính và tác dụng hiện dần về sau -- một đặc điểm
-huấn luyện được phân tích ở Chương~\ref{Chapter4}. Đây là một siêu tham số phụ thuộc tập dữ
-liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng người dùng (Amazon-Book) và
-gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
+Mục tiêu phụ được áp trực tiếp lên biểu diễn cộng tác sau căn chỉnh, thay vì chỉ lên logit
+``Yes/No'' của LLM, nhằm buộc bản thân cầu nối giữ đúng thứ tự giữa sản phẩm dương và âm trong
+từng người dùng. Để tạo đủ cặp dương--âm trong một batch, quá trình huấn luyện sử dụng lấy mẫu
+theo nhóm người dùng (\textit{user-grouped batch}) và mục tiêu được kích hoạt ở Bước 2 của Giai
+đoạn 3 (nơi Q-Former và lớp chiếu được huấn luyện). Do đầu ra phụ khởi tạo bằng không, các
+epoch đầu gần như trung tính và tác động của mục tiêu xếp hạng hiện dần về sau. Đây là một siêu
+tham số phụ thuộc tập dữ liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng
+người dùng (Amazon-Book) và gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
 
 \section{Biểu diễn cộng tác đa token}
 \label{sec:lua-chon-thiet-ke}
 
-Ngoài kiến trúc cầu nối Q-Former, CoQLLM còn dùng một lựa chọn thiết kế bổ sung là biểu
-diễn đa token; lựa chọn này được ghi nhận minh bạch nhưng không phải đóng góp chính, và
-vai trò của nó được đánh giá qua ablation ở Mục~\ref{sec:ablation}.
+Bên cạnh các kỹ thuật huấn luyện chính, luận văn khảo sát lựa chọn biểu diễn đa token; lựa
+chọn này được ghi nhận minh bạch nhưng không phải đóng góp trung tâm, và vai trò của nó được
+đánh giá qua ablation ở Mục~\ref{sec:ablation}.
 
-Phiên bản cơ sở nén toàn bộ tín hiệu cộng tác thành một soft token duy nhất trước khi chèn vào
-chỉ dẫn. Biểu diễn đa token (multi-token) giữ nguyên $Q = 8$ truy vấn đầu ra của Q-Former
-dưới dạng $8$ soft token riêng biệt, cung cấp dải băng thông cao hơn để truyền thông tin
-cộng tác vào LLM.
+Phiên bản cơ sở gộp toàn bộ tín hiệu cộng tác thành một soft token duy nhất trước khi chèn vào
+prompt. Cấu hình đa token (multi-token) giữ nguyên $Q = 8$ truy vấn đầu ra của Q-Former sau lớp
+chiếu và đưa chúng vào LLM như tám soft token riêng biệt.
+
+Thiết kế này làm tăng băng thông biểu diễn giữa Q-Former và LLM, cho phép các truy vấn giữ lại
+các khía cạnh thông tin khác nhau thay vì phải hợp nhất hoàn toàn trước khi đi vào mô hình ngôn
+ngữ. Tuy nhiên, đây được xem là một lựa chọn kiến trúc bổ sung và không phải đóng góp trung
+tâm của luận văn; tác động của nó được thảo luận trong phần thực nghiệm và hạn chế.
 
 \section{Huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
 
-CoQLLM được huấn luyện qua ba giai đoạn nối tiếp, theo quy trình của CoLLM~\cite{collm2023}
-với điều chỉnh cho phù hợp với kiến trúc Q-Former.
+CoQLLM được huấn luyện theo ba giai đoạn nối tiếp, theo quy trình của CoLLM~\cite{collm2023}
+với điều chỉnh cho phù hợp với kiến trúc Q-Former. Quy trình kế thừa tinh thần tách biệt giữa
+học biểu diễn cộng tác, căn chỉnh với không gian ngôn ngữ và tinh chỉnh cho nhiệm vụ gợi ý.
 
 \subsection{Tiền huấn luyện biểu diễn}
 \label{ssec:stage1}
 
-Q-Former được huấn luyện với bốn mục tiêu tương phản và căn chỉnh:
+Giai đoạn đầu tập trung giúp Q-Former học mối quan hệ giữa biểu diễn cộng tác và thông tin văn
+bản, thông qua bốn mục tiêu:
 
 \begin{itemize}
-    \item \textit{Căn chỉnh sản phẩm--văn bản (ITC)}: tối đa hóa độ tương đồng giữa biểu
-    diễn Q-Former của một sản phẩm (từ nhúng MF) và biểu diễn văn bản của sản phẩm đó
-    (tên phim, thể loại). Đây là mục tiêu căn chỉnh chính.
+    \item \textit{Căn chỉnh sản phẩm--văn bản (ITC)}: tăng độ tương đồng giữa biểu diễn
+    Q-Former của một sản phẩm (từ embedding MF) và biểu diễn văn bản tương ứng (tên phim, thể
+    loại). Đây là mục tiêu căn chỉnh chính.
 
-    \item \textit{So khớp sản phẩm--văn bản (ITM)}: phân loại nhị phân cặp
-    sản phẩm--văn bản có khớp hay không.
+    \item \textit{So khớp sản phẩm--văn bản (ITM)}: phân loại nhị phân một cặp sản phẩm--văn
+    bản là tương ứng hay không tương ứng.
 
-    \item \textit{Sinh văn bản có điều kiện (ITG)}: sinh văn bản mô tả sản phẩm từ biểu
-    diễn Q-Former.
+    \item \textit{Sinh văn bản có điều kiện (ITG)}: sử dụng biểu diễn sản phẩm để hỗ trợ sinh
+    mô tả văn bản.
 
-    \item \textit{Tương phản người dùng--sản phẩm}: kéo gần biểu diễn của các cặp tương
-    tác dương và đẩy xa các cặp âm.
+    \item \textit{Tương phản người dùng--sản phẩm}: đưa các cặp tương tác dương lại gần nhau và
+    tách các cặp âm trong không gian biểu diễn.
 \end{itemize}
 
-\textbf{Vấn đề mất cân bằng dữ liệu và giải pháp.} Trên MovieLens-1M, số cặp người
-dùng--sản phẩm dương khoảng $888$ nghìn, trong khi số cặp sản phẩm--văn bản chỉ khoảng
-$3$ nghìn -- tỉ lệ khoảng $0{,}34\%$. Với lô kích thước $64$, kỳ vọng số mẫu
-sản phẩm--văn bản mỗi lô chỉ khoảng $0{,}22$, nên điều kiện ``ít nhất hai mẫu cùng loại''
-để kích hoạt ITC/ITM/ITG hiếm khi được thỏa. Hệ quả là ba mục tiêu căn chỉnh chính gần
-như không được huấn luyện, dẫn đến Q-Former không học được căn chỉnh CF--văn bản.
+Một vấn đề thực tế là sự mất cân bằng giữa số cặp người dùng--sản phẩm và số cặp sản phẩm--văn
+bản. Trên MovieLens-1M, số cặp người dùng--sản phẩm dương khoảng $888$ nghìn, trong khi số cặp
+sản phẩm--văn bản chỉ khoảng $3$ nghìn (tỉ lệ khoảng $0{,}34\%$). Nếu lấy mẫu trực tiếp từ toàn
+bộ dữ liệu, các mục tiêu ITC/ITM/ITG có thể được kích hoạt quá ít trong từng batch -- điều kiện
+``ít nhất hai mẫu cùng loại'' hiếm khi được thỏa -- và gradient từ mục tiêu người dùng--sản
+phẩm chiếm ưu thế.
 
-Giải pháp gồm hai điều chỉnh được tổng hợp ở Bảng~\ref{tab:balance-stage1}:
+Để giảm mất cân bằng, luận văn áp dụng hai điều chỉnh, tổng hợp ở
+Bảng~\ref{tab:balance-stage1}:
 
 \begin{table}[ht]
 \caption{Hai điều chỉnh cân bằng dữ liệu Giai đoạn 1}
@@ -272,66 +274,64 @@ Giải pháp gồm hai điều chỉnh được tổng hợp ở Bảng~\ref{tab
 \begin{center}
 \begin{tabular}{|L{4.5cm}|L{2.5cm}|L{5cm}|}
 \hline
-\textbf{Điều chỉnh} & \textbf{Tầng} & \textbf{Tác động} \\
+\textbf{Điều chỉnh} & \textbf{Mức áp dụng} & \textbf{Mục đích} \\
 \hline
-Giới hạn số cặp người dùng--sản phẩm ở mức $20{.}000$ & Dữ liệu & Nâng tỉ lệ mẫu
-sản phẩm--văn bản lên $\approx 13\%$; kỳ vọng $\approx 8$ mẫu/lô $\Rightarrow$ điều kiện
-``ít nhất 2 mẫu'' gần như luôn thỏa \\
+Giới hạn số cặp người dùng--sản phẩm ở mức $20{.}000$ & Dữ liệu & Tăng tỉ lệ mẫu sản
+phẩm--văn bản trong batch, giúp các mục tiêu ITC/ITM/ITG được kích hoạt thường xuyên hơn \\
 \hline
-Giảm trọng số mất mát người dùng--sản phẩm từ $1{,}0$ xuống $0{,}5$ & Mất mát &
-Điều hòa cường độ gradient giữa các mục tiêu \\
+Giảm trọng số mất mát người dùng--sản phẩm từ $1{,}0$ xuống $0{,}5$ & Hàm mất mát & Cân bằng
+cường độ gradient giữa các mục tiêu \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-Điều chỉnh giới hạn số cặp yêu cầu dựng lại tệp dữ liệu (vì giới hạn được cố định khi
-dựng), trong khi trọng số mất mát được đọc lúc huấn luyện và có hiệu lực ngay. Do danh
-sách cặp người dùng--sản phẩm kế thừa thứ tự sắp theo thời gian của dữ liệu gốc, việc lấy
-phần đầu danh sách sẽ thiên lệch về các tương tác sớm (phim và người dùng thời kỳ đầu).
-Để loại bỏ thiên lệch này, danh sách được xáo trộn ngẫu nhiên với hạt giống cố định trước
-khi cắt, biến giới hạn $20{.}000$ thành một mẫu ngẫu nhiên đồng nhất mà vẫn bảo đảm tính
-tái lập.
+Danh sách cặp người dùng--sản phẩm kế thừa thứ tự sắp theo thời gian của dữ liệu gốc, nên việc
+lấy phần đầu danh sách sẽ thiên lệch về các tương tác sớm. Để tránh thiên lệch này, danh sách
+được xáo trộn ngẫu nhiên với hạt giống cố định trước khi cắt, biến giới hạn $20{.}000$ thành
+một mẫu ngẫu nhiên đồng nhất mà vẫn bảo đảm tính tái lập.
 
 \subsection{Tiền huấn luyện sinh}
 \label{ssec:stage2}
 
-Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ: từ biểu diễn Q-Former
-của tín hiệu cộng tác, sinh văn bản mô tả sản phẩm. Giai đoạn này dạy đầu ra của cầu nối trở
-thành soft token mà LLM có thể diễn giải -- tức căn chỉnh không gian Q-Former với không
-gian ngữ nghĩa của LLM đóng băng.
+Ở giai đoạn thứ hai, Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ. Từ biểu
+diễn cộng tác đã qua Q-Former, mô hình học tạo ra các soft token mà LLM đóng băng có thể khai
+thác để sinh văn bản mô tả sản phẩm. Có thể xem đây là bước căn chỉnh đầu ra của Q-Former với
+không gian embedding mà LLM sử dụng trong quá trình sinh.
 
 \subsection{Tinh chỉnh CTR}
 \label{ssec:stage3}
 
-Giai đoạn này theo quy trình hai bước của CoLLM~\cite{collm2023}:
+Giai đoạn cuối theo quy trình hai bước của CoLLM~\cite{collm2023}.
 
-\textbf{Bước 1}: Huấn luyện LoRA cơ sở với chỉ dẫn chỉ gồm văn bản (tên phim, thể loại,
-lịch sử dưới dạng văn bản), không có tín hiệu cộng tác. Bước này thiết lập đường cơ sở cho
-khả năng dự đoán chỉ từ văn bản và ổn định hóa LLM trước khi tiếp nhận soft token.
+\textbf{Bước 1 -- Tinh chỉnh LoRA chỉ với thông tin văn bản.} LoRA được huấn luyện bằng prompt
+chỉ chứa tên sản phẩm, thể loại và lịch sử ở dạng văn bản, chưa đưa tín hiệu cộng tác vào. Mục
+tiêu của bước này là giúp LLM thích nghi với nhiệm vụ dự đoán nhị phân từ thông tin ngôn ngữ và
+ổn định hóa mô hình trước khi tiếp nhận soft token cộng tác.
 
-\textbf{Bước 2}: Huấn luyện mô hình đầy đủ với tín hiệu cộng tác được bơm vào qua soft token.
-Mô hình được khởi tạo từ checkpoint của Bước 1; LoRA được \textit{đóng băng}, chỉ Q-Former
-và các lớp chiếu được cập nhật -- tách bạch phần ``ngôn ngữ'' (LoRA, học ở Bước 1) khỏi
-phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước duy nhất kích hoạt
-hai kỹ thuật điều kiện hóa theo người dùng (Mục~\ref{ssec:user-conditioned}) và mục tiêu
-bảo toàn thứ tự (Mục~\ref{ssec:align-rank}). Nhãn giám sát là token ``Yes'' hoặc ``No''
-tương ứng với nhãn CTR. Checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
+\textbf{Bước 2 -- Tinh chỉnh cầu nối căn chỉnh với tín hiệu cộng tác.} Mô hình được khởi tạo từ
+checkpoint của Bước 1. LoRA được giữ cố định, trong khi Q-Former và các lớp chiếu được cập nhật
+để học cách đưa biểu diễn cộng tác vào LLM dưới dạng soft token -- tách bạch phần ``ngôn ngữ''
+(LoRA, học ở Bước 1) khỏi phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước
+duy nhất kích hoạt hai kỹ thuật điều kiện hóa truy vấn theo người dùng
+(Mục~\ref{ssec:user-conditioned}) và, khi cấu hình cho phép, mục tiêu bảo toàn thứ hạng trong
+từng người dùng (Mục~\ref{ssec:align-rank}). Nhãn giám sát là ``Yes''/``No'' tương ứng với nhãn
+CTR, và checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
 
-\textbf{Chi phí tính toán.} So với CoLLM, CoQLLM có chi phí huấn luyện cao hơn do kiến
-trúc Q-Former phức tạp hơn mô-đun chiếu MLP. Vì tín hiệu cộng tác chỉ đi qua đường soft
-token và không sinh trọng số theo từng mẫu, LLM được giữ nguyên hoàn toàn khi suy luận.
-Chi phí cụ thể (số tham số huấn luyện được, thời gian huấn luyện mỗi giai đoạn) được báo
-cáo ở Mục~\ref{sec:thiet-lap-thuc-nghiem}. Luận văn không tuyên bố chi phí tăng thêm là
-``không đáng kể''; đây là đánh đổi có chủ đích cho chất lượng căn chỉnh tốt hơn.
+So với mô-đun chiếu MLP của CoLLM, Q-Former làm tăng chi phí huấn luyện do có nhiều lớp
+attention và tham số hơn. Vì tín hiệu cộng tác chỉ đi qua đường soft token và không sinh trọng
+số theo từng mẫu, LLM được giữ nguyên hoàn toàn khi suy luận. Luận văn xem đây là một đánh đổi
+có chủ đích để khảo sát khả năng căn chỉnh biểu diễn tốt hơn, thay vì giả định chi phí tăng
+thêm là ``không đáng kể''. Chi tiết về số tham số và thời gian huấn luyện được trình bày ở
+Chương~\ref{Chapter4}.
 
 \section{Tổng kết chương}
 \label{sec:ket-chuong-3}
 
-Chương này đã trình bày kiến trúc ba khối của CoQLLM và lý do chọn cầu nối Q-Former thay
-mô-đun chiếu MLP của CoLLM. Luận điểm cốt lõi là: cơ chế cross-attention với tập
-truy vấn học được cho phép căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa LLM có kiểm
-soát hơn, vượt qua giới hạn của phép chiếu pointwise cố định. Trên nền cầu nối soft token, hai
-kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự
-trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Lựa chọn thiết kế bổ sung là biểu diễn đa token, được trình bày như một thành phần đã khảo
-sát, với kết quả thực nghiệm ở Chương~\ref{Chapter4}.
+Chương này đã trình bày CoQLLM như một kiến trúc tích hợp tín hiệu cộng tác vào LLM thông qua
+cầu nối Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former tổng hợp nhiều
+nguồn tín hiệu bằng các truy vấn học được và attention trước khi chuyển chúng thành soft token.
+Trên nền kiến trúc này, luận văn bổ sung điều kiện hóa truy vấn theo người dùng và mục tiêu bảo
+toàn thứ hạng trong từng người dùng -- cải thiện lần lượt AUC và uAUC -- đồng thời khảo sát lựa
+chọn biểu diễn đa token. Chương tiếp theo đánh giá các thiết kế trên thông qua kết quả thực
+nghiệm.

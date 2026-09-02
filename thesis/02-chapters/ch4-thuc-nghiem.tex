@@ -277,8 +277,8 @@ vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số
 
 Để kiểm chứng rằng cầu nối Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
 gian cộng tác và không gian LLM, luận văn đo cosine similarity giữa:
-(i)~véc-tơ cộng tác thô (đầu ra MF) và véc-tơ nhúng token LLM tương ứng trước khi huấn luyện
-cầu nối; (ii)~soft token đầu ra Q-Former và véc-tơ nhúng token LLM sau khi huấn luyện.
+(i)~véc-tơ cộng tác thô (đầu ra MF) và embedding token LLM tương ứng trước khi huấn luyện
+cầu nối; (ii)~soft token đầu ra Q-Former và embedding token LLM sau khi huấn luyện.
 Kết quả kỳ vọng: cosine similarity tăng sau huấn luyện, cho thấy Q-Former thực sự căn
 chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 
@@ -286,8 +286,8 @@ chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 \label{ssec:user-group}
 
 Để kiểm chứng động lực cold-start, luận văn phân rã tập kiểm tra thành hai nhóm: người dùng
-\textit{ấm} (warm -- có nhúng MF, tức MF đã ``thấy'' người dùng/sản phẩm trong huấn luyện)
-và người dùng \textit{nguội} (cold -- MF không có nhúng, phải dùng đại diện mặc định).
+\textit{ấm} (warm -- có embedding MF, tức MF đã ``thấy'' người dùng/sản phẩm trong huấn luyện)
+và người dùng \textit{nguội} (cold -- MF không có embedding, phải dùng đại diện mặc định).
 Bảng~\ref{tab:warm-cold} trình bày AUC/uAUC theo từng nhóm trên cả hai tập dữ liệu.
 
 \begin{table}[ht]
@@ -361,7 +361,7 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên
     Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn theo AUC),
     khác quy trình chọn checkpoint theo uAUC của CoQLLM.
-    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng nhúng MF cho
+    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
     người dùng/sản phẩm nguội (Mục~\ref{ssec:user-group}), không phải bởi cầu nối; cải
     thiện tiếp theo cần MF teacher mạnh hơn trên nhóm cold.
 \end{enumerate}
