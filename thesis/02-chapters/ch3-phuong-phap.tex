@@ -229,18 +229,22 @@ người dùng (Amazon-Book) và gần như trung tính khi uAUC đã bão hòa 
 \section{Biểu diễn cộng tác đa token}
 \label{sec:lua-chon-thiet-ke}
 
-Bên cạnh các kỹ thuật huấn luyện chính, luận văn khảo sát lựa chọn biểu diễn đa token; lựa
-chọn này được ghi nhận minh bạch nhưng không phải đóng góp trung tâm, và vai trò của nó được
-đánh giá qua ablation ở Mục~\ref{sec:ablation}.
+Do Q-Former sử dụng $Q = 8$ truy vấn học được, đầu ra của nó là $Q$ véc-tơ. CoQLLM chiếu toàn
+bộ $Q$ véc-tơ này qua lớp chiếu và đưa vào LLM như $Q$ soft token riêng biệt cho mỗi sản phẩm
+(sản phẩm mục tiêu và từng sản phẩm trong lịch sử). Đây là \textit{hệ quả trực tiếp} của việc
+dùng nhiều truy vấn, không phải một mô-đun được thiết kế thêm: giữ nguyên cả $Q$ véc-tơ cho
+phép mỗi truy vấn truyền một khía cạnh biểu diễn khác nhau tới LLM, thay vì phải hợp nhất về
+một véc-tơ duy nhất trước khi đi vào mô hình ngôn ngữ.
 
-Phiên bản cơ sở gộp toàn bộ tín hiệu cộng tác thành một soft token duy nhất trước khi chèn vào
-prompt. Cấu hình đa token (multi-token) giữ nguyên $Q = 8$ truy vấn đầu ra của Q-Former sau lớp
-chiếu và đưa chúng vào LLM như tám soft token riêng biệt.
+Điểm này tạo một khác biệt so với CoLLM~\cite{collm2023}, vốn cô đọng mỗi véc-tơ cộng tác
+thành đúng một soft token. Với cùng số nguồn cộng tác, CoQLLM đưa vào LLM số soft token gấp $Q$
+lần, tức băng thông biểu diễn cao hơn. Luận văn ghi nhận đây là một \textit{yếu tố gây nhiễu}
+(confound) cần lưu ý khi so sánh với CoLLM, chứ không xem việc dùng nhiều token là một đóng góp
+riêng.
 
-Thiết kế này làm tăng băng thông biểu diễn giữa Q-Former và LLM, cho phép các truy vấn giữ lại
-các khía cạnh thông tin khác nhau thay vì phải hợp nhất hoàn toàn trước khi đi vào mô hình ngôn
-ngữ. Tuy nhiên, đây được xem là một lựa chọn kiến trúc bổ sung và không phải đóng góp trung
-tâm của luận văn; tác động của nó được thảo luận trong phần thực nghiệm và hạn chế.
+Việc tách riêng ảnh hưởng của số lượng soft token (một token so với $Q$ token) dưới cùng một
+backbone chưa được thực hiện trong luận văn; đây là một ablation còn để ngỏ, được ghi nhận minh
+bạch ở Mục~\ref{sec:han-che}.
 
 \section{Huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
@@ -344,6 +348,7 @@ Chương này đã trình bày CoQLLM như một kiến trúc tích hợp tín h
 cầu nối Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former tổng hợp nhiều
 nguồn tín hiệu bằng các truy vấn học được và attention trước khi chuyển chúng thành soft token.
 Trên nền kiến trúc này, luận văn bổ sung điều kiện hóa truy vấn theo người dùng và mục tiêu bảo
-toàn thứ hạng trong từng người dùng -- cải thiện lần lượt AUC và uAUC -- đồng thời khảo sát lựa
-chọn biểu diễn đa token. Chương tiếp theo đánh giá các thiết kế trên thông qua kết quả thực
-nghiệm.
+toàn thứ hạng trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Chương cũng ghi nhận
+biểu diễn đa token như một hệ quả trực tiếp của thiết kế nhiều truy vấn, đồng thời là yếu tố
+cần lưu ý khi so sánh với CoLLM. Chương tiếp theo đánh giá các thiết kế trên thông qua kết quả
+thực nghiệm.
