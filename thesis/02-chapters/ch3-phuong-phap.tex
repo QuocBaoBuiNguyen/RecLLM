@@ -68,6 +68,18 @@ nhân của các chênh lệch thực nghiệm. Trong phạm vi luận văn, MF 
 liệu huấn luyện tương ứng của từng tập dữ liệu và sau đó giữ nguyên trong các giai đoạn tích
 hợp.
 
+Việc giữ MF đóng băng trong các giai đoạn sau nhất quán với cấu hình mặc định của
+CoLLM~\cite{collm2023}. Trong khảo sát của CoLLM, việc tiếp tục tinh chỉnh mô hình cộng tác
+cùng với lớp chiếu có thể cải thiện nhẹ kết quả trong phần lớn trường hợp, nhưng làm tăng
+đáng kể chi phí huấn luyện (khoảng năm lần trên MovieLens-1M) và làm chậm hội tụ; vì vậy đóng
+băng là một đánh đổi hợp lý giữa hiệu năng và chi phí. Bên cạnh đó, một mô hình cộng tác đã
+được huấn luyện tốt còn đóng vai trò tiên nghiệm (prior) và ràng buộc cho quá trình học soft
+token. Quan trọng hơn đối với mục tiêu phân tích của luận văn, việc cố định MF cho phép quy
+phần trần của uAUC về chất lượng embedding của MF ở nhóm người dùng/sản phẩm nguội
+(Mục~\ref{ssec:user-group}), thay vì để đóng góp của MF và của cầu nối căn chỉnh trộn lẫn với
+nhau. Việc mở băng và tinh chỉnh đồng thời MF được ghi nhận như một hướng khảo sát trong
+tương lai.
+
 \section{Cầu nối Q-Former}
 \label{sec:qformer}
 
