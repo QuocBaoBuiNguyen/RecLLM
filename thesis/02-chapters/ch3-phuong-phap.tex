@@ -24,11 +24,12 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
     \item \textbf{Mô-đun phân rã ma trận (MF)} cung cấp embedding cộng tác cho người dùng,
     sản phẩm mục tiêu và các sản phẩm trong lịch sử tương tác.
 
-    \item \textbf{Cầu nối Q-Former} tổng hợp và biến đổi tín hiệu cộng tác bằng self-attention
-    và cross-attention với tập truy vấn học được.
+    \item \textbf{Cầu nối Q-Former} biến đổi mỗi véc-tơ cộng tác thành các soft token bằng một
+    tập truy vấn học được (self-attention giữa các truy vấn và cross-attention tới véc-tơ cộng
+    tác).
 
     \item \textbf{Mô hình ngôn ngữ lớn (LLM)} nhận các soft token cộng tác cùng prompt văn
-    bản và thực hiện dự đoán ``Yes/No''.
+    bản, kết hợp chúng qua self-attention và thực hiện dự đoán ``Yes/No''.
 \end{enumerate}
 
 \begin{figure}[htp]
@@ -102,18 +103,18 @@ sử không được phối hợp ở phía mô-đun ánh xạ trước khi đi 
 cô đọng thành một soft token duy nhất, nên mô-đun không có một cơ chế riêng để học cách phân
 bổ mức độ chú ý khác nhau cho các nguồn tín hiệu cộng tác theo từng mẫu.
 
-Q-Former cung cấp một cơ chế khác. Cross-attention cho phép trọng số tổng hợp phụ thuộc vào
-đầu vào, trong khi tập truy vấn học được và self-attention tạo ra nhiều kênh biểu diễn có thể
-phối hợp với nhau. Do đó, thay vì xem từng embedding cộng tác như một đầu vào độc lập cần
-chiếu sang không gian LLM, CoQLLM xem tập tín hiệu cộng tác như một nguồn thông tin cần được
-tổng hợp trước khi ánh xạ sang soft token.
+Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định cho ra đúng một token, mỗi
+véc-tơ cộng tác được một \textit{tập truy vấn học được} khai triển thành nhiều biểu diễn: các
+truy vấn có khởi tạo riêng và phối hợp với nhau qua self-attention, nên có thể chuyên biệt hóa
+để nắm các khía cạnh khác nhau của cùng một tín hiệu cộng tác. Đây là điểm khác biệt cốt lõi
+so với một hàm pointwise duy nhất.
 
-Trong bài toán này, lợi thế kỳ vọng của Q-Former không chủ yếu đến từ khả năng nén một chuỗi
-rất dài như trong thị giác. Đầu vào cộng tác chỉ gồm một số lượng hữu hạn embedding, nên
-cross-attention chủ yếu thực hiện tổng hợp có trọng số (chi tiết ở
-Mục~\ref{ssec:qformer-kien-truc}). Vai trò quan trọng hơn nằm ở các truy vấn học được và
-self-attention giữa chúng, cho phép mô hình phân chia và phối hợp các khía cạnh biểu diễn khác
-nhau trước khi đưa thông tin vào LLM.
+Cần nói rõ giới hạn của lập luận này để tránh phóng đại. Lợi thế của Q-Former ở đây không đến
+từ khả năng nén như trong thị giác: mỗi sản phẩm được mã hóa từ \textit{một} véc-tơ cộng tác
+duy nhất, nên cross-attention chủ yếu đóng vai một phép đọc có học đối với véc-tơ đó (chi tiết
+ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của cầu nối vì thế nằm ở tập truy vấn học được,
+sự phối hợp qua self-attention và độ sâu của phép biến đổi, chứ không nằm ở việc gộp nhiều
+nguồn tín hiệu bên trong Q-Former.
 
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
@@ -131,22 +132,28 @@ Trong mỗi lớp Q-Former, các truy vấn đi qua hai cơ chế attention:
     thông tin và phối hợp vai trò biểu diễn, mỗi truy vấn đảm nhận một khía cạnh khác nhau của
     tín hiệu cộng tác.
 
-    \item \textit{Cross-attention} từ các truy vấn đến tín hiệu cộng tác, trong đó mỗi truy vấn
-    trọng số hóa và tổng hợp thông tin từ embedding người dùng, sản phẩm mục tiêu và các
-    embedding lịch sử $\{e_u, e_i, e_{i'}\}$ với trọng số phụ thuộc vào mẫu.
+    \item \textit{Cross-attention} từ các truy vấn đến biểu diễn cộng tác của sản phẩm đang được
+    mã hóa: các truy vấn cùng đọc một véc-tơ cộng tác đầu vào và biến đổi nó thành nhiều kênh
+    biểu diễn khác nhau.
 \end{enumerate}
 
 Đầu ra là khối truy vấn $\mathbf{Z} = \text{cf\_q} \in \mathbb{R}^{B \times Q \times
 d_{\text{model}}}$, trong đó $B$ là kích thước batch và $Q = 8$.
 
-So với BLIP-2, vai trò của cross-attention trong CoQLLM có khác biệt. Trong thị giác,
-cross-attention phải tổng hợp hàng trăm patch feature thành số lượng truy vấn nhỏ hơn đáng kể,
-nên đóng vai trò nén chính. Trong CoQLLM, số nguồn biểu diễn cộng tác thấp hơn nhiều, nên cơ
-chế này thiên về tổng hợp có trọng số hơn là nén mạnh về độ dài. Vì vậy, luận văn xem tập truy
-vấn học được và quá trình phối hợp giữa chúng qua self-attention là thành phần quan trọng của
-cầu nối căn chỉnh. Nhận định này nhất quán với quan sát thực nghiệm rằng việc tăng số lớp
-Q-Former không cải thiện đáng kể kết quả -- dung lượng không phải nút thắt, chất lượng căn chỉnh
-mới là điều quyết định.
+Trong CoQLLM, mỗi sản phẩm (sản phẩm mục tiêu và từng sản phẩm trong lịch sử) được Q-Former mã
+hóa \textit{độc lập} từ một véc-tơ cộng tác thành $Q$ soft token. Tín hiệu người dùng không đi
+vào Q-Former dưới dạng đầu vào cross-attention mà được đưa vào qua điều kiện hóa truy vấn
+(Mục~\ref{ssec:user-conditioned}); còn việc kết hợp thông tin \textit{giữa} các sản phẩm được
+thực hiện ở lớp self-attention của LLM trên toàn bộ soft token, chứ không phải bên trong cầu
+nối.
+
+Điều này dẫn tới một khác biệt so với BLIP-2. Trong thị giác, cross-attention nén hàng trăm
+patch thành số truy vấn nhỏ hơn nhiều, nên đóng vai trò nén chính. Trong CoQLLM, do đầu vào chỉ
+là một véc-tơ cộng tác cho mỗi lần mã hóa, cross-attention gần như một phép đọc có học đối với
+véc-tơ đó; điều tạo ra $Q$ biểu diễn khác nhau chính là tập truy vấn học được (mỗi truy vấn
+khởi tạo riêng) cùng self-attention phối hợp giữa chúng. Vì vậy, luận văn xem \textit{tập truy
+vấn học được và self-attention} -- chứ không phải khả năng nén hay việc gộp nhiều nguồn bên
+trong Q-Former -- là thành phần quan trọng của cầu nối căn chỉnh.
 
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
