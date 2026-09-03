@@ -53,7 +53,21 @@ model:
   # is unchanged, so an existing checkpoint can simply be re-scored.
   # NB under pos_logit the acc / pred_pos_rate@0.5 diagnostics are meaningless
   # (a logit is not a probability); AUC and uAUC are rank-based and fine.
-  score_mode: margin
+  #
+  # DEFAULT IS NOW pos_logit (CoLLM parity). Rationale: 8531bd3 (2026-05-09)
+  # silently changed the measurement. Before it the score was sigmoid(z_Yes),
+  # monotone in z_Yes and therefore RANK-IDENTICAL to CoLLM; after it the score
+  # is sigmoid(z_Yes - z_No), which also depends on the "No" logit and induces a
+  # DIFFERENT ordering. Since AUC/uAUC depend only on the ordering, every number
+  # produced under "margin" is a different measurement from the CoLLM / BinLLM /
+  # CoRA numbers it is tabulated against. pos_logit restores the pre-8531bd3
+  # ordering exactly, so the comparison is 1:1 again.
+  # This is the ranking function only; the training objective (cross-entropy over
+  # {No,Yes}) is NOT reverted and existing checkpoints stay valid — they only
+  # need re-scoring. NB for TRAINING runs this also changes which epoch wins
+  # checkpoint_best (per-epoch eval uses this same scorer with best_metric=uauc);
+  # gradients are unaffected.
+  score_mode: pos_logit
 
   # uAUC-aligned objective for Stage 3. L = BCE + weight * per-user pairwise BPR
   # (a differentiable AUC surrogate over the Yes/No margin). weight=0.0 -> the
