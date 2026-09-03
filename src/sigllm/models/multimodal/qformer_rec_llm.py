@@ -1154,7 +1154,16 @@ class QRecLLM(Rec2Base):
         # acc / pred_pos_rate@0.5 diagnostics lose their meaning (a logit is not
         # a probability); AUC and uAUC are rank-based and unaffected.
         if self.score_mode == "pos_logit":
-            return prediction_logits[:, pos_id]
+            # .clone() is REQUIRED, not cosmetic. HF already upcasts logits to
+            # fp32 inside modeling_llama, so the .float() above is a no-op that
+            # returns the SAME tensor -> prediction_logits is a VIEW of the full
+            # [B, T, vocab] logits, and so is this column. _collect_predictions
+            # keeps every batch's scores on the GPU until the split ends, so
+            # returning the view pins ~B*T*32001*4 bytes per batch (3.8 GB at
+            # batch_size_eval=64) and OOMs after ~9 batches. The margin branch
+            # below is safe only because softmax allocates a fresh tensor, and
+            # the pre-8531bd3 code was safe only because torch.sigmoid did.
+            return prediction_logits[:, pos_id].clone()
 
         binary_logits = torch.stack(
             [prediction_logits[:, neg_id], prediction_logits[:, pos_id]],
