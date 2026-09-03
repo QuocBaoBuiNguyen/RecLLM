@@ -87,16 +87,16 @@ LLM. ILM~\cite{ilm2024} đã khai thác ý tưởng này trong bài toán gợi 
 có thể được sử dụng như một mô-đun trung gian giữa thông tin cộng tác và mô hình ngôn ngữ.
 
 Tuy nhiên, vẫn còn hai khoảng trống liên quan trực tiếp đến mục tiêu của luận văn. Thứ nhất,
-ILM không được đánh giá theo thiết lập dự đoán CTR với AUC và uAUC như CoLLM và các
+ILM không được đánh giá theo bài toán dự đoán CTR với AUC và uAUC như CoLLM và các
 công trình cùng hướng, nên chưa tạo ra cơ sở so sánh trực tiếp giữa cơ chế Q-Former và phép
 ánh xạ MLP trong cùng thiết lập đánh giá. Thứ hai, mô-đun Q-Former trong ILM chưa được
-khảo sát cùng các cơ chế huấn luyện hướng trực tiếp tới chất lượng phân biệt giữa người dùng
-và chất lượng xếp hạng trong từng người dùng, cũng như lựa chọn biểu diễn nhiều soft token.
+khảo sát cùng các kỹ thuật huấn luyện nhằm cải thiện tới chất lượng phân biệt giữa người dùng
+và chất lượng xếp hạng trong từng người dùng (AUC/uAUC), cũng như lựa chọn biểu diễn nhiều soft token.
 
 Từ các khoảng trống trên, luận văn xây dựng CoQLLM, trong đó Q-Former được sử dụng làm
 mô-đun căn chỉnh giữa biểu diễn cộng tác và LLM. Mô hình được đánh giá trên bài toán dự
-đoán CTR với AUC và uAUC, đồng thời được bổ sung các cơ chế điều kiện hóa truy vấn theo
-người dùng, mục tiêu bảo toàn thứ hạng trong từng người dùng và biểu diễn cộng tác đa token.
+đoán CTR với AUC và uAUC, đồng thời được bổ sung cơ chế điều kiện hóa truy vấn theo
+người dùng và biểu diễn cộng tác đa token.
 
 \section{Mục tiêu và đóng góp}
 \label{sec:dong-gop}
@@ -107,10 +107,10 @@ Luận văn hướng đến hai mục tiêu chính.
 thiết kế và hiện thực CoQLLM với ba thành phần chính: mô hình MF đóng băng, Q-Former làm
 mô-đun căn chỉnh, và LLM Vicuna-7B-v1.5~\cite{vicuna2023} kết hợp LoRA~\cite{lora2021}.
 Tín hiệu cộng tác được xử lý bởi Q-Former trước khi được đưa vào LLM dưới dạng soft token.
-Trên kiến trúc cơ sở này, luận văn khảo sát điều kiện hóa truy vấn theo người dùng, mục tiêu
-bảo toàn thứ hạng trong từng người dùng và biểu diễn đa token.
+Trên kiến trúc cơ sở này, luận văn khảo sát điều kiện hóa truy vấn theo người dùng và biểu
+diễn đa token.
 
-\textbf{Mục tiêu 2 -- Đánh giá Q-Former trong thiết lập CTR.} Luận văn đánh giá CoQLLM
+\textbf{Mục tiêu 2 -- Đánh giá Q-Former cho bài toán CTR.} Luận văn đánh giá CoQLLM
 trên MovieLens-1M và Amazon-Book bằng AUC và uAUC, đồng thời đối chiếu với các baseline
 như CoLLM, BinLLM và CoRA trong phạm vi số liệu tương thích.
 
@@ -120,8 +120,7 @@ Từ hai mục tiêu trên, các đóng góp chính của luận văn gồm:
     \item \textbf{Thích nghi Q-Former cho bài toán gợi ý dựa trên tín hiệu cộng tác.} Đặc
     trưng cộng tác từ MF được sử dụng thay cho đặc trưng ảnh trong cơ chế cross-attention của
     Q-Former và được chuyển thành soft token đầu vào cho LLM. Trên nền tảng này, luận văn bổ
-    sung điều kiện hóa truy vấn theo người dùng, mục tiêu bảo toàn thứ hạng trong từng người
-    dùng và khảo sát biểu diễn đa token.
+    sung điều kiện hóa truy vấn theo người dùng và khảo sát biểu diễn đa token.
 
     \item \textbf{Đánh giá có hệ thống theo AUC và uAUC.} CoQLLM được đánh giá trên
     MovieLens-1M và Amazon-Book theo thiết lập dự đoán nhị phân, cho phép đối chiếu trực tiếp

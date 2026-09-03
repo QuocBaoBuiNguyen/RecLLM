@@ -174,9 +174,8 @@ cần thay đổi trực tiếp trọng số backbone LLM theo từng mẫu. Đ�
 CoRA~\cite{cora2024}, nơi biểu diễn cộng tác được sử dụng để sinh cập nhật trọng số hạng thấp
 cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
 toàn đóng băng và tập trung phân tích vai trò của cầu nối căn chỉnh. Trên nền đường soft token
-này, luận văn bổ sung hai kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
-(Mục~\ref{ssec:user-conditioned}) và mục tiêu bảo toàn thứ tự trong từng người dùng
-(Mục~\ref{ssec:align-rank}) -- nhằm cải thiện lần lượt AUC và uAUC.
+này, luận văn bổ sung một kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
+(Mục~\ref{ssec:user-conditioned}) -- nhằm cải thiện AUC.
 
 \subsection{Điều kiện hóa truy vấn theo người dùng}
 \label{ssec:user-conditioned}
@@ -201,37 +200,6 @@ vi một người dùng}, cơ chế này có thể nâng khả năng phân biệ
 nền riêng theo từng người dùng -- có thể nhỏ hơn. Giả thuyết này được đối chiếu với kết quả
 thực nghiệm ở Chương~\ref{Chapter4}. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng
 không, cơ chế tương thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
-
-\subsection{Hàm mất mát bảo toàn thứ hạng theo người dùng}
-\label{ssec:align-rank}
-
-Hàm mất mát mặc định trong giai đoạn tinh chỉnh CTR là entropy chéo nhị phân (BCE) trên nhãn
-``Yes''/``No''. BCE tối ưu khả năng phân loại từng mẫu nhưng không trực tiếp tối ưu thứ tự
-tương đối giữa các sản phẩm của cùng một người dùng, trong khi uAUC đo chính đặc tính xếp hạng
-nội bộ này.
-
-Để bổ sung tín hiệu xếp hạng, luận văn sử dụng một mục tiêu BPR theo cặp trong phạm vi từng
-người dùng (\textit{align-rank loss}), áp trực tiếp lên soft token cộng tác đã căn chỉnh
-(trước khi vào LLM) thông qua một đầu ra phụ cũng khởi tạo bằng không:
-
-\begin{equation} \label{eq:align-rank}
-\mathcal{L} = \mathcal{L}_{\text{BCE}}
-  + \lambda \sum_{u} \sum_{(i^{+},\, i^{-}) \in \mathcal{P}_u}
-    -\log \sigma\!\Big( \tfrac{1}{\tau}\big( s_u(i^{+}) - s_u(i^{-}) \big) \Big),
-\end{equation}
-
-trong đó $s_u(\cdot)$ là điểm xếp hạng được sinh từ soft token cộng tác đã căn chỉnh,
-$\mathcal{P}_u$ là tập các cặp dương--âm của cùng người dùng $u$, $\sigma$ là hàm sigmoid,
-$\tau$ là nhiệt độ và $\lambda$ là trọng số của thành phần xếp hạng.
-
-Mục tiêu phụ được áp trực tiếp lên biểu diễn cộng tác sau căn chỉnh, thay vì chỉ lên logit
-``Yes/No'' của LLM, nhằm buộc bản thân cầu nối giữ đúng thứ tự giữa sản phẩm dương và âm trong
-từng người dùng. Để tạo đủ cặp dương--âm trong một batch, quá trình huấn luyện sử dụng lấy mẫu
-theo nhóm người dùng (\textit{user-grouped batch}) và mục tiêu được kích hoạt ở Bước 2 của Giai
-đoạn 3 (nơi Q-Former và lớp chiếu được huấn luyện). Do đầu ra phụ khởi tạo bằng không, các
-epoch đầu gần như trung tính và tác động của mục tiêu xếp hạng hiện dần về sau. Đây là một siêu
-tham số phụ thuộc tập dữ liệu: nó cải thiện uAUC trên tập còn nhiều dư địa xếp hạng trong từng
-người dùng (Amazon-Book) và gần như trung tính khi uAUC đã bão hòa (MovieLens-1M).
 
 \section{Biểu diễn cộng tác đa token}
 \label{sec:lua-chon-thiet-ke}
@@ -336,9 +304,8 @@ tiêu của bước này là giúp LLM thích nghi với nhiệm vụ dự đoá
 checkpoint của Bước 1. LoRA được giữ cố định, trong khi Q-Former và các lớp chiếu được cập nhật
 để học cách đưa biểu diễn cộng tác vào LLM dưới dạng soft token -- tách bạch phần ``ngôn ngữ''
 (LoRA, học ở Bước 1) khỏi phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước
-duy nhất kích hoạt hai kỹ thuật điều kiện hóa truy vấn theo người dùng
-(Mục~\ref{ssec:user-conditioned}) và, khi cấu hình cho phép, mục tiêu bảo toàn thứ hạng trong
-từng người dùng (Mục~\ref{ssec:align-rank}). Nhãn giám sát là ``Yes''/``No'' tương ứng với nhãn
+duy nhất kích hoạt kỹ thuật điều kiện hóa truy vấn theo người dùng
+(Mục~\ref{ssec:user-conditioned}). Nhãn giám sát là ``Yes''/``No'' tương ứng với nhãn
 CTR, và checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
 
 So với mô-đun chiếu MLP của CoLLM, Q-Former làm tăng chi phí huấn luyện do có nhiều lớp
@@ -352,10 +319,9 @@ Chương~\ref{Chapter4}.
 \label{sec:ket-chuong-3}
 
 Chương này đã trình bày CoQLLM như một kiến trúc tích hợp tín hiệu cộng tác vào LLM thông qua
-cầu nối Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former tổng hợp nhiều
-nguồn tín hiệu bằng các truy vấn học được và attention trước khi chuyển chúng thành soft token.
-Trên nền kiến trúc này, luận văn bổ sung điều kiện hóa truy vấn theo người dùng và mục tiêu bảo
-toàn thứ hạng trong từng người dùng -- cải thiện lần lượt AUC và uAUC. Chương cũng ghi nhận
-biểu diễn đa token như một hệ quả trực tiếp của thiết kế nhiều truy vấn, đồng thời là yếu tố
-cần lưu ý khi so sánh với CoLLM. Chương tiếp theo đánh giá các thiết kế trên thông qua kết quả
-thực nghiệm.
+cầu nối Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former khai triển mỗi
+véc-tơ cộng tác thành nhiều kênh biểu diễn bằng tập truy vấn học được và self-attention trước
+khi chuyển chúng thành soft token. Trên nền kiến trúc này, luận văn bổ sung điều kiện hóa truy
+vấn theo người dùng nhằm cải thiện AUC. Chương cũng ghi nhận biểu diễn đa token như một hệ quả
+trực tiếp của thiết kế nhiều truy vấn, đồng thời là yếu tố cần lưu ý khi so sánh với CoLLM.
+Chương tiếp theo đánh giá các thiết kế trên thông qua kết quả thực nghiệm.

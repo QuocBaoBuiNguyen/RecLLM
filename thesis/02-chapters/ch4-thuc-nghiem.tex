@@ -25,8 +25,8 @@ theo đúng phân chia dùng trong CoLLM và CoRA. Tập này có khoảng $23$ 
 $34$ nghìn sản phẩm sách, với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn hẳn -- đây
 chính là điều kiện để kiểm chứng cầu nối CF--LLM trên miền khó, nơi tín hiệu cộng tác yếu và
 LLM/Q-Former có nhiều dư địa đóng góp. Nhãn CTR được nhị phân hóa tương tự. Việc bổ sung
-Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim và làm nổi
-bật vai trò của mục tiêu bảo toàn thứ tự trong từng người dùng (Mục~\ref{ssec:align-rank}).
+Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim, nơi tín hiệu
+cộng tác yếu và tỉ lệ người dùng/sản phẩm nguội cao.
 
 \subsection{Phân chia dữ liệu và thiết lập đánh giá}
 \label{ssec:phan-chia}
@@ -101,9 +101,8 @@ khoảng cách ngữ nghĩa CF--LLM).
     $4$ lớp; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased}.
     \item \textbf{LoRA}~\cite{lora2021}: hạng $r = 8$, $\alpha = 16$, dropout $0{,}05$, áp
     dụng trên các lớp $[q,v]$ của LLM.
-    \item \textbf{Kỹ thuật SOTA}: điều kiện hóa truy vấn theo người dùng bật trên cả hai tập dữ liệu;
-    hàm mất mát bảo toàn thứ tự ($\lambda = 0{,}2$, kèm lấy mẫu theo nhóm người dùng) bật
-    trên Amazon-Book, tắt trên MovieLens-1M.
+    \item \textbf{Kỹ thuật}: điều kiện hóa truy vấn theo người dùng bật trên cả hai tập dữ
+    liệu.
     \item \textbf{Chọn checkpoint}: theo uAUC trên tập kiểm định (khác CoLLM/CoRA chọn theo
     AUC -- xem ghi chú bảng kết quả).
     \item \textbf{Optimizer}: AdamW; learning rate tùy giai đoạn (Bước 2 Giai đoạn 3 dùng
@@ -154,8 +153,7 @@ CoQLLM (vanilla) & 0{,}7335 & 0{,}7009 \\
 \begin{table}[ht]
 \caption{Kết quả trên Amazon-Book. Số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy lại
 trong CoRA~\cite{cora2024} (chọn checkpoint theo AUC); CoQLLM chọn theo uAUC. uAUC tính
-trên $2{.}486$ người dùng tập kiểm tra. Run-1 = + điều kiện hóa; Run-2 = thêm
-bảo toàn thứ tự.}
+trên $2{.}486$ người dùng tập kiểm tra.}
 \label{tab:ket-qua-book}
 \begin{center}
 \begin{tabular}{|L{5.5cm}|c|c|}
@@ -168,9 +166,7 @@ BinLLM~\cite{binllm2024} (CoRA re-run) & 0{,}8157 & 0{,}5724 \\
 \hline
 CoRA-MF~\cite{cora2024} (sinh trọng số) & 0{,}8179 & 0{,}6262 \\
 \hline
-CoQLLM (+ điều kiện hóa, Run-1) & 0{,}8147 & 0{,}5958 \\
-\hline
-\textbf{CoQLLM (+ bảo toàn thứ tự, Run-2)} & \textbf{0{,}8132} & \textbf{0{,}6062} \\
+\textbf{CoQLLM (+ điều kiện hóa)} & \textbf{0{,}8147} & \textbf{0{,}5958} \\
 \hline
 \end{tabular}
 \end{center}
@@ -185,14 +181,12 @@ lệch nằm trong biên độ nhiễu) -- đúng như phân tích ở Mục~\re
 theo người dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người dùng (AUC), gần như
 trung tính với xếp hạng \textit{trong} người dùng (uAUC).
 
-\textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với điều kiện hóa truy vấn theo người dùng (Run-1),
+\textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với điều kiện hóa truy vấn theo người dùng,
 CoQLLM đạt AUC $0{,}8147$ và uAUC $0{,}5958$ -- \textit{vượt cả CoLLM-MF và BinLLM (theo lần
-chạy lại của CoRA) trên cả hai độ đo}. Bổ sung hàm mất mát bảo toàn thứ tự (Run-2) nâng uAUC
-lên $0{,}6062$ ($+0{,}0104$) trong khi AUC gần như đứng yên ($-0{,}0015$) -- đúng thiết kế:
-tổn thất này tác động vào thứ tự trong từng người dùng chứ không ảnh hưởng đến khả năng phân biệt
-giữa các người dùng.
-Con số $0{,}6062$ đưa CoQLLM vào vùng cạnh tranh với CoRA-MF ($0{,}6262$), vốn dùng cơ chế
-sinh trọng số khác hẳn.
+chạy lại của CoRA) trên cả hai độ đo}. uAUC $0{,}5958$ vẫn thấp hơn CoRA-MF ($0{,}6262$), vốn
+dùng cơ chế sinh trọng số khác hẳn; phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly})
+cho thấy dư địa của uAUC trên miền này chủ yếu nằm ở chất lượng embedding MF cho nhóm người
+dùng/sản phẩm nguội.
 
 \textit{Về quy trình so sánh.} CoQLLM chọn checkpoint theo \textbf{uAUC}, còn
 CoLLM/CoRA theo \textbf{AUC}; do đó uAUC của CoQLLM là uAUC-tối-ưu-trên-frontier (lợi thế
@@ -212,27 +206,22 @@ học thứ tự xếp hạng \textit{trong} từng người dùng -- cặp sả
 thích hơn -- thay vì chỉ phân biệt người dùng với nhau.
 
 Đặc điểm này được xác nhận trực tiếp qua phân rã warm/cold (Mục~\ref{ssec:user-group}).
-Trên cả hai tập dữ liệu, uAUC ở nhóm người dùng \textit{ấm} (warm, MF có tín hiệu) cao hơn
-hẳn nhóm \textit{nguội} (cold): trên Amazon-Book, uAUC warm đạt $0{,}6238$ -- gần chạm
-CoRA-MF ($0{,}6262$) -- trong khi uAUC cold chỉ $0{,}5258$, tức xấp xỉ mức ngẫu nhiên. Nhóm
-cold kéo trung bình toàn tập xuống $0{,}6062$. Điều này cho thấy trần của uAUC không nằm ở
-cầu nối Q-Former (nếu Q-Former yếu thì AUC cũng phải sập, nhưng AUC vẫn cao $\approx 0{,}81$)
-mà ở \textit{chất lượng véc-tơ cộng tác của MF cho người dùng/sản phẩm nguội}. Đây là căn cứ để
-định hướng cải thiện uAUC về phía MF teacher (Mục~\ref{sec:huong-phat-trien}) thay vì tinh
-chỉnh thêm kiến trúc cầu nối.
+Trên MovieLens-1M, uAUC ở nhóm người dùng \textit{ấm} (warm, MF có tín hiệu) đạt $0{,}7254$,
+cao hơn hẳn nhóm \textit{nguội} (cold) chỉ $0{,}5969$; trong khi AUC hai nhóm chênh ít hơn
+($0{,}7787$ so với $0{,}7030$). Điều này cho thấy trần của uAUC không nằm ở cầu nối Q-Former
+(nếu cầu nối yếu thì AUC cũng phải sập) mà ở \textit{chất lượng embedding MF cho người
+dùng/sản phẩm nguội}. Đây là căn cứ để định hướng cải thiện uAUC về phía MF teacher
+(Mục~\ref{sec:huong-phat-trien}) thay vì tinh chỉnh thêm kiến trúc cầu nối.
 
 \section{Thí nghiệm loại bỏ thành phần}
 \label{sec:ablation}
 
-Bảng~\ref{tab:ablation} trình bày phân tích ablation các thành phần của CoQLLM.
-
-Bảng~\ref{tab:ablation} tách biệt đóng góp của hai kỹ thuật huấn luyện bằng cách bật/tắt
-từng cơ chế trên nền cầu nối soft token, trên cả hai tập dữ liệu.
+Bảng~\ref{tab:ablation} tách biệt đóng góp của kỹ thuật điều kiện hóa truy vấn theo người dùng
+bằng cách bật/tắt cơ chế này trên nền cầu nối soft token (MovieLens-1M).
 
 \begin{table}[ht]
-\caption{Ablation hai kỹ thuật huấn luyện. Trên MovieLens-1M: bật điều kiện hóa truy vấn theo người dùng.
-Trên Amazon-Book: bật điều kiện hóa truy vấn theo người dùng (Run-1) rồi thêm hàm mất mát bảo toàn thứ tự
-(Run-2). Tất cả trên nền soft token; chọn checkpoint theo uAUC.}
+\caption{Ablation kỹ thuật điều kiện hóa truy vấn theo người dùng trên MovieLens-1M, trên nền
+soft token; chọn checkpoint theo uAUC.}
 \label{tab:ablation}
 \begin{center}
 \begin{tabular}{|L{2.6cm}|L{4cm}|c|c|}
@@ -243,31 +232,22 @@ MovieLens-1M & Soft token (vanilla) & 0{,}7335 & 0{,}7009 \\
 \hline
 MovieLens-1M & + điều kiện hóa & \textbf{0{,}7475} & 0{,}6968 \\
 \hline
-Amazon-Book & + điều kiện hóa (Run-1) & 0{,}8147 & 0{,}5958 \\
-\hline
-Amazon-Book & + bảo toàn thứ tự (Run-2) & 0{,}8132 & \textbf{0{,}6062} \\
-\hline
 \end{tabular}
 \end{center}
 \end{table}
 
-\textbf{Đọc bảng ablation.} Hai kỹ thuật tác động lên hai độ đo khác nhau, đúng như thiết kế.
-Trên MovieLens-1M, điều kiện hóa truy vấn theo người dùng chủ yếu tác động lên \textit{AUC} (+$0{,}014$), gần trung
-tính với uAUC. Trên Amazon-Book, hàm mất mát bảo toàn thứ tự chủ yếu tác động lên \textit{uAUC}
-(+$0{,}0104$), gần trung tính với AUC. Sự phân đôi này giải thích vì sao mỗi tập dữ liệu bật
-cơ chế khác nhau: trên MovieLens-1M uAUC đã gần bão hòa ($\approx 0{,}70$) nên
-hàm mất mát bảo toàn thứ tự không còn dư địa; trên Amazon-Book uAUC còn thấp ($\approx 0{,}59$)
-nên tổn thất xếp hạng trong từng người dùng phát huy tác dụng. Việc bật cơ chế theo từng tập dữ
-liệu vì thế là một \textit{siêu tham số hợp lệ theo miền}, không phải sự bất nhất về
-phương pháp.
+\textbf{Đọc bảng ablation.} Trên MovieLens-1M, điều kiện hóa truy vấn theo người dùng nâng AUC
+từ $0{,}7335$ lên $0{,}7475$ ($+0{,}014$) trong khi uAUC gần như không đổi ($0{,}7009 \to
+0{,}6968$). Kết quả này phù hợp với phân tích ở Mục~\ref{sec:nghich-ly}: phần dịch theo người
+dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người dùng (AUC) và gần trung tính với
+xếp hạng \textit{trong} từng người dùng (uAUC).
 
 \textbf{Các ablation chưa thực hiện.} Do giới hạn tài nguyên, một số ablation vẫn còn để
 ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-che}): (i)~thay cầu nối Q-Former
 bằng một bộ chiếu \textit{attention-MLP} (MLP có self-attention nhưng không có truy vấn học
 được) để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến + attention đơn
-thuần; (ii)~bật/tắt riêng biểu diễn đa token dưới cùng backbone Vicuna;
-(iii)~ablation hàm mất mát bảo toàn thứ tự trên MovieLens-1M (kỳ
-vọng trung tính/âm vì uAUC đã bão hòa). Luận văn không điền số ước lượng cho các hàng này.
+thuần; và (ii)~bật/tắt riêng biểu diễn đa token dưới cùng backbone Vicuna. Luận văn không điền
+số ước lượng cho các hàng này.
 
 \section{Phân tích bổ sung}
 \label{sec:phan-tich-bo-sung}
@@ -288,11 +268,10 @@ chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 Để kiểm chứng động lực cold-start, luận văn phân rã tập kiểm tra thành hai nhóm: người dùng
 \textit{ấm} (warm -- có embedding MF, tức MF đã ``thấy'' người dùng/sản phẩm trong huấn luyện)
 và người dùng \textit{nguội} (cold -- MF không có embedding, phải dùng đại diện mặc định).
-Bảng~\ref{tab:warm-cold} trình bày AUC/uAUC theo từng nhóm trên cả hai tập dữ liệu.
+Bảng~\ref{tab:warm-cold} trình bày AUC/uAUC theo từng nhóm trên MovieLens-1M.
 
 \begin{table}[ht]
-\caption{Phân rã warm/cold trên tập kiểm tra (cấu hình đề xuất). Amazon-Book dùng Run-2
-(+ bảo toàn thứ tự).}
+\caption{Phân rã warm/cold trên tập kiểm tra MovieLens-1M (cấu hình đề xuất).}
 \label{tab:warm-cold}
 \begin{center}
 \begin{tabular}{|L{2.6cm}|L{2.4cm}|c|c|c|}
@@ -305,24 +284,17 @@ MovieLens-1M & warm & $4{.}153$ & \textbf{0{,}7787} & \textbf{0{,}7254} \\
 \hline
 MovieLens-1M & cold & $3{.}178$ & 0{,}7030 & 0{,}5969 \\
 \hline
-Amazon-Book & toàn bộ & $2{.}486$ & 0{,}8132 & 0{,}6062 \\
-\hline
-Amazon-Book & warm & $1{.}648$ & \textbf{0{,}8190} & \textbf{0{,}6238} \\
-\hline
-Amazon-Book & cold & $630$ & 0{,}7928 & 0{,}5258 \\
-\hline
 \end{tabular}
 \end{center}
 \end{table}
 
-Kết quả nhất quán trên cả hai tập dữ liệu: nhóm warm đạt uAUC cao hơn hẳn nhóm cold
-($0{,}7254$ vs $0{,}5969$ trên MovieLens-1M; $0{,}6238$ vs $0{,}5258$ trên Amazon-Book). Trên
-Amazon-Book, uAUC nhóm warm ($0{,}6238$) gần chạm CoRA-MF ($0{,}6262$), trong khi nhóm cold
-xấp xỉ mức ngẫu nhiên. Điều này khẳng định uAUC bị chặn trên bởi \textit{chất lượng véc-tơ cộng tác
-cho người dùng/sản phẩm nguội} chứ không phải bởi cầu nối: ở nhóm warm -- nơi MF cung cấp tín
-hiệu tốt -- CoQLLM khai thác hiệu quả và tiệm cận baseline mạnh nhất. Nhận định này khớp với
-phân tích khác biệt AUC/uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra hướng cải thiện tiếp theo
-nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
+Trên MovieLens-1M, nhóm warm đạt uAUC $0{,}7254$ -- cao hơn hẳn nhóm cold ($0{,}5969$) -- trong
+khi AUC hai nhóm chênh ít hơn nhiều ($0{,}7787$ so với $0{,}7030$). Điều này khẳng định uAUC bị
+chặn trên bởi \textit{chất lượng embedding MF cho người dùng/sản phẩm nguội} chứ không phải bởi
+cầu nối: nếu cầu nối là nút thắt thì AUC ở nhóm cold cũng phải sập, nhưng AUC vẫn giữ ở mức
+khá. Ở nhóm warm -- nơi MF cung cấp tín hiệu tốt -- CoQLLM khai thác hiệu quả hơn hẳn. Nhận định
+này khớp với phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra hướng cải thiện
+tiếp theo nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
 
 \section{Thảo luận}
 \label{sec:thao-luan}
@@ -354,9 +326,8 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là đối chứng quan
     trọng nhất để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến +
     attention đơn thuần; hiện được ghi nhận là hướng thực nghiệm còn để ngỏ.
-    \item \textbf{Các ablation thành phần chưa đầy đủ:} Bật/tắt riêng biểu diễn đa token
-    và hàm mất mát bảo toàn thứ tự trên MovieLens-1M đều chưa được chạy
-    dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
+    \item \textbf{Các ablation thành phần chưa đầy đủ:} Việc bật/tắt riêng biểu diễn đa token
+    chưa được chạy dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
     \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone Qwen2-Base khác họ với
     Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên
     Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn theo AUC),

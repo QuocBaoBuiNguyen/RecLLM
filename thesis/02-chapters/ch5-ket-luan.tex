@@ -14,10 +14,9 @@ giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục
 CoQLLM thay thế mô-đun chiếu MLP pointwise của CoLLM bằng kiến trúc Q-Former, trong đó embedding
 cộng tác của sản phẩm mục tiêu và của các sản phẩm trong lịch sử thay thế đặc trưng ảnh làm đầu
 vào cross-attention, tín hiệu người dùng được đưa vào qua điều kiện hóa truy vấn, và toàn bộ
-được chuyển thành soft token cho LLM. Trên nền đó, luận văn bổ sung hai kỹ thuật huấn luyện --
-điều kiện hóa truy vấn theo người dùng và mục tiêu bảo toàn thứ tự trong từng người dùng -- cùng
-với biểu diễn đa token như một hệ quả của thiết kế nhiều truy vấn. Kết quả chi tiết được trình
-bày ở Chương~\ref{Chapter4}.
+được chuyển thành soft token cho LLM. Trên nền đó, luận văn bổ sung kỹ thuật huấn luyện điều
+kiện hóa truy vấn theo người dùng, cùng với biểu diễn đa token như một hệ quả của thiết kế
+nhiều truy vấn. Kết quả chi tiết được trình bày ở Chương~\ref{Chapter4}.
 
 \textbf{Đóng góp 2: Đánh giá có hệ thống theo độ đo AUC/uAUC trên hai tập dữ liệu.}
 Luận văn đánh giá cầu nối Q-Former trên bài toán CTR với AUC và uAUC -- cùng quy trình với
@@ -38,19 +37,18 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
     vì nhiều phương pháp cùng hướng chỉ thắng một trong hai độ đo.
 
     \item \textbf{Amazon-Book -- cạnh tranh/vượt baseline trên miền khó.} Với
-    điều kiện hóa truy vấn theo người dùng (Run-1), CoQLLM đạt $0{,}8147$/$0{,}5958$, vượt CoLLM-MF và
-    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. Bổ sung hàm mất mát bảo toàn thứ tự
-    (Run-2) nâng uAUC lên $0{,}6062$, tiệm cận CoRA-MF ($0{,}6262$).
+    điều kiện hóa truy vấn theo người dùng, CoQLLM đạt $0{,}8147$/$0{,}5958$, vượt CoLLM-MF và
+    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo; uAUC còn thấp hơn CoRA-MF
+    ($0{,}6262$), phản ánh trần do chất lượng MF ở nhóm cold.
 
-    \item \textbf{Hai kỹ thuật tác động lên hai độ đo khác nhau.} Điều kiện hóa truy vấn theo người dùng
-    chủ yếu cải thiện AUC (biến thiên giữa các người dùng); hàm mất mát bảo toàn thứ tự chủ yếu cải thiện
-    uAUC (bảo toàn thứ tự trong người dùng). Việc bật theo từng tập dữ liệu là siêu tham số
-    hợp lệ theo miền.
+    \item \textbf{Điều kiện hóa truy vấn theo người dùng chủ yếu cải thiện AUC.} Cơ chế này
+    nâng khả năng phân biệt \textit{giữa} các người dùng (AUC) và gần trung tính với xếp hạng
+    \textit{trong} từng người dùng (uAUC), đúng như phân tích khác biệt AUC--uAUC.
 
-    \item \textbf{Trần uAUC nằm ở MF teacher, không phải cầu nối.} Phân rã warm/cold cho
-    thấy uAUC nhóm warm cao hơn hẳn nhóm cold trên cả hai tập dữ liệu (ví dụ Amazon-Book:
-    $0{,}6238$ vs $0{,}5258$), cho thấy hướng cải thiện tiếp theo nằm ở chất lượng véc-tơ cộng tác
-    cho người dùng/sản phẩm nguội (cold).
+    \item \textbf{Trần uAUC nằm ở MF teacher, không phải cầu nối.} Phân rã warm/cold trên
+    MovieLens-1M cho thấy uAUC nhóm warm cao hơn hẳn nhóm cold ($0{,}7254$ vs $0{,}5969$), cho
+    thấy hướng cải thiện tiếp theo nằm ở chất lượng embedding MF cho người dùng/sản phẩm nguội
+    (cold).
 \end{itemize}
 
 \section{Hạn chế nghiên cứu}
@@ -65,7 +63,7 @@ Luận văn nêu rõ các hạn chế sau một cách minh bạch:
     \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay Q-Former bằng
     bộ chiếu attention-MLP (không truy vấn học được) -- đối chứng quan trọng nhất để cô lập
     đóng góp của cấu trúc Q-Former. Cùng với các ablation thành phần khác (đa token, tách
-    projector, bảo toàn thứ tự trên MovieLens-1M), đây là phần thực nghiệm còn để ngỏ.
+    projector), đây là phần thực nghiệm còn để ngỏ.
 
     \item \textbf{Chi phí tính toán cao hơn CoLLM:} Cầu nối Q-Former làm tăng chi phí huấn
     luyện so với lớp MLP đơn giản của CoLLM (dù không sinh trọng số theo từng mẫu như CoRA).
@@ -104,8 +102,9 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
     \item Tiền huấn luyện MF trên dữ liệu dày đặc hơn (nhiều tháng hơn), đặc biệt cho
     nhóm người dùng/sản phẩm nguội -- điều mà phân rã warm/cold chỉ ra là trần thực sự
     của uAUC.
-    \item Mở rộng mục tiêu bảo toàn thứ tự (đã hiệu quả trên
-    Amazon-Book) sang các miền khác và khảo sát trọng số $\lambda$ tối ưu theo từng tập.
+    \item Khảo sát các mục tiêu huấn luyện hướng tới thứ tự xếp hạng trong từng người dùng
+    (chẳng hạn tổn thất BPR theo cặp) như một hướng cải thiện uAUC ở những miền còn nhiều dư địa
+    xếp hạng.
 \end{itemize}
 
 \textbf{Mở rộng kiến trúc:}
