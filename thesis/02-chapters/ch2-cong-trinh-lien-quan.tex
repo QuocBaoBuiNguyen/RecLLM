@@ -16,7 +16,7 @@ Mục~\ref{sec:nen-tang-qformer} trình bày cơ sở kiến trúc Q-Former, là
 \label{sec:cf-truyen-thong}
 
 Lọc cộng tác (collaborative filtering -- CF) khai thác các mẫu tương tác giữa người dùng và
-sản phẩm để ước lượng sở thích. Trực giác cơ bản là những người dùng có hành vi tương tự
+sản phẩm để ước lượng sở thích: những người dùng có hành vi tương tự
 trong quá khứ có xu hướng quan tâm đến các sản phẩm tương tự trong tương lai. Nhóm phương
 pháp này chủ yếu dựa trên ma trận tương tác người dùng--sản phẩm và không yêu cầu thông
 tin nội dung của sản phẩm~\cite{zhang2019deep}.
@@ -25,13 +25,13 @@ tin nội dung của sản phẩm~\cite{zhang2019deep}.
 \label{ssec:mf}
 
 Phân rã ma trận (matrix factorization -- MF)~\cite{mf2009} là một phương pháp nền tảng của
-lọc cộng tác. MF ánh xạ mỗi người dùng $u$ và sản phẩm $i$ thành các véc-tơ ẩn $e_u, e_i \in
+lọc cộng tác. MF học ánh xạ mỗi người dùng $u$ và sản phẩm $i$ thành các véc-tơ ẩn (latent vector) $e_u, e_i \in
 \mathbb{R}^d$, sao cho tích vô hướng $e_u^\top e_i$ phản ánh mức độ tương thích giữa người
 dùng và sản phẩm. Tùy dạng dữ liệu, mô hình có thể được tối ưu bằng hồi quy trên các đánh
 giá quan sát được hoặc bằng các mục tiêu xếp hạng cặp như BPR~\cite{bpr2009}.
 
 Ưu điểm của MF là cấu trúc đơn giản, khả năng mở rộng tốt và hiệu quả đã được kiểm chứng
-trên nhiều bộ dữ liệu. Tuy nhiên, phép tương tác dựa trên tích vô hướng giới hạn khả năng mô
+trên nhiều bộ dữ liệu. Tuy nhiên, MF học biểu diễn qua tích vô hướng, giới hạn khả năng mô
 hình hóa các quan hệ phi tuyến phức tạp. Neural Collaborative Filtering (NCF)~\cite{ncf2017}
 mở rộng ý tưởng này bằng cách sử dụng mạng nơ-ron nhiều lớp để mô hình hóa tương tác
 người dùng--sản phẩm linh hoạt hơn.
@@ -39,10 +39,11 @@ người dùng--sản phẩm linh hoạt hơn.
 \subsection{Lọc cộng tác dựa trên đồ thị}
 \label{ssec:lightgcn}
 
-Dữ liệu tương tác người dùng--sản phẩm có thể được biểu diễn dưới dạng đồ thị hai phía.
-LightGCN~\cite{lightgcn2020} khai thác cấu trúc này bằng cách lan truyền và tổng hợp tuyến
-tính embedding giữa các nút lân cận qua nhiều lớp. Nhờ tận dụng quan hệ bậc cao trong đồ
-thị tương tác, LightGCN đạt hiệu quả cao trên nhiều bộ dữ liệu gợi ý và trở thành một baseline
+Dữ liệu tương tác người dùng--sản phẩm có thể được biểu diễn dưới dạng đồ thị hai phía (bipartite graph).
+LightGCN~\cite{lightgcn2020} khai thác cấu trúc đồ thị này bằng mạng tích chập đồ thị (graph convolutional network –- GCN):
+nhúng của mỗi nút được cập nhật bằng cách tổng hợp tuyến tính nhúng
+của các nút láng giềng, qua nhiều bước lan truyền. Nhờ khai thác được thông
+tin cấu trúc bậc cao của đồ thị tương tác, LightGCN đạt hiệu quả cao trên nhiều bộ dữ liệu gợi ý và trở thành một baseline
 phổ biến cho các phương pháp dựa trên tín hiệu cộng tác.
 
 \subsection{Hạn chế của lọc cộng tác thuần túy}
@@ -52,11 +53,13 @@ Mặc dù có hiệu quả tốt trong các kịch bản giàu tương tác, l�
 hạn chế đáng chú ý. \textbf{Thứ nhất, dữ liệu thưa:} phần lớn cặp người dùng--sản phẩm không
 có tương tác quan sát được, khiến embedding của các thực thể ít tương tác kém tin cậy.
 \textbf{Thứ hai, cold-start:} người dùng hoặc sản phẩm mới gần như không có tín hiệu cộng tác
-để xây dựng biểu diễn. \textbf{Thứ ba, thiếu thông tin ngữ nghĩa:} embedding cộng tác chủ yếu
-phản ánh cấu trúc đồng xuất hiện trong dữ liệu tương tác và không trực tiếp biểu diễn nội dung
-văn bản của sản phẩm hay mô tả sở thích người dùng.
+để xây dựng biểu diễn. Đây là hạn chế nghiêm trọng trong hệ thống thực tế,
+nơi người dùng mới và sản phẩm mới liên tục xuất hiện. \textbf{Thứ ba, thiếu thông tin ngữ nghĩa:}
+embedding cộng tác chủ yếu phản ánh cấu trúc đồng xuất hiện trong dữ liệu tương tác và không trực tiếp
+biểu diễn nội dung văn bản của sản phẩm hay mô tả sở thích người dùng. Điều này hạn chế khả năng gợi ý
+cho sản phẩm mới và khả năng giải thích gợi ý bằng ngôn ngữ tự nhiên.
 
-Các hạn chế này là một trong những động lực thúc đẩy việc kết hợp mô hình ngôn ngữ với hệ
+Các hạn chế này là một trong những động lực thúc đẩy việc kết hợp mô hình ngôn ngữ lớn LLM với hệ
 thống tư vấn.
 
 \section{Mô hình ngôn ngữ lớn cho hệ thống tư vấn}
@@ -77,18 +80,20 @@ người dùng, sản phẩm hoặc nội dung liên quan. Các biểu diễn n�
 hình gợi ý hoặc mô hình xếp hạng truyền thống. Trong thiết kế này, LLM chủ yếu đóng vai trò
 trích xuất đặc trưng, còn quyết định gợi ý cuối cùng vẫn do mô hình phía sau thực hiện.
 
-\textbf{LLMs-as-RS.} Bài toán gợi ý được biểu diễn trực tiếp dưới dạng tác vụ ngôn ngữ.
-P5~\cite{p52022} là một công trình tiêu biểu, thống nhất nhiều nhiệm vụ gợi ý thành các cặp
-câu hỏi--trả lời và huấn luyện một mô hình ngôn ngữ để xử lý chúng. BIGRec~\cite{bigrec2023}
-tinh chỉnh LLM để sinh ra mô tả của một sản phẩm phù hợp với sở thích người dùng, sau đó
-đối sánh biểu diễn của đầu ra sinh với biểu diễn của các sản phẩm thực tế trong hệ thống để
-xác định sản phẩm được gợi ý.
+\textbf{LLMs-as-RS.} Bài toán gợi ý được biểu diễn trực tiếp dưới dạng tác vụ ngôn ngữ,
+trong đó LLM vừa hiểu ngữ cảnh vừa đưa ra gợi ý. P5~\cite{p52022} là một trong những
+công trình tiêu biểu đầu tiên theo hướng này, đặt nhiều bài toán gợi ý
+(xếp hạng, dự đoán đánh giá, giải thích) thành các cặp câu hỏi–-trả lời
+và huấn luyện một mô hình ngôn ngữ để xử lý chúng. BIGRec~\cite{bigrec2023}
+tinh chỉnh LLM để sinh chuỗi token biểu diễn một item phù hợp sở thích,
+rồi đối sánh embedding của đầu ra với các item thực tế để xếp hạng.
 
-Hướng LLMs-as-RS có lợi thế trong việc tận dụng tri thức ngữ nghĩa và hỗ trợ các trường hợp
-cold-start thông qua mô tả văn bản. Luận văn này tiếp tục theo hướng đó nhưng tập trung vào
-cách đưa tín hiệu cộng tác vào LLM một cách hiệu quả.
+Hướng LLMs-as-RS đặc biệt hấp dẫn vì khả năng tận dụng tri thức thế giới sẵn có trong
+LLM để giải quyết cold-start -- người dùng và sản phẩm mới có thể được mô tả bằng văn
+bản, và LLM có thể suy luận về sở thích ngay cả khi chưa có lịch sử tương tác.
+Luận văn này tiếp tục theo hướng đó nhưng tập trung vào cách đưa tín hiệu cộng tác vào LLM một cách hiệu quả.
 
-\subsection{Giới hạn độ dài ngữ cảnh}
+\subsection{Rào cản về độ dài ngữ cảnh}
 \label{ssec:rao-can-context}
 
 Một cách tự nhiên để cung cấp thông tin hành vi cho LLM là chuyển lịch sử tương tác thành
