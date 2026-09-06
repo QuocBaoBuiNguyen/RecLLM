@@ -107,7 +107,7 @@ sử tương tác, rồi chuyển biểu diễn này thành soft token để đ�
 tới bài toán trung tâm của luận văn: căn chỉnh biểu diễn cộng tác với không gian embedding
 của LLM như thế nào để thông tin được khai thác hiệu quả.
 
-\section{Tích hợp biểu diễn cộng tác vào LLM}
+\section{Các phương pháp tích hợp biểu diễn cộng tác vào LLM}
 \label{sec:cach-noi-cf-llm}
 
 Các công trình gần đây đề xuất nhiều cơ chế khác nhau để kết hợp tín hiệu cộng tác với LLM.
@@ -140,17 +140,17 @@ tin theo mức độ liên quan với ngữ cảnh hiện tại.
 \label{ssec:sellarec}
 
 SellaRec~\cite{sellarec2024} căn chỉnh không gian cộng tác và không gian ngôn ngữ bằng học
-tương phản (contrastive learning), sử dụng mục tiêu InfoNCE để kéo gần biểu diễn tương ứng
-của cùng một sản phẩm và đẩy xa các biểu diễn không tương ứng. Cơ chế này cung cấp một
-mục tiêu huấn luyện trực tiếp cho việc thu hẹp khoảng cách giữa hai không gian biểu diễn.
-
-SellaRec đã được đánh giá trên bài toán CTR với AUC và uAUC trên MovieLens-1M, do đó
-cung cấp bằng chứng thực nghiệm cho hướng căn chỉnh dựa trên học tương phản. Trong khi đó,
+tương phản (contrastive learning), sử dụng hàm mục tiêu InfoNCE để kéo gần biểu diễn tương ứng
+của cùng một sản phẩm trong không gian CF và không gian ngôn ngữ;
+đồng thời đẩy xa các sản phẩm, các biểu diễn không tương ứng. Cơ chế này cung cấp một
+mục tiêu huấn luyện trực tiếp cho việc thu hẹp khoảng cách giữa hai không gian biểu diễn. Trong khi đó,
 Q-Former đại diện cho một cơ chế khác: thay vì căn chỉnh chủ yếu thông qua một mục tiêu
 tương phản ở mức biểu diễn, Q-Former sử dụng các truy vấn học được để chọn lọc và tổng hợp
 tín hiệu cộng tác trước khi chuyển sang không gian của LLM. Vì vậy, SellaRec và CoQLLM có
 thể được xem là hai hướng tiếp cận bổ sung về cơ chế hơn là các biến thể trực tiếp của nhau.
 
+SellaRec đã được đánh giá trên bài toán CTR với AUC và uAUC trên MovieLens-1M và Amazon-Book, do đó
+cung cấp bằng chứng thực nghiệm cho hướng căn chỉnh dựa trên học tương phản. 
 Cần lưu ý rằng SellaRec sử dụng Qwen2-7B-Base~\cite{qwen2}, trong khi luận văn sử dụng
 Vicuna-7B-v1.5~\cite{vicuna2023}. Sự khác biệt về backbone và thiết lập dữ liệu hạn chế khả
 năng diễn giải chênh lệch số liệu như một so sánh thuần túy giữa hai cơ chế căn chỉnh.
@@ -159,8 +159,8 @@ năng diễn giải chênh lệch số liệu như một so sánh thuần túy g
 \label{ssec:binllm}
 
 BinLLM~\cite{binllm2024} chuyển biểu diễn cộng tác thành chuỗi ký tự nhị phân, sau đó đưa
-chuỗi này vào LLM như văn bản thông thường. Thiết kế này có ưu điểm là đơn giản về giao
-diện với LLM và không yêu cầu cơ chế soft token chuyên biệt.
+chuỗi này vào LLM dưới dạng văn bản thông thường. Cách tiếp cận này có ưu điểm về tính đơn giản trong
+triển khai và không yêu cầu thay đổi kiến trúc LLM.
 
 Hạn chế của phương pháp nằm ở bước rời rạc hóa. Việc chuyển một véc-tơ liên tục thành chuỗi
 nhị phân có thể làm mất một phần thông tin của biểu diễn ban đầu. Bên cạnh đó, chuỗi nhị
@@ -171,16 +171,16 @@ diễn giải cấu trúc mã hóa này trước khi có thể khai thác nó ch
 \label{ssec:cora-rel}
 
 CoRA~\cite{cora2024} đưa tín hiệu cộng tác vào LLM theo một hướng khác. Thay vì chèn tín
-hiệu vào không gian đầu vào dưới dạng soft token, CoRA \textit{sinh các cập nhật trọng số
-hạng thấp theo từng mẫu} từ biểu diễn cộng tác và bổ sung chúng vào các lớp attention của
-LLM. Nhờ đó, tính toán bên trong LLM có thể được điều chỉnh theo từng cặp người dùng--sản
-phẩm.
+hiệu vào không gian đầu vào dưới dạng soft token, CoRA sinh các cập nhật trọng số
+hạng thấp theo từng mẫu từ biểu diễn cộng tác và bổ sung chúng vào các lớp attention của
+LLM. Theo đó, mỗi mẫu (cặp người dùng -– sản phẩm) có một tập trọng số điều chỉnh riêng, cho phép
+LLM cá nhân hóa tính toán ở mức độ sâu hơn.
 
-Cơ chế này đại diện cho một hướng thiết kế khác với CoQLLM. CoRA tác động trực tiếp lên
-tham số hiệu dụng của LLM trong quá trình suy luận, trong khi CoQLLM giữ đường tích hợp ở
-không gian đầu vào thông qua soft token. Luận văn không hiện thực lại cơ chế sinh trọng số của
-CoRA mà sử dụng kết quả của mô hình như một baseline bổ sung trên Amazon-Book để định
-vị CoQLLM so với một hướng tích hợp khác.
+Cơ chế này đại diện cho một hướng thiết kế khác với CoQLLM. CoRA bỏ hoàn toàn cơ chế soft token,
+CF chỉ được đưa vào LLM qua đường trọng số và tác động trực tiếp lên
+tham số hiệu dụng của LLM trong quá trình suy luận. Trong khi CoQLLM giữ đường tích hợp ở
+không gian đầu vào thông qua soft token. Luận văn sử dụng kết quả của mô hình CoRA như một baseline
+bổ sung trên Amazon-Book để so sánh CoQLLM so với một hướng tích hợp khác.
 
 \subsection{Căn chỉnh qua Q-Former: ILM}
 \label{ssec:ilm}
@@ -192,8 +192,8 @@ cross-attention để khai thác thông tin từ các biểu diễn cộng tác,
 
 Cơ chế này phù hợp với mục tiêu căn chỉnh của luận văn vì cho phép mô hình học cách tổng
 hợp tín hiệu cộng tác trước khi đưa vào LLM. Tuy nhiên, ILM không báo cáo kết quả theo thiết
-lập CTR với AUC và uAUC như CoLLM, nên chưa cung cấp cơ sở để so sánh trực tiếp hiệu quả
-của Q-Former với MLP trong cùng giao thức đánh giá.
+lập CTR với AUC và uAUC như các công trình cùng hướng, nên chưa cung cấp cơ sở để so sánh trực tiếp
+hiệu quả của Q-Former với MLP trong cùng giao thức đánh giá.
 
 \subsection{So sánh các phương pháp}
 \label{ssec:tong-hop-so-sanh}
@@ -201,13 +201,13 @@ của Q-Former với MLP trong cùng giao thức đánh giá.
 Bảng~\ref{tab:so-sanh-phuong-phap} tổng hợp các cơ chế tích hợp tín hiệu cộng tác được thảo
 luận ở trên.
 
-\begin{table}[ht]
+\begin{table}[H]
 \caption{So sánh các phương pháp tích hợp biểu diễn cộng tác vào LLM}
 \label{tab:so-sanh-phuong-phap}
 \begin{center}
 \begin{tabular}{|L{2cm}|L{3cm}|L{3.5cm}|L{3.5cm}|}
 \hline
-\textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế chính} \\
+\textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế / Lưu ý} \\
 \hline
 CoLLM~\cite{collm2023} & MLP pointwise, mỗi embedding thành một soft token & Đơn giản; baseline mạnh & Ánh xạ độc lập; thiếu cơ chế tổng hợp và chọn lọc thích nghi \\
 \hline
