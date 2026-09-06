@@ -50,7 +50,7 @@ báo cáo trên tập kiểm tra.
 
 \textbf{Baseline bổ sung:}
 \begin{itemize}
-    \item \textbf{CoRA}~\cite{cora2024}: đại diện hướng \textit{sinh trọng số} (không soft
+    \item \textbf{CoRA}~\cite{cora2024}: đại diện hướng \textit{sinh trọng số theo từng mẫu} (không soft
     token). Trên Amazon-Book, biến thể CoRA-MF được đưa vào bảng so sánh như một điểm tham
     chiếu cho hướng thiết kế khác với CoQLLM (Mục~\ref{ssec:cora-rel}).
     \item \textbf{MF}~\cite{bpr2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
@@ -164,7 +164,7 @@ CoLLM-MF~\cite{collm2023} (CoRA re-run) & 0{,}8021 & 0{,}5782 \\
 \hline
 BinLLM~\cite{binllm2024} (CoRA re-run) & 0{,}8157 & 0{,}5724 \\
 \hline
-CoRA-MF~\cite{cora2024} (sinh trọng số) & 0{,}8179 & 0{,}6262 \\
+CoRA-MF~\cite{cora2024} (sinh trọng số theo từng mẫu) & 0{,}8179 & 0{,}6262 \\
 \hline
 \textbf{CoQLLM (+ điều kiện hóa)} & \textbf{0{,}8147} & \textbf{0{,}5958} \\
 \hline
@@ -184,7 +184,7 @@ trung tính với xếp hạng \textit{trong} người dùng (uAUC).
 \textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với điều kiện hóa truy vấn theo người dùng,
 CoQLLM đạt AUC $0{,}8147$ và uAUC $0{,}5958$ -- \textit{vượt cả CoLLM-MF và BinLLM (theo lần
 chạy lại của CoRA) trên cả hai độ đo}. uAUC $0{,}5958$ vẫn thấp hơn CoRA-MF ($0{,}6262$), vốn
-dùng cơ chế sinh trọng số khác hẳn; phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly})
+dùng cơ chế sinh trọng số theo từng mẫu khác hẳn; phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly})
 cho thấy dư địa của uAUC trên miền này chủ yếu nằm ở chất lượng embedding MF cho nhóm người
 dùng/sản phẩm nguội.
 

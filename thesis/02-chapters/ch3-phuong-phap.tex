@@ -172,7 +172,7 @@ bản của LLM.
 Nhờ cơ chế này, tín hiệu cộng tác được đưa vào cùng không gian đầu vào với văn bản mà không
 cần thay đổi trực tiếp trọng số backbone LLM theo từng mẫu. Đây là điểm khác với
 CoRA~\cite{cora2024}, nơi biểu diễn cộng tác được sử dụng để sinh cập nhật trọng số hạng thấp
-cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
+theo từng mẫu cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
 toàn đóng băng và tập trung phân tích vai trò của cầu nối căn chỉnh. Trên nền đường soft token
 này, luận văn bổ sung một kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) -- nhằm cải thiện AUC.

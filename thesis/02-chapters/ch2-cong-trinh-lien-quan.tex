@@ -4,11 +4,13 @@
 
 Chương này trình bày cơ sở lý thuyết và các công trình liên quan theo bốn nhóm.
 Mục~\ref{sec:cf-truyen-thong} giới thiệu các phương pháp lọc cộng tác và những hạn chế
-chính của chúng. Mục~\ref{sec:llm-rec} trình bày hai hướng khai thác LLM trong hệ thống
-tư vấn và vấn đề độ dài ngữ cảnh. Mục~\ref{sec:cach-noi-cf-llm} tổng hợp các cơ chế tích
+cố hữu của nó, dẫn đến nhu cầu kết hợp LLM. Mục~\ref{sec:llm-rec} trình bày hai hướng khai thác LLM trong hệ thống
+tư vấn và rào cản về độ dài ngữ cảnh -- yếu tố buộc tín hiệu cộng tác phải được biểu diễn
+dưới dạng véc-tơ nén thay vì văn bản. Mục~\ref{sec:cach-noi-cf-llm} tổng hợp các cơ chế tích
 hợp biểu diễn cộng tác vào LLM, từ ánh xạ MLP, học tương phản và mã hóa văn bản đến thích
-nghi tham số và Q-Former. Cuối cùng, Mục~\ref{sec:nen-tang-qformer} trình bày cơ sở kiến
-trúc Q-Former, làm nền tảng cho phương pháp được đề xuất ở Chương~\ref{Chapter3}.
+nghi tham số và Q-Former, làm nổi bật điểm mạnh và hạn chế của từng hướng. Cuối cùng, 
+Mục~\ref{sec:nen-tang-qformer} trình bày cơ sở kiến trúc Q-Former, làm nền tảng cho phương pháp
+được đề xuất ở Chương~\ref{Chapter3}.
 
 \section{Lọc cộng tác truyền thống}
 \label{sec:cf-truyen-thong}
@@ -160,12 +162,12 @@ nhị phân có thể làm mất một phần thông tin của biểu diễn ban
 phân không có ngữ nghĩa tự nhiên trong từ vựng của LLM, khiến mô hình phải học thêm cách
 diễn giải cấu trúc mã hóa này trước khi có thể khai thác nó cho nhiệm vụ gợi ý.
 
-\subsection{Thích nghi tham số LLM: CoRA}
+\subsection{Sinh trọng số theo tín hiệu cộng tác: CoRA}
 \label{ssec:cora-rel}
 
 CoRA~\cite{cora2024} đưa tín hiệu cộng tác vào LLM theo một hướng khác. Thay vì chèn tín
-hiệu vào không gian đầu vào dưới dạng soft token, CoRA biến đổi biểu diễn cộng tác thành các
-cập nhật trọng số hạng thấp phụ thuộc từng mẫu và bổ sung chúng vào các lớp attention của
+hiệu vào không gian đầu vào dưới dạng soft token, CoRA \textit{sinh các cập nhật trọng số
+hạng thấp theo từng mẫu} từ biểu diễn cộng tác và bổ sung chúng vào các lớp attention của
 LLM. Nhờ đó, tính toán bên trong LLM có thể được điều chỉnh theo từng cặp người dùng--sản
 phẩm.
 
@@ -208,7 +210,7 @@ SellaRec~\cite{sellarec2024} & Học tương phản & Căn chỉnh trực tiếp
 \hline
 BinLLM~\cite{binllm2024} & Mã hóa nhị phân & Giao diện đơn giản với LLM; không cần soft token & Có thể mất thông tin khi rời rạc hóa \\
 \hline
-CoRA~\cite{cora2024} & Sinh cập nhật trọng số theo mẫu & Cá nhân hóa sâu trong tính toán của LLM & Can thiệp vào trọng số thay vì không gian đầu vào \\
+CoRA~\cite{cora2024} & Sinh trọng số theo từng mẫu & Cá nhân hóa sâu trong tính toán của LLM & Can thiệp vào trọng số thay vì không gian đầu vào \\
 \hline
 ILM~\cite{ilm2024} & Q-Former và cross-attention & Có khả năng chọn lọc và tổng hợp tín hiệu & Chưa báo cáo AUC/uAUC theo thiết lập CoLLM \\
 \hline
