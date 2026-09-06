@@ -201,8 +201,8 @@ nền riêng theo từng người dùng -- có thể nhỏ hơn. Giả thuyết 
 thực nghiệm ở Chương~\ref{Chapter4}. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng
 không, cơ chế tương thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
 
-\section{Biểu diễn cộng tác đa token}
-\label{sec:lua-chon-thiet-ke}
+\subsection{Biểu diễn cộng tác đa token}
+\label{ssec:da-token}
 
 Do Q-Former sử dụng $Q = 8$ truy vấn học được, đầu ra của nó là $Q$ véc-tơ. CoQLLM chiếu toàn
 bộ $Q$ véc-tơ này qua lớp chiếu và đưa vào LLM như $Q$ soft token riêng biệt cho mỗi sản phẩm

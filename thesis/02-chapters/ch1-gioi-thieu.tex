@@ -18,19 +18,19 @@ chiều, sao cho mức độ tương thích giữa hai biểu diễn phản ánh
 dùng. Các phương pháp mở rộng như LightGCN~\cite{lightgcn2020} tiếp tục khai thác cấu
 trúc đồ thị của dữ liệu tương tác và đã cho thấy hiệu quả trên nhiều bộ dữ liệu chuẩn. Tuy
 nhiên, các phương pháp dựa chủ yếu vào tín hiệu cộng tác vẫn đối mặt với ba hạn chế chính.
-Thứ nhất, dữ liệu tương tác thường rất thưa, khiến biểu diễn của các người dùng hoặc sản
+Thứ nhất, dữ liệu tương tác thường rất thưa (data sparsity), khiến biểu diễn của các người dùng hoặc sản
 phẩm có ít tương tác kém ổn định. Thứ hai, bài toán khởi động nguội (cold-start) gây khó
 khăn cho việc xây dựng biểu diễn có chất lượng đối với người dùng hoặc sản phẩm mới. Thứ
-ba, các biểu diễn cộng tác không trực tiếp khai thác thông tin ngữ nghĩa từ nội dung văn bản
-mô tả sản phẩm hoặc sở thích người dùng.
+ba, các biểu diễn cộng tác được học trực tiếp từ tín hiệu tương tác, không trực tiếp khai thác 
+thông tin ngữ nghĩa từ nội dung văn bản mô tả sản phẩm hoặc sở thích người dùng. 
 
 Sự phát triển nhanh chóng của các mô hình ngôn ngữ lớn (large language model -- LLM) mở
 ra một hướng tiếp cận bổ sung cho các hạn chế trên. Nhờ được tiền huấn luyện trên quy mô
 dữ liệu văn bản lớn, LLM sở hữu khả năng biểu diễn ngữ nghĩa và suy luận phong phú. Việc
 kết hợp LLM với hệ thống tư vấn hiện được nghiên cứu theo hai hướng chính~\cite{llmrec2023}.
-Hướng thứ nhất, LLM-enhanced, sử dụng LLM như một bộ mã hóa để làm giàu biểu diễn người
+Hướng thứ nhất, \textit{LLM-enhanced}, sử dụng LLM như một bộ mã hóa để làm giàu biểu diễn người
 dùng và sản phẩm, sau đó đưa các biểu diễn này vào mô hình gợi ý truyền thống. Hướng thứ
-hai, LLMs-as-RS, biểu diễn trực tiếp bài toán gợi ý dưới dạng một tác vụ ngôn ngữ, trong đó
+hai, ~\textit{LLMs as Recommender Systems (LLMs-as-RS)}, biểu diễn trực tiếp bài toán gợi ý dưới dạng một tác vụ ngôn ngữ, trong đó
 LLM vừa xử lý ngữ cảnh vừa sinh đầu ra gợi ý. Hướng LLMs-as-RS đặc biệt đáng chú ý vì có
 khả năng tận dụng tri thức ngữ nghĩa có sẵn của LLM trong các tình huống cold-start và hỗ
 trợ diễn giải kết quả bằng ngôn ngữ tự nhiên.
@@ -44,40 +44,43 @@ ngữ nghĩa từ LLM và tín hiệu cộng tác từ lịch sử tương tác 
 Khi bài toán gợi ý được biểu diễn như một tác vụ ngôn ngữ, một câu hỏi quan trọng là làm
 thế nào để đưa lịch sử hành vi của người dùng vào LLM một cách hiệu quả. Cách trực tiếp
 nhất là chuyển lịch sử tương tác sang văn bản, chẳng hạn liệt kê các sản phẩm hoặc bộ phim
-mà người dùng đã tương tác, rồi bổ sung phần này vào chỉ dẫn đầu vào. Tuy nhiên, đối với
+mà người dùng đã tương tác, rồi bổ sung phần này vào chỉ dẫn đầu vào (prompt). Tuy nhiên, đối với
 người dùng có lịch sử dài, cách biểu diễn này nhanh chóng làm tăng số lượng token và có thể
-vượt quá giới hạn ngữ cảnh của LLM, đồng thời làm tăng đáng kể chi phí tính toán~\cite{collm2023}.
+vượt quá giới hạn ngữ cảnh của LLM (context length), đồng thời làm mất thông tin và
+tăng đáng kể chi phí tính toán~\cite{collm2023}. Đây là trở ngại thực tiễn đã được ghi nhận trong nhiều công trình
+LLMs-as-RS.
 
 Một hướng thay thế là nén thông tin hành vi thành biểu diễn véc-tơ. Thay vì đưa toàn bộ lịch
-sử dưới dạng văn bản, mô hình cộng tác tổng hợp lịch sử tương tác thành một véc-tơ dày đặc,
+sử dưới dạng văn bản, mô hình cộng tác tổng hợp lịch sử tương tác thành một véc-tơ dày đặc (dense vector),
 sau đó chuyển véc-tơ này sang không gian embedding của LLM và đưa vào như một soft token.
 Cách tiếp cận này cho phép truyền tín hiệu cộng tác vào LLM mà không làm tăng đáng kể độ
 dài ngữ cảnh.
 
 CoLLM~\cite{collm2023} là một công trình tiêu biểu theo hướng này. Mô hình sử dụng một
-MLP để ánh xạ biểu diễn cộng tác từ không gian của mô hình truyền thống sang không gian
-embedding của LLM, sau đó chèn kết quả vào prompt dưới dạng soft token. Cơ chế này đơn
+MLP để ánh xạ véc-tơ cộng tác từ không gian của mô hình truyền thống sang không gian
+embedding của LLM, sau đó chèn kết quả vào chỉ dẫn dưới dạng soft token. Cơ chế này đơn
 giản và hiệu quả, nhưng phép ánh xạ được áp dụng độc lập trên từng véc-tơ cộng tác. Mỗi
 biểu diễn đầu vào được chuyển thành một soft token thông qua cùng một hàm ánh xạ, nên
 mô-đun này không trực tiếp mô hình hóa quan hệ giữa nhiều nguồn tín hiệu cộng tác trước khi
-chúng được đưa vào LLM, cũng như không có cơ chế chọn lọc thích nghi theo ngữ cảnh.
+chúng được đưa vào LLM, không nắm được các quan hệ phi tuyến phức tạp giữa không gian CF
+và không gian ngữ nghĩa của LLM, cũng như không có cơ chế chọn lọc thích nghi theo ngữ cảnh.
 
 Thách thức cốt lõi nằm ở sự khác biệt giữa hai không gian biểu diễn. Biểu diễn cộng tác được
 học từ cấu trúc tương tác người dùng--sản phẩm, trong khi không gian của LLM được hình
 thành chủ yếu từ dữ liệu ngôn ngữ. Do nguồn gốc huấn luyện khác nhau, việc chuyển đổi giữa
 hai không gian không chỉ là bài toán thay đổi số chiều, mà còn là bài toán căn chỉnh biểu
-diễn. Từ đó, luận văn đặt ra câu hỏi: liệu một mô-đun căn chỉnh có khả năng chọn lọc và tổng
-hợp tín hiệu cộng tác theo từng mẫu có thể cải thiện quá trình tích hợp tín hiệu cộng tác vào
-LLM so với phép ánh xạ pointwise bằng MLP hay không?
+diễn (alignment). Từ đó, luận văn đặt ra câu hỏi: liệu có cơ chế căn chỉnh có khả năng tích hợp
+tín hiệu cộng tác vào không gian ngữ nghĩa LLM một cách hiệu quả, linh hoạt so với phép chiếu
+bằng MLP hay không?
 
 \section{Khoảng trống nghiên cứu}
 \label{sec:khoang-trong}
 
-Q-Former, được giới thiệu trong BLIP-2~\cite{blip2_2023}, là một kiến trúc trung gian được
-thiết kế để kết nối đặc trưng ảnh với mô hình ngôn ngữ. Thành phần này sử dụng một tập truy
-vấn học được (learned query tokens) kết hợp với cross-attention để khai thác có chọn lọc thông
+Q-Former, được giới thiệu trong BLIP-2~\cite{blip2_2023}, là một cầu nối đa phương thức
+được thiết kế cho bài toán căn chỉnh giữa thông tin hình ảnh và không gian ngôn ngữ. Q-Former 
+sử dụng một tập truy vấn học được (learned query tokens) kết hợp với cross-attention để khai thác có chọn lọc thông
 tin từ đặc trưng đầu vào. Thay vì chuyển toàn bộ đầu vào thông qua một phép chiếu trực tiếp,
-các truy vấn học cách thu nhận và tổng hợp những phần thông tin phù hợp cho nhiệm vụ phía
+các truy vấn học cách thu nhận và tổng hợp những phần thông tin phù hợp cho tác vụ phía
 sau.
 
 Về nguyên tắc, cơ chế này cũng phù hợp với bài toán tích hợp biểu diễn cộng tác vào LLM.
@@ -86,17 +89,23 @@ Q-Former đóng vai trò tổng hợp và biến đổi tín hiệu trước khi
 LLM. ILM~\cite{ilm2024} đã khai thác ý tưởng này trong bài toán gợi ý, cho thấy Q-Former
 có thể được sử dụng như một mô-đun trung gian giữa thông tin cộng tác và mô hình ngôn ngữ.
 
-Tuy nhiên, vẫn còn hai khoảng trống liên quan trực tiếp đến mục tiêu của luận văn. Thứ nhất,
-ILM không được đánh giá theo bài toán dự đoán CTR với AUC và uAUC như CoLLM và các
+Tuy nhiên, hướng nghiên cứu này còn tồn tại hai khoảng trống quan trọng chưa được giải
+quyết liên quan trực tiếp đến mục tiêu của luận văn. Thứ nhất,
+ILM chưa được đánh giá theo bài toán dự đoán CTR với AUC và uAUC như CoLLM và các
 công trình cùng hướng, nên chưa tạo ra cơ sở so sánh trực tiếp giữa cơ chế Q-Former và phép
-ánh xạ MLP trong cùng thiết lập đánh giá. Thứ hai, mô-đun Q-Former trong ILM chưa được
+ánh xạ MLP trong cùng điều kiện đánh giá. Thứ hai, mô-đun Q-Former trong ILM chưa được
 khảo sát cùng các kỹ thuật huấn luyện nhằm cải thiện tới chất lượng phân biệt giữa người dùng
-và chất lượng xếp hạng trong từng người dùng (AUC/uAUC), cũng như lựa chọn biểu diễn nhiều soft token.
+và chất lượng xếp hạng trong từng người dùng (AUC/uAUC).
 
-Từ các khoảng trống trên, luận văn xây dựng CoQLLM, trong đó Q-Former được sử dụng làm
-mô-đun căn chỉnh giữa biểu diễn cộng tác và LLM. Mô hình được đánh giá trên bài toán dự
-đoán CTR với AUC và uAUC, đồng thời được bổ sung cơ chế điều kiện hóa truy vấn theo
-người dùng và biểu diễn cộng tác đa token.
+Từ các khoảng trống trên:
+
+\begin{quote}
+\textit{Luận văn (CoQLLM) xây dựng và tăng cường một mô-đun căn chỉnh Q-Former 
+để tích hợp thông tin cộng tác vào LLM. Mặc dù Q-Former đã được dùng để đưa
+thông tin cộng tác vào LLM, hướng này vẫn chưa được đánh giá trên bài toán CTR, và chưa được
+khảo sát khi tăng cường bằng các kỹ thuật tinh chỉnh và huấn luyện chuyên biệt. 
+Luận văn này đánh giá có hệ thống theo độ đo AUC/uAUC và đối chiếu trực tiếp với baseline CoLLM.}
+\end{quote}
 
 \section{Mục tiêu và đóng góp}
 \label{sec:dong-gop}
@@ -104,15 +113,16 @@ người dùng và biểu diễn cộng tác đa token.
 Luận văn hướng đến hai mục tiêu chính.
 
 \textbf{Mục tiêu 1 -- Xây dựng mô-đun căn chỉnh Q-Former cho tín hiệu cộng tác.} Luận văn
-thiết kế và hiện thực CoQLLM với ba thành phần chính: mô hình MF đóng băng, Q-Former làm
-mô-đun căn chỉnh, và LLM Vicuna-7B-v1.5~\cite{vicuna2023} kết hợp LoRA~\cite{lora2021}.
+thiết kế và hiện thực CoQLLM, một mô-đun tích hợp tín hiệu CF vào LLM thông qua cầu nối Q-Former,
+thay thế lớp chiếu MLP của CoLLM. Cụ thể, kiến trúc gồm có ba thành phần chính: mô hình MF đóng băng,
+Q-Former làm mô-đun căn chỉnh, và LLM Vicuna-7B-v1.5~\cite{vicuna2023} kết hợp LoRA~\cite{lora2021}.
 Tín hiệu cộng tác được xử lý bởi Q-Former trước khi được đưa vào LLM dưới dạng soft token.
-Trên kiến trúc cơ sở này, luận văn khảo sát điều kiện hóa truy vấn theo người dùng và biểu
-diễn đa token.
+Trên kiến trúc cơ sở này, luận văn tăng cường và huấn luyện Q-Former bằng kỹ thuật huấn luyện bổ sung
+điều kiện hóa truy vấn theo người dùng.
 
 \textbf{Mục tiêu 2 -- Đánh giá Q-Former cho bài toán CTR.} Luận văn đánh giá CoQLLM
-trên MovieLens-1M và Amazon-Book bằng AUC và uAUC, đồng thời đối chiếu với các baseline
-như CoLLM, BinLLM và CoRA trong phạm vi số liệu tương thích.
+trên MovieLens-1M và Amazon-Book bằng AUC và uAUC -- là đánh giá mà các công trình Q-Former trước (ILM)
+chưa thực hiện. Đồng thời đối chiếu với các baseline như CoLLM, BinLLM và CoRA.
 
 Từ hai mục tiêu trên, các đóng góp chính của luận văn gồm:
 
@@ -120,7 +130,7 @@ Từ hai mục tiêu trên, các đóng góp chính của luận văn gồm:
     \item \textbf{Thích nghi Q-Former cho bài toán gợi ý dựa trên tín hiệu cộng tác.} Đặc
     trưng cộng tác từ MF được sử dụng thay cho đặc trưng ảnh trong cơ chế cross-attention của
     Q-Former và được chuyển thành soft token đầu vào cho LLM. Trên nền tảng này, luận văn bổ
-    sung điều kiện hóa truy vấn theo người dùng và khảo sát biểu diễn đa token.
+    sung điều kiện hóa truy vấn theo người dùng.
 
     \item \textbf{Đánh giá có hệ thống theo AUC và uAUC.} CoQLLM được đánh giá trên
     MovieLens-1M và Amazon-Book theo thiết lập dự đoán nhị phân, cho phép đối chiếu trực tiếp
@@ -132,11 +142,20 @@ Từ hai mục tiêu trên, các đóng góp chính của luận văn gồm:
 \section{Bố cục luận văn}
 \label{sec:bo-cuc}
 
-Phần còn lại của luận văn được tổ chức như sau. Chương~\ref{Chapter2} trình bày các công
-trình liên quan, gồm lọc cộng tác truyền thống, các hướng khai thác LLM cho hệ thống tư vấn,
-các phương pháp tích hợp biểu diễn cộng tác vào LLM và cơ sở kiến trúc Q-Former.
-Chương~\ref{Chapter3} mô tả phương pháp đề xuất CoQLLM, bao gồm kiến trúc tổng thể,
-mô-đun MF, Q-Former, cơ chế soft token, các kỹ thuật huấn luyện bổ sung và quy trình huấn
-luyện ba giai đoạn. Chương~\ref{Chapter4} trình bày thiết lập thực nghiệm, kết quả so sánh,
-phân tích thành phần, phân tích warm/cold và thảo luận. Chương~\ref{Chapter5} tổng kết các
-đóng góp, nêu các hạn chế và đề xuất hướng nghiên cứu tiếp theo.
+Phần còn lại của luận văn được tổ chức như sau.
+
+\textbf{Chương~\ref{Chapter2} --- Các công trình liên quan} trình bày các công
+trình liên quan, gồm: lọc cộng tác truyền thống và hạn chế của nó; LLM trong hệ thống tư vấn và thách thức;
+các phương pháp tích hợp tín hiệu cộng tác vào LLM qua không gian véc-tơ (MLP,
+tương phản, sinh trọng số, Q-Former); và cơ sở kiến trúc Q-Former từ BLIP-2.
+
+\textbf{Chương~\ref{Chapter3} --- Phương pháp đề xuất} trình bày kiến trúc CoQLLM bao gồm
+kiến trúc tổng thể, mô-đun MF, Q-Former, cơ chế soft token, các kỹ thuật huấn luyện bổ sung
+và quy trình huấn luyện gồm ba giai đoạn.
+
+\textbf{Chương~\ref{Chapter4} --- Thực nghiệm và Kết quả} trình bày thiết lập thực
+nghiệm trên hai tập dữ liệu MovieLens-1M và Amazon-Book, kết quả so sánh, phân tích ablation,
+phân rã warm/cold, và thảo luận hạn chế.
+
+\textbf{Chương~\ref{Chapter5} --- Kết luận và Hướng phát triển} tổng kết đóng góp, chỉ
+ra các hạn chế còn tồn tại và đề xuất hướng nghiên cứu tiếp theo.
