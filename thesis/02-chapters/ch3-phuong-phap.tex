@@ -5,9 +5,9 @@
 Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
 Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
 Q-Former như một cầu nối căn chỉnh có khả năng tổng hợp nhiều nguồn tín hiệu cộng tác trước
-khi chuyển chúng thành soft token cho LLM. Các thành phần của mô hình được mô tả lần lượt từ
-kiến trúc tổng thể, mô-đun MF, cầu nối Q-Former và cơ chế soft token đến các kỹ thuật huấn
-luyện bổ sung và quy trình tối ưu ba giai đoạn.
+khi chuyển chúng thành soft token cho LLM. Các thành phần của mô hình được trình bày lần lượt:
+kiến trúc tổng thể, mô-đun MF, cầu nối Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
+huấn luyện ba giai đoạn.
 
 \section{Kiến trúc tổng thể}
 \label{sec:kien-truc-tong-quan}
