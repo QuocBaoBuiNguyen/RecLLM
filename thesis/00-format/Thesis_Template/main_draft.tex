@@ -35,12 +35,16 @@
 \renewcommand{\textfraction}{0.08}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc,shapes.geometric}
-\newcommand{\snow}[1][white]{\tikz[baseline=-0.4ex,line width=0.3pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.3mm)--(\a+180:1.3mm);}}}
-\newcommand{\fire}{\tikz[baseline=-0.3ex]{%
-  \fill[red!75!orange] (0,0) .. controls (1.5mm,1.2mm) and (0.8mm,2.4mm) .. (0,3.4mm)
-     .. controls (-0.8mm,2.4mm) and (-1.5mm,1.2mm) .. (0,0) -- cycle;
-  \fill[yellow!85!orange] (0,0.7mm) .. controls (0.75mm,1.4mm) and (0.4mm,2.2mm) .. (0,2.7mm)
-     .. controls (-0.4mm,2.2mm) and (-0.75mm,1.4mm) .. (0,0.7mm) -- cycle;}}
+\newcommand{\snow}[1][blue!60]{\tikz[baseline=-0.4ex,line width=0.3pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.3mm)--(\a+180:1.3mm);}}}
+\newcommand{\fire}[1][1]{\tikz[baseline=-0.3ex,scale=#1]{
+  \fill[red!75!orange] (0,0) .. controls (1.7mm,0.5mm) and (1.25mm,2.6mm) .. (0.3mm,4.3mm)
+    .. controls (0.55mm,2.9mm) and (-0.05mm,3.0mm) .. (-0.1mm,3.5mm)
+    .. controls (-1.0mm,2.7mm) and (-1.55mm,1.0mm) .. (0,0) -- cycle;
+  \fill[orange] (0.05mm,0.7mm) .. controls (1.05mm,1.2mm) and (0.65mm,2.6mm) .. (0.18mm,3.4mm)
+    .. controls (-0.5mm,2.6mm) and (-0.75mm,1.4mm) .. (0.05mm,0.7mm) -- cycle;
+  \fill[yellow!92!orange] (0.05mm,1.4mm) .. controls (0.5mm,1.8mm) and (0.32mm,2.5mm) .. (0.12mm,2.9mm)
+    .. controls (-0.25mm,2.4mm) and (-0.32mm,1.7mm) .. (0.05mm,1.4mm) -- cycle;}}
+\newcommand{\ph}[2]{\texttt{\textcolor{#1}{\textless #2\textgreater}}}
 \newcommand{\tokrow}[5]{%
   \node[draw, rounded corners=2pt, fill=white, inner xsep=1.4mm, inner ysep=1.2mm] (#2) at #1 {%
     \tikz[baseline=-0.6ex]{%

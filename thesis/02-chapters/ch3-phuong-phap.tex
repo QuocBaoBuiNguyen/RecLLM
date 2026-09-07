@@ -41,13 +41,13 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \begin{tikzpicture}[
   font=\footnotesize, >={Stealth[length=2.2mm]},
   frozen/.style={trapezium, trapezium left angle=68, trapezium right angle=68,
-                 draw=blue!60, fill=blue!55, text=white, align=center, thick,
+                 draw=blue!60, fill=blue!14, text=black, align=center, thick,
                  minimum width=26mm, minimum height=11mm, inner sep=2pt},
   io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, inner sep=3pt},
   qbar/.style={rectangle, rounded corners=1.5pt, draw=orange!70!black, align=center,
                minimum width=30mm, minimum height=6mm, font=\scriptsize},
   tune/.style={rectangle, rounded corners=2pt, draw=orange!75!black, fill=orange!16, align=center, thick, inner sep=3pt},
-  outb/.style={rectangle, rounded corners=2pt, draw=black!55, fill=gray!10, align=center, thick, inner sep=3pt},
+  outb/.style={rectangle, rounded corners=2pt, draw=green!55!black, fill=green!18, align=center, thick, inner sep=3pt},
   arr/.style={->, semithick, black!65},
   lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
 ]
@@ -94,15 +94,20 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
   {điều kiện hóa truy vấn\\ $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
 \draw[arr,dashed,black!45] (uc.east) -- (qtok.west);
 % left feed: text prompt -> LLM
-\node[io, left=26mm of llm, text width=34mm] (prompt)
-  {\scriptsize\textbf{Prompt văn bản}: tên/thể loại sản phẩm và lịch sử ở dạng văn bản};
+\node[io, left=20mm of llm, text width=52mm, align=left, font=\scriptsize] (prompt)
+  {\textbf{Prompt (chỉ dẫn)}\\[1pt]
+   \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
+   interaction-history signals are \ph{orange!75!black}{ItemIDList}. Predict whether the user
+   would enjoy \ph{teal!55!black}{TargetItemTitle}. \ph{orange!75!black}{TargetItemID}
+   Answer with ``Yes''/``No''. \texttt{ASSISTANT:}};
 \draw[arr] (prompt.east) -- (llm.west);
 % legend (bottom, tách khỏi Yes/No)
 \node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
-  at ($(prompt.south west)+(0,-16mm)$)
-  {\tikz\filldraw[fill=blue!55,draw=blue!60](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow[blue!60]\quad
+  at ($(prompt.south west)+(0,-8mm)$)
+  {\tikz\filldraw[fill=blue!14,draw=blue!60](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
    \tikz\filldraw[fill=orange!16,draw=orange!75!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
-   \tikz{\node[draw=black!45,fill=teal!45,minimum size=3.2mm,inner sep=0]{};}\ token / dữ liệu\\[4pt]
+   \tikz{\node[draw=black!45,fill=teal!45,minimum size=3.2mm,inner sep=0]{};}\ token / dữ liệu\quad
+   \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ đầu ra\\[4pt]
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
 }
