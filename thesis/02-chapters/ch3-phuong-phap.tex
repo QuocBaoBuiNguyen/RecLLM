@@ -37,7 +37,74 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=12cm]{images/coqllm-architecture.drawio.png}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=2mm]},
+  block/.style={rectangle, rounded corners=2pt, draw, thick, minimum height=8mm, align=center, inner sep=4pt},
+  frozen/.style={block, fill=blue!10, draw=blue!55},
+  trained/.style={block, fill=green!13, draw=green!55!black},
+  io/.style={block, fill=gray!12, draw=gray!50, minimum width=16mm},
+  sub/.style={block, minimum height=6mm, minimum width=34mm, fill=white, draw=black!45, font=\scriptsize},
+  data/.style={block, fill=orange!8, draw=orange!70!black},
+  lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
+  arr/.style={->, semithick, black!65},
+]
+% inputs
+\node[io] (u) {Người dùng $u$};
+\node[io, right=6mm of u] (h) {Lịch sử $\mathcal{H}_u$};
+\node[io, right=6mm of h] (i) {Sản phẩm mục tiêu $i$};
+% MF
+\node[frozen, below=8mm of h, minimum width=64mm] (mf)
+  {\textbf{Phân rã ma trận (MF)}\; \textit{-- đóng băng}};
+\draw[arr] (u.south) -- (u.south|-mf.north);
+\draw[arr] (h.south) -- (mf.north);
+\draw[arr] (i.south) -- (i.south|-mf.north);
+% Q-Former internals
+\node[sub, below=18mm of mf.south] (query) {Truy vấn học được $\mathbf{Q}$ \,($Q=8$)};
+\node[sub, below=5mm of query] (sa) {Self-attention};
+\node[sub, below=5mm of sa]    (ca) {Cross-attention};
+\draw[arr] (query) -- (sa);
+\draw[arr] (sa) -- (ca);
+\begin{scope}[on background layer]
+  \node[trained, fit=(query)(sa)(ca), inner sep=6mm] (qf) {};
+\end{scope}
+\node[anchor=south west, font=\scriptsize\bfseries, text=green!45!black]
+  at ($(qf.north west)+(1mm,0.5mm)$) {Q-Former -- huấn luyện};
+\draw[arr] (mf.south) -- node[lbl, right=1pt] {$e_u,\ e_i,\ \{e_{i'}\}$} (qf.north);
+\node[lbl, right=10mm of ca, text width=30mm, anchor=west] (cann)
+  {cross-attn đọc véc-tơ CF của sản phẩm};
+\draw[arr, dashed, black!45] (cann.west) -- (ca.east);
+\node[lbl, left=10mm of query, text width=30mm, anchor=east, align=right] (uann)
+  {điều kiện hóa truy vấn\\ $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
+\draw[arr, dashed, black!45] (uann.east) -- (query.west);
+% Z / projection / soft tokens
+\node[data, below=7mm of qf.south] (z) {$\mathbf{Z}=\mathrm{cf\_q}\;[B,\,8,\,768]$};
+\draw[arr] (ca.south) -- (ca.south|-z.north);
+\node[trained, below=6mm of z] (proj) {Lớp chiếu $W_{\text{proj}}$\; \textit{-- huấn luyện}};
+\node[data, below=6mm of proj] (soft) {Soft token \,(8 / sản phẩm)};
+\draw[arr] (z) -- (proj);
+\draw[arr] (proj) -- (soft);
+% LLM
+\node[frozen, below=6mm of soft, minimum width=78mm] (llm)
+  {\textbf{LLM Vicuna-7B-v1.5} \textit{(đóng băng)} \;$+$\; \textbf{LoRA} \textit{(huấn luyện)}};
+\draw[arr] (soft) -- (llm);
+\node[trained, below=6mm of llm] (out) {Yes / No \;(CTR)};
+\draw[arr] (llm) -- (out);
+% legends
+\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
+  (leg) at ($(i.east)+(14mm,4mm)$)
+  {\tikz\filldraw[fill=blue!10,draw=blue!55](0,0)rectangle(3mm,3mm);\; Đóng băng (frozen)\\[3pt]
+   \tikz\filldraw[fill=green!13,draw=green!55!black](0,0)rectangle(3mm,3mm);\; Huấn luyện (trained)\\[3pt]
+   \tikz\filldraw[fill=orange!8,draw=orange!70!black](0,0)rectangle(3mm,3mm);\; Dữ liệu / biểu diễn};
+\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west, below=6mm of leg]
+  (stages)
+  {\textbf{Huấn luyện 3 giai đoạn}\\[2pt]
+   1. Tiền huấn luyện biểu diễn\\
+   2. Tiền huấn luyện sinh\\
+   3. Tinh chỉnh CTR};
+\end{tikzpicture}%
+}
 \caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; mô-đun căn chỉnh
 Q-Former chuyển tín hiệu này thành các soft token được chèn vào prompt; LLM thực hiện dự
 đoán. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được cập nhật theo từng giai đoạn
