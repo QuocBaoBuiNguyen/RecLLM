@@ -35,7 +35,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
     bản, kết hợp chúng qua self-attention và thực hiện dự đoán ``Yes/No''.
 \end{enumerate}
 
-\begin{figure}[H]
+\begin{figure}[t]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -60,15 +60,14 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
   \node[draw=orange!75!black, thick, rounded corners=3pt, fill=orange!6,
         fit=(qsa)(qca)(qff), inner sep=4mm] (qf) {};
 \end{scope}
-\node[anchor=south, font=\footnotesize\bfseries, text=orange!50!black] at (qf.north)
-  {Q-Former \textnormal{\scriptsize(huấn luyện)}};
-\node[anchor=west, font=\scriptsize] at ($(qf.east)+(1mm,0)$) {$\times 4$ lớp};
+\node[anchor=west, font=\scriptsize, align=left, text=orange!50!black]
+  at ($(qf.east)+(2mm,0)$) {\textbf{Q-Former}\\ \textnormal{(huấn luyện)}\\ \textnormal{$\times 4$ lớp}};
 \draw[arr] (qsa)--(qca);
 \draw[arr] (qca)--(qff);
 \draw[arr] (qtok) -- (qtok|-qf.north);
 \tokrow{(5.2,3.6)}{stok}{green!55!black!70!white}{orange!60}{violet!60}
 \node[font=\scriptsize, right=1.5mm of stok, align=left] {Soft token\\ $[B,8,768]$};
-\draw[arr] (qf.south) -- node[lbl,right=1pt]{chiếu $W_{\text{proj}}$} (stok);
+\draw[arr] (qf.south) -- node[lbl,left=1pt]{chiếu $W_{\text{proj}}$} (stok);
 \node[frozen, trapezium stretches=true, below=10mm of stok, minimum width=54mm] (llm)
   {\textbf{LLM Vicuna-7B-v1.5}\;\snow};
 \node[trn, font=\scriptsize, right=3mm of llm] (lora) {$+$ LoRA\\(huấn luyện)};
