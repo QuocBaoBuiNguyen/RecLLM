@@ -14,9 +14,11 @@ huấn luyện ba giai đoạn.
 
 \textbf{Bài toán.} Luận văn xem nhiệm vụ gợi ý dưới dạng dự đoán nhị phân. Với người dùng
 $u$, lịch sử tương tác của người dùng và một sản phẩm mục tiêu $i$, mô hình ước lượng khả
-năng người dùng thích sản phẩm đó và biểu diễn đầu ra của LLM dưới dạng câu trả lời ``Yes''
-hoặc ``No''. Đây là bài toán phân loại nhị phân, được đánh giá chủ yếu bằng AUC và uAUC
-(chi tiết ở Chương~\ref{Chapter4}).
+năng người dùng thích sản phẩm đó dưới dạng câu trả lời ``Yes''/``No'' của LLM.
+\textit{Điểm dự đoán} dùng để đánh giá là xác suất mà LLM gán cho token ``Yes'' (so với
+``No''), một giá trị liên tục trong $[0,1]$. Đây là bài toán phân loại nhị phân; AUC và uAUC
+được tính trên điểm xác suất này, không phải trên nhãn cứng (chi tiết ở
+Chương~\ref{Chapter4}).
 
 CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 

@@ -83,6 +83,10 @@ Luận văn dùng hai độ đo chính theo quy trình CoLLM:
     và bất biến với các phép biến đổi đơn điệu theo từng người dùng.
 \end{itemize}
 
+Cả hai độ đo đều được tính trên \textit{điểm dự đoán liên tục} của mô hình -- xác suất mà LLM
+gán cho token ``Yes'' (so với ``No'') -- nên đo chất lượng \textit{xếp hạng} các mẫu theo điểm
+này, chứ không dựa trên nhãn ``Yes''/``No'' đã cứng hóa.
+
 Bổ sung: Accuracy và F1 (độ đo phân loại nhị phân), Precision@K và NDCG@K
 (độ đo xếp hạng top-K), và cosine similarity trước/sau căn chỉnh (đo mức độ thu hẹp
 khoảng cách ngữ nghĩa CF--LLM).
