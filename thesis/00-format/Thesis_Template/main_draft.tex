@@ -28,9 +28,19 @@
 \usepackage{array}
 \usepackage{longtable}
 \usepackage{float}
+% cho phép float lớn (hình kiến trúc) chiếm phần lớn trang thay vì bị hoãn
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\floatpagefraction}{0.82}
+\renewcommand{\textfraction}{0.08}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc,shapes.geometric}
-\newcommand{\snow}[1][white]{\tikz[baseline=-0.4ex,line width=0.3pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.4mm)--(\a+180:1.4mm);}}}
+\newcommand{\snow}[1][white]{\tikz[baseline=-0.4ex,line width=0.3pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.3mm)--(\a+180:1.3mm);}}}
+\newcommand{\fire}{\tikz[baseline=-0.3ex]{%
+  \fill[red!75!orange] (0,0) .. controls (1.5mm,1.2mm) and (0.8mm,2.4mm) .. (0,3.4mm)
+     .. controls (-0.8mm,2.4mm) and (-1.5mm,1.2mm) .. (0,0) -- cycle;
+  \fill[yellow!85!orange] (0,0.7mm) .. controls (0.75mm,1.4mm) and (0.4mm,2.2mm) .. (0,2.7mm)
+     .. controls (-0.4mm,2.2mm) and (-0.75mm,1.4mm) .. (0,0.7mm) -- cycle;}}
 \newcommand{\tokrow}[5]{%
   \node[draw, rounded corners=2pt, fill=white, inner xsep=1.4mm, inner ysep=1.2mm] (#2) at #1 {%
     \tikz[baseline=-0.6ex]{%
