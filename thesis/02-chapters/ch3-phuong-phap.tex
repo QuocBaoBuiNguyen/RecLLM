@@ -41,12 +41,12 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \begin{tikzpicture}[
   font=\footnotesize, >={Stealth[length=2.2mm]},
   frozen/.style={trapezium, trapezium left angle=68, trapezium right angle=68,
-                 draw=blue!60, fill=blue!14, text=black, align=center, thick,
+                 draw=iceline, fill=icefill, text=black, align=center, thick,
                  minimum width=26mm, minimum height=11mm, inner sep=2pt},
   io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, inner sep=3pt},
   qbar/.style={rectangle, rounded corners=1.5pt, draw=orange!70!black, align=center,
                minimum width=30mm, minimum height=6mm, font=\scriptsize},
-  tune/.style={rectangle, rounded corners=2pt, draw=orange!75!black, fill=orange!16, align=center, thick, inner sep=3pt},
+  tune/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!30, align=center, thick, inner sep=3pt},
   outb/.style={rectangle, rounded corners=2pt, draw=green!55!black, fill=green!18, align=center, thick, inner sep=3pt},
   arr/.style={->, semithick, black!65},
   lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
@@ -54,11 +54,11 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 % central spine
 \tokrow{(5.2,8.4)}{qtok}{teal!45}{orange!55}{violet!55}
 \node[font=\scriptsize, above=0.6mm of qtok] {Truy vấn học được ($Q=8$)};
-\node[qbar, fill=orange!22] (qsa) at (5.2,6.6) {Self-Attention};
-\node[qbar, fill=orange!34, below=2mm of qsa] (qca) {Cross-Attention};
-\node[qbar, fill=orange!18, below=2mm of qca] (qff) {Feed-Forward};
+\node[qbar, fill=orange!34] (qsa) at (5.2,6.6) {Self-Attention};
+\node[qbar, fill=orange!48, below=2mm of qsa] (qca) {Cross-Attention};
+\node[qbar, fill=orange!28, below=2mm of qca] (qff) {Feed-Forward};
 \begin{scope}[on background layer]
-  \node[draw=orange!75!black, thick, rounded corners=3pt, fill=orange!6,
+  \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12,
         fit=(qsa)(qca)(qff), inner sep=4mm] (qf) {};
 \end{scope}
 \node[anchor=west, font=\scriptsize, align=left, text=orange!45!black]
@@ -104,8 +104,8 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 % legend (bottom, tách khỏi Yes/No)
 \node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
   at ($(prompt.south west)+(0,-8mm)$)
-  {\tikz\filldraw[fill=blue!14,draw=blue!60](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
-   \tikz\filldraw[fill=orange!16,draw=orange!75!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
+  {\tikz\filldraw[fill=icefill,draw=iceline](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
+   \tikz\filldraw[fill=orange!30,draw=orange!80!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
    \tikz{\node[draw=black!45,fill=teal!45,minimum size=3.2mm,inner sep=0]{};}\ token / dữ liệu\quad
    \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ đầu ra\\[4pt]
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};

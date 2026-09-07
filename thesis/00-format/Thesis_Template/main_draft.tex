@@ -35,8 +35,10 @@
 \renewcommand{\textfraction}{0.08}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc,shapes.geometric}
-\newcommand{\snow}[1][blue!60]{\tikz[baseline=-0.4ex,line width=0.3pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.3mm)--(\a+180:1.3mm);}}}
-\newcommand{\fire}[1][1]{\tikz[baseline=-0.3ex,scale=#1]{
+\definecolor{icefill}{RGB}{205,230,248}
+\definecolor{iceline}{RGB}{52,120,196}
+\newcommand{\snow}[1][iceline]{\tikz[baseline=-0.4ex,line width=0.35pt]{\foreach\a in{0,60,120}{\draw[#1](\a:1.4mm)--(\a+180:1.4mm);}}}
+\newcommand{\fire}[1][1.3]{\tikz[baseline=-0.35ex,scale=#1]{
   \fill[red!75!orange] (0,0) .. controls (1.7mm,0.5mm) and (1.25mm,2.6mm) .. (0.3mm,4.3mm)
     .. controls (0.55mm,2.9mm) and (-0.05mm,3.0mm) .. (-0.1mm,3.5mm)
     .. controls (-1.0mm,2.7mm) and (-1.55mm,1.0mm) .. (0,0) -- cycle;
