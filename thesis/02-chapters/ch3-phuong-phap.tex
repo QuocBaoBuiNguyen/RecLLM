@@ -37,7 +37,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 
 \begin{figure}[H]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{!}{0.82\textheight}{%
 \begin{tikzpicture}[
   font=\footnotesize,
   >={Stealth[length=2mm]},
@@ -91,14 +91,14 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \draw[arr] (soft) -- (llm);
 \node[trained, below=6mm of llm] (out) {Yes / No \;(CTR)};
 \draw[arr] (llm) -- (out);
-% legends
-\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
-  (leg) at ($(i.east)+(14mm,4mm)$)
+% legends (đáy, canh giữa dưới pipeline)
+\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north east]
+  (leg) at ($(out.south)+(-6mm,-10mm)$)
   {\tikz\filldraw[fill=blue!10,draw=blue!55](0,0)rectangle(3mm,3mm);\; Đóng băng (frozen)\\[3pt]
    \tikz\filldraw[fill=green!13,draw=green!55!black](0,0)rectangle(3mm,3mm);\; Huấn luyện (trained)\\[3pt]
    \tikz\filldraw[fill=orange!8,draw=orange!70!black](0,0)rectangle(3mm,3mm);\; Dữ liệu / biểu diễn};
-\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west, below=6mm of leg]
-  (stages)
+\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
+  (stages) at ($(out.south)+(6mm,-10mm)$)
   {\textbf{Huấn luyện 3 giai đoạn}\\[2pt]
    1. Tiền huấn luyện biểu diễn\\
    2. Tiền huấn luyện sinh\\
