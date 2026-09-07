@@ -225,7 +225,7 @@ ILM~\cite{ilm2024} & Q-Former và cross-attention & Có khả năng chọn lọc
 
 Tổng hợp các công trình cho thấy Q-Former là một hướng đáng khảo sát cho bài toán căn chỉnh
 biểu diễn cộng tác với LLM nhờ khả năng tổng hợp tín hiệu thông qua các truy vấn học được.
-Tuy nhiên, hướng này vẫn thiếu đánh giá trực tiếp trong thiết lập CTR với AUC/uAUC và chưa
+Hướng này vẫn thiếu đánh giá trực tiếp trong bài toán CTR với AUC/uAUC và chưa
 được khảo sát đầy đủ cùng các cơ chế huấn luyện hướng tới đặc tính của hai độ đo này. Đây là
 khoảng trống mà luận văn tập trung giải quyết.
 
@@ -252,10 +252,11 @@ hai cơ chế attention đóng vai trò chính:
 \mathbb{R}^{N_q \times d}$. Trong BLIP-2, các véc-tơ này được chiếu sang không gian
 embedding của LLM và ghép với prompt văn bản.
 
-BLIP-2 huấn luyện Q-Former theo hai giai đoạn. Giai đoạn đầu tập trung học biểu diễn qua các
+BLIP-2 huấn luyện Q-Former theo hai giai đoạn: (1)~tiền huấn luyện biểu diễn để học biểu diễn qua các
 mục tiêu tương phản ảnh--văn bản (ITC), so khớp ảnh--văn bản (ITM) và sinh văn bản có điều
-kiện (ITG). Giai đoạn sau căn chỉnh đầu ra của Q-Former với mô hình ngôn ngữ để các biểu
-diễn trung gian có thể được LLM khai thác trong quá trình sinh.
+kiện (ITG); (2)~tiền huấn luyện sinh ngôn ngữ để các biểu diễn trung gian có thể được LLM khai thác trong quá trình sinh.
+Thiết kế này cho phép BLIP-2 đạt hiệu quả cao trên các tác vụ ảnh -– ngôn
+ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa ảnh và LLM.
 
 Đối với bài toán của luận văn, đặc trưng ảnh được thay thế bằng biểu diễn cộng tác. Khi đó,
 Q-Former được sử dụng như một mô-đun căn chỉnh: các truy vấn học được tổng hợp thông tin

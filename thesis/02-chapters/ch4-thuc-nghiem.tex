@@ -23,7 +23,7 @@ hóa thành nhãn CTR: $\geq 4$ sao được coi là nhấp (click), còn lại 
 \textbf{Amazon-Book}~\cite{cora2024} là một tập dữ liệu thưa hơn nhiều so với MovieLens-1M,
 theo đúng phân chia dùng trong CoLLM và CoRA. Tập này có khoảng $23$ nghìn người dùng và
 $34$ nghìn sản phẩm sách, với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn hẳn -- đây
-chính là điều kiện để kiểm chứng cầu nối CF--LLM trên miền khó, nơi tín hiệu cộng tác yếu và
+chính là điều kiện để kiểm chứng mô-đun căn chỉnh CF--LLM trên miền khó, nơi tín hiệu cộng tác yếu và
 LLM/Q-Former có nhiều dư địa đóng góp. Nhãn CTR được nhị phân hóa tương tự. Việc bổ sung
 Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim, nơi tín hiệu
 cộng tác yếu và tỉ lệ người dùng/sản phẩm nguội cao.
@@ -42,7 +42,7 @@ báo cáo trên tập kiểm tra.
 \textbf{Baseline chính:}
 \begin{itemize}
     \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP pointwise (mỗi véc-tơ cộng tác thành một token); cùng giao
-    thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của cầu nối
+    thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của mô-đun căn chỉnh
     Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN.
     \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân tín hiệu cộng tác vào LLM -- SOTA gần nhất
     theo quy trình này, có mặt trên cả hai tập dữ liệu.
@@ -54,7 +54,7 @@ báo cáo trên tập kiểm tra.
     token). Trên Amazon-Book, biến thể CoRA-MF được đưa vào bảng so sánh như một điểm tham
     chiếu cho hướng thiết kế khác với CoQLLM (Mục~\ref{ssec:cora-rel}).
     \item \textbf{MF}~\cite{bpr2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
-    làm mốc sàn để đo phần đóng góp thêm của cầu nối CF--LLM.
+    làm mốc sàn để đo phần đóng góp thêm của mô-đun căn chỉnh CF--LLM.
     \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone
     Qwen2-7B-Base; \textit{lưu ý: CoQLLM dùng Vicuna-7B-v1.5, khác họ backbone, nên so sánh
     trực tiếp về số liệu bị giới hạn -- được thảo luận như baseline không đồng nhất}.
@@ -113,7 +113,7 @@ khoảng cách ngữ nghĩa CF--LLM).
     $3\times10^{-5}$, giảm theo lịch cosine về $3\times10^{-6}$).
     \item \textbf{Phần cứng}: một GPU NVIDIA A100 80GB.
     \item \textbf{Tham số huấn luyện được}: chỉ LoRA (khoảng vài triệu tham số trên các lớp
-    $[q,v]$ của backbone $7$ tỉ tham số), cầu nối Q-Former và các lớp chiếu được cập nhật;
+    $[q,v]$ của backbone $7$ tỉ tham số), mô-đun căn chỉnh Q-Former và các lớp chiếu được cập nhật;
     MF và LLM đóng băng. Không có tham số sinh trọng số. Tổng số tham số huấn luyện được rất
     nhỏ so với $7$ tỉ tham số đóng băng của LLM, phản ánh thiết kế tinh chỉnh hiệu quả tham số.
     \item \textbf{Thời gian huấn luyện}: mỗi epoch mất khoảng $4$--$6$ phút trên phần cứng
@@ -212,16 +212,16 @@ thích hơn -- thay vì chỉ phân biệt người dùng với nhau.
 Đặc điểm này được xác nhận trực tiếp qua phân rã warm/cold (Mục~\ref{ssec:user-group}).
 Trên MovieLens-1M, uAUC ở nhóm người dùng \textit{ấm} (warm, MF có tín hiệu) đạt $0{,}7254$,
 cao hơn hẳn nhóm \textit{nguội} (cold) chỉ $0{,}5969$; trong khi AUC hai nhóm chênh ít hơn
-($0{,}7787$ so với $0{,}7030$). Điều này cho thấy trần của uAUC không nằm ở cầu nối Q-Former
-(nếu cầu nối yếu thì AUC cũng phải sập) mà ở \textit{chất lượng embedding MF cho người
+($0{,}7787$ so với $0{,}7030$). Điều này cho thấy trần của uAUC không nằm ở mô-đun căn chỉnh Q-Former
+(nếu mô-đun căn chỉnh yếu thì AUC cũng phải sập) mà ở \textit{chất lượng embedding MF cho người
 dùng/sản phẩm nguội}. Đây là căn cứ để định hướng cải thiện uAUC về phía MF teacher
-(Mục~\ref{sec:huong-phat-trien}) thay vì tinh chỉnh thêm kiến trúc cầu nối.
+(Mục~\ref{sec:huong-phat-trien}) thay vì tinh chỉnh thêm kiến trúc mô-đun căn chỉnh.
 
 \section{Thí nghiệm loại bỏ thành phần}
 \label{sec:ablation}
 
 Bảng~\ref{tab:ablation} tách biệt đóng góp của kỹ thuật điều kiện hóa truy vấn theo người dùng
-bằng cách bật/tắt cơ chế này trên nền cầu nối soft token (MovieLens-1M).
+bằng cách bật/tắt cơ chế này trên nền soft token (MovieLens-1M).
 
 \begin{table}[ht]
 \caption{Ablation kỹ thuật điều kiện hóa truy vấn theo người dùng trên MovieLens-1M, trên nền
@@ -247,7 +247,7 @@ dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người d
 xếp hạng \textit{trong} từng người dùng (uAUC).
 
 \textbf{Các ablation chưa thực hiện.} Do giới hạn tài nguyên, một số ablation vẫn còn để
-ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-che}): (i)~thay cầu nối Q-Former
+ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-che}): (i)~thay mô-đun căn chỉnh Q-Former
 bằng một bộ chiếu \textit{attention-MLP} (MLP có self-attention nhưng không có truy vấn học
 được) để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến + attention đơn
 thuần; và (ii)~bật/tắt riêng biểu diễn đa token dưới cùng backbone Vicuna. Luận văn không điền
@@ -259,10 +259,10 @@ số ước lượng cho các hàng này.
 \subsection{Khoảng cách ngữ nghĩa}
 \label{ssec:cosine-sim}
 
-Để kiểm chứng rằng cầu nối Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
+Để kiểm chứng rằng mô-đun căn chỉnh Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
 gian cộng tác và không gian LLM, luận văn đo cosine similarity giữa:
 (i)~véc-tơ cộng tác thô (đầu ra MF) và embedding token LLM tương ứng trước khi huấn luyện
-cầu nối; (ii)~soft token đầu ra Q-Former và embedding token LLM sau khi huấn luyện.
+mô-đun căn chỉnh; (ii)~soft token đầu ra Q-Former và embedding token LLM sau khi huấn luyện.
 Kết quả kỳ vọng: cosine similarity tăng sau huấn luyện, cho thấy Q-Former thực sự căn
 chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
 
@@ -295,7 +295,7 @@ MovieLens-1M & cold & $3{.}178$ & 0{,}7030 & 0{,}5969 \\
 Trên MovieLens-1M, nhóm warm đạt uAUC $0{,}7254$ -- cao hơn hẳn nhóm cold ($0{,}5969$) -- trong
 khi AUC hai nhóm chênh ít hơn nhiều ($0{,}7787$ so với $0{,}7030$). Điều này khẳng định uAUC bị
 chặn trên bởi \textit{chất lượng embedding MF cho người dùng/sản phẩm nguội} chứ không phải bởi
-cầu nối: nếu cầu nối là nút thắt thì AUC ở nhóm cold cũng phải sập, nhưng AUC vẫn giữ ở mức
+mô-đun căn chỉnh: nếu mô-đun căn chỉnh là nút thắt thì AUC ở nhóm cold cũng phải sập, nhưng AUC vẫn giữ ở mức
 khá. Ở nhóm warm -- nơi MF cung cấp tín hiệu tốt -- CoQLLM khai thác hiệu quả hơn hẳn. Nhận định
 này khớp với phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra hướng cải thiện
 tiếp theo nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
@@ -313,10 +313,10 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \subsection{Ưu điểm và hạn chế của Q-Former}
 \label{ssec:diem-manh-han-che}
 
-So với mô-đun chiếu MLP của CoLLM, cầu nối Q-Former có cơ chế chọn lọc đặc trưng rõ
+So với mô-đun chiếu MLP của CoLLM, mô-đun căn chỉnh Q-Former có cơ chế chọn lọc đặc trưng rõ
 ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM
 được giữ nguyên khi suy luận -- không có chi phí sinh trọng số theo từng mẫu như hướng sinh
-trọng số của CoRA. Đánh đổi là chi phí huấn luyện cầu nối cao hơn lớp MLP đơn giản, cần cân
+trọng số của CoRA. Đánh đổi là chi phí huấn luyện mô-đun căn chỉnh cao hơn lớp MLP đơn giản, cần cân
 nhắc tùy điều kiện triển khai.
 
 \section{Hạn chế nghiên cứu}
@@ -326,7 +326,7 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
 \begin{enumerate}
     \item \textbf{Một seed:} Số liệu báo cáo từ một lần chạy duy nhất; chưa có khoảng tin
     cậy, kết quả có thể dao động giữa các lần chạy.
-    \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay cầu nối
+    \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay mô-đun căn chỉnh
     Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là đối chứng quan
     trọng nhất để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến +
     attention đơn thuần; hiện được ghi nhận là hướng thực nghiệm còn để ngỏ.
@@ -337,6 +337,6 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn theo AUC),
     khác quy trình chọn checkpoint theo uAUC của CoQLLM.
     \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
-    người dùng/sản phẩm nguội (Mục~\ref{ssec:user-group}), không phải bởi cầu nối; cải
+    người dùng/sản phẩm nguội (Mục~\ref{ssec:user-group}), không phải bởi mô-đun căn chỉnh; cải
     thiện tiếp theo cần MF teacher mạnh hơn trên nhóm cold.
 \end{enumerate}

@@ -76,7 +76,7 @@ bằng MLP hay không?
 \section{Khoảng trống nghiên cứu}
 \label{sec:khoang-trong}
 
-Q-Former, được giới thiệu trong BLIP-2~\cite{blip2_2023}, là một cầu nối đa phương thức
+Q-Former, được giới thiệu trong BLIP-2~\cite{blip2_2023}, là một mô-đun trung gian đa phương thức
 được thiết kế cho bài toán căn chỉnh giữa thông tin hình ảnh và không gian ngôn ngữ. Q-Former 
 sử dụng một tập truy vấn học được (learned query tokens) kết hợp với cross-attention để khai thác có chọn lọc thông
 tin từ đặc trưng đầu vào. Thay vì chuyển toàn bộ đầu vào thông qua một phép chiếu trực tiếp,
@@ -113,7 +113,7 @@ Luận văn này đánh giá có hệ thống theo độ đo AUC/uAUC và đối
 Luận văn hướng đến hai mục tiêu chính.
 
 \textbf{Mục tiêu 1 -- Xây dựng mô-đun căn chỉnh Q-Former cho tín hiệu cộng tác.} Luận văn
-thiết kế và hiện thực CoQLLM, một mô-đun tích hợp tín hiệu CF vào LLM thông qua cầu nối Q-Former,
+thiết kế và hiện thực CoQLLM, một mô-đun tích hợp tín hiệu CF vào LLM thông qua mô-đun căn chỉnh Q-Former,
 thay thế lớp chiếu MLP của CoLLM. Cụ thể, kiến trúc gồm có ba thành phần chính: mô hình MF đóng băng,
 Q-Former làm mô-đun căn chỉnh, và LLM Vicuna-7B-v1.5~\cite{vicuna2023} kết hợp LoRA~\cite{lora2021}.
 Tín hiệu cộng tác được xử lý bởi Q-Former trước khi được đưa vào LLM dưới dạng soft token.

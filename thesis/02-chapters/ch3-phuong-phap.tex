@@ -4,9 +4,9 @@
 
 Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
 Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
-Q-Former như một cầu nối căn chỉnh có khả năng tổng hợp nhiều nguồn tín hiệu cộng tác trước
+Q-Former như một mô-đun căn chỉnh có khả năng tổng hợp nhiều nguồn tín hiệu cộng tác trước
 khi chuyển chúng thành soft token cho LLM. Các thành phần của mô hình được trình bày lần lượt:
-kiến trúc tổng thể, mô-đun MF, cầu nối Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
+kiến trúc tổng thể, mô-đun MF, mô-đun căn chỉnh Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
 huấn luyện ba giai đoạn.
 
 \section{Kiến trúc tổng thể}
@@ -27,7 +27,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
     \item \textbf{Mô-đun phân rã ma trận (MF)} cung cấp embedding cộng tác cho người dùng,
     sản phẩm mục tiêu và các sản phẩm trong lịch sử tương tác.
 
-    \item \textbf{Cầu nối Q-Former} biến đổi mỗi véc-tơ cộng tác thành các soft token bằng một
+    \item \textbf{Mô-đun căn chỉnh Q-Former} biến đổi mỗi véc-tơ cộng tác thành các soft token bằng một
     tập truy vấn học được (self-attention giữa các truy vấn và cross-attention tới véc-tơ cộng
     tác).
 
@@ -38,8 +38,8 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \begin{figure}[htp]
 \centering
 \includegraphics[width=12cm]{images/coqllm-architecture.drawio.png}
-\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; cầu nối
-Q-Former căn chỉnh tín hiệu này thành các soft token được chèn vào prompt; LLM thực hiện dự
+\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; mô-đun căn chỉnh
+Q-Former chuyển tín hiệu này thành các soft token được chèn vào prompt; LLM thực hiện dự
 đoán. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể LoRA được cập nhật theo từng giai đoạn
 huấn luyện.}
 \label{fig:kien-truc}
@@ -49,7 +49,7 @@ Phần lớn tham số của hệ thống được giữ cố định trong quá
 LLM đều được đóng băng, trong khi Q-Former, các lớp chiếu và LoRA~\cite{lora2021} được cập
 nhật ở các giai đoạn tương ứng. Tín hiệu cộng tác chỉ đi vào LLM qua soft token trong không
 gian đầu vào, không thông qua cơ chế sinh trọng số theo từng mẫu. Thiết kế này tách tương đối
-rõ vai trò của mô hình cộng tác, cầu nối căn chỉnh và mô hình ngôn ngữ, qua đó thuận lợi cho
+rõ vai trò của mô hình cộng tác, mô-đun căn chỉnh và mô hình ngôn ngữ, qua đó thuận lợi cho
 việc phân tích đóng góp của từng thành phần.
 
 \section{Mô-đun phân rã ma trận}
@@ -67,7 +67,7 @@ $\{e_{i'} : i' \in \mathcal{H}_u\}$.
 
 Việc huấn luyện MF tách biệt khỏi Q-Former và LLM nhằm giữ cố định nguồn tín hiệu cộng tác
 trong các thí nghiệm phía sau. Cách thiết kế này giúp giảm sự đan xen giữa thay đổi của mô
-hình cộng tác và thay đổi của cầu nối căn chỉnh, từ đó thuận lợi hơn khi phân tích nguyên
+hình cộng tác và thay đổi của mô-đun căn chỉnh, từ đó thuận lợi hơn khi phân tích nguyên
 nhân của các chênh lệch thực nghiệm. Trong phạm vi luận văn, MF được huấn luyện trên phần dữ
 liệu huấn luyện tương ứng của từng tập dữ liệu và sau đó giữ nguyên trong các giai đoạn tích
 hợp.
@@ -80,11 +80,11 @@ băng là một đánh đổi hợp lý giữa hiệu năng và chi phí. Bên c
 được huấn luyện tốt còn đóng vai trò tiên nghiệm (prior) và ràng buộc cho quá trình học soft
 token. Quan trọng hơn đối với mục tiêu phân tích của luận văn, việc cố định MF cho phép quy
 phần trần của uAUC về chất lượng embedding của MF ở nhóm người dùng/sản phẩm nguội
-(Mục~\ref{ssec:user-group}), thay vì để đóng góp của MF và của cầu nối căn chỉnh trộn lẫn với
+(Mục~\ref{ssec:user-group}), thay vì để đóng góp của MF và của mô-đun căn chỉnh trộn lẫn với
 nhau. Việc mở băng và tinh chỉnh đồng thời MF được ghi nhận như một hướng khảo sát trong
 tương lai.
 
-\section{Cầu nối Q-Former}
+\section{Mô-đun căn chỉnh Q-Former}
 \label{sec:qformer}
 
 \subsection{Động cơ lựa chọn Q-Former}
@@ -115,14 +115,14 @@ so với một hàm pointwise duy nhất.
 Cần nói rõ giới hạn của lập luận này để tránh phóng đại. Lợi thế của Q-Former ở đây không đến
 từ khả năng nén như trong thị giác: mỗi sản phẩm được mã hóa từ \textit{một} véc-tơ cộng tác
 duy nhất, nên cross-attention chủ yếu đóng vai một phép đọc có học đối với véc-tơ đó (chi tiết
-ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của cầu nối vì thế nằm ở tập truy vấn học được,
+ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của mô-đun căn chỉnh vì thế nằm ở tập truy vấn học được,
 sự phối hợp qua self-attention và độ sâu của phép biến đổi, chứ không nằm ở việc gộp nhiều
 nguồn tín hiệu bên trong Q-Former.
 
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
 
-CoQLLM xây dựng cầu nối dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. Mô hình sử
+CoQLLM xây dựng mô-đun căn chỉnh dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. Mô hình sử
 dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in \mathbb{R}^{Q \times d_{\text{model}}}$,
 với $d_{\text{model}} = 768$. Nhánh văn bản được khởi tạo từ \texttt{bert-base-uncased} và
 được sử dụng trong các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu
@@ -156,7 +156,7 @@ là một véc-tơ cộng tác cho mỗi lần mã hóa, cross-attention gần n
 véc-tơ đó; điều tạo ra $Q$ biểu diễn khác nhau chính là tập truy vấn học được (mỗi truy vấn
 khởi tạo riêng) cùng self-attention phối hợp giữa chúng. Vì vậy, luận văn xem \textit{tập truy
 vấn học được và self-attention} -- chứ không phải khả năng nén hay việc gộp nhiều nguồn bên
-trong Q-Former -- là thành phần quan trọng của cầu nối căn chỉnh.
+trong Q-Former -- là thành phần quan trọng của mô-đun căn chỉnh.
 
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
@@ -176,7 +176,7 @@ Nhờ cơ chế này, tín hiệu cộng tác được đưa vào cùng không g
 cần thay đổi trực tiếp trọng số backbone LLM theo từng mẫu. Đây là điểm khác với
 CoRA~\cite{cora2024}, nơi biểu diễn cộng tác được sử dụng để sinh cập nhật trọng số hạng thấp
 theo từng mẫu cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
-toàn đóng băng và tập trung phân tích vai trò của cầu nối căn chỉnh. Trên nền đường soft token
+toàn đóng băng và tập trung phân tích vai trò của mô-đun căn chỉnh. Trên nền đường soft token
 này, luận văn bổ sung một kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) -- nhằm cải thiện AUC.
 
@@ -303,10 +303,10 @@ chỉ chứa tên sản phẩm, thể loại và lịch sử ở dạng văn b�
 tiêu của bước này là giúp LLM thích nghi với nhiệm vụ dự đoán nhị phân từ thông tin ngôn ngữ và
 ổn định hóa mô hình trước khi tiếp nhận soft token cộng tác.
 
-\textbf{Bước 2 -- Tinh chỉnh cầu nối căn chỉnh với tín hiệu cộng tác.} Mô hình được khởi tạo từ
+\textbf{Bước 2 -- Tinh chỉnh mô-đun căn chỉnh với tín hiệu cộng tác.} Mô hình được khởi tạo từ
 checkpoint của Bước 1. LoRA được giữ cố định, trong khi Q-Former và các lớp chiếu được cập nhật
 để học cách đưa biểu diễn cộng tác vào LLM dưới dạng soft token -- tách bạch phần ``ngôn ngữ''
-(LoRA, học ở Bước 1) khỏi phần ``cộng tác'' (cầu nối căn chỉnh, học ở Bước 2). Đây cũng là bước
+(LoRA, học ở Bước 1) khỏi phần ``cộng tác'' (mô-đun căn chỉnh, học ở Bước 2). Đây cũng là bước
 duy nhất kích hoạt kỹ thuật điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}). Nhãn giám sát là ``Yes''/``No'' tương ứng với nhãn
 CTR, và checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
@@ -322,7 +322,7 @@ Chương~\ref{Chapter4}.
 \label{sec:ket-chuong-3}
 
 Chương này đã trình bày CoQLLM như một kiến trúc tích hợp tín hiệu cộng tác vào LLM thông qua
-cầu nối Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former khai triển mỗi
+mô-đun căn chỉnh Q-Former. Khác với phép ánh xạ pointwise bằng MLP của CoLLM, Q-Former khai triển mỗi
 véc-tơ cộng tác thành nhiều kênh biểu diễn bằng tập truy vấn học được và self-attention trước
 khi chuyển chúng thành soft token. Trên nền kiến trúc này, luận văn bổ sung điều kiện hóa truy
 vấn theo người dùng nhằm cải thiện AUC. Chương cũng ghi nhận biểu diễn đa token như một hệ quả

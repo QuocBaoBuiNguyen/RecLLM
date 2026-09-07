@@ -5,12 +5,12 @@
 \section{Tóm tắt đóng góp}
 \label{sec:tom-tat-dong-gop}
 
-Luận văn đặt ra câu hỏi: liệu cầu nối Q-Former -- với cơ chế cross-attention có kiểm
+Luận văn đặt ra câu hỏi: liệu mô-đun căn chỉnh Q-Former -- với cơ chế cross-attention có kiểm
 soát -- có thể căn chỉnh tín hiệu cộng tác vào không gian ngữ nghĩa của LLM hiệu quả
 hơn mô-đun chiếu MLP của CoLLM hay không? Để trả lời, luận văn thiết kế, hiện thực và đánh
 giá mô hình CoQLLM, đóng góp theo hai hướng đã phát biểu ở Mục~\ref{sec:dong-gop}:
 
-\textbf{Đóng góp 1: Cầu nối Q-Former được thích nghi và tăng cường cho bài toán gợi ý.}
+\textbf{Đóng góp 1: Mô-đun căn chỉnh Q-Former được thích nghi và tăng cường cho bài toán gợi ý.}
 CoQLLM thay thế mô-đun chiếu MLP pointwise của CoLLM bằng kiến trúc Q-Former, trong đó embedding
 cộng tác của sản phẩm mục tiêu và của các sản phẩm trong lịch sử thay thế đặc trưng ảnh làm đầu
 vào cross-attention, tín hiệu người dùng được đưa vào qua điều kiện hóa truy vấn, và toàn bộ
@@ -19,7 +19,7 @@ kiện hóa truy vấn theo người dùng, cùng với biểu diễn đa token 
 nhiều truy vấn. Kết quả chi tiết được trình bày ở Chương~\ref{Chapter4}.
 
 \textbf{Đóng góp 2: Đánh giá có hệ thống theo độ đo AUC/uAUC trên hai tập dữ liệu.}
-Luận văn đánh giá cầu nối Q-Former trên bài toán CTR với AUC và uAUC -- cùng quy trình với
+Luận văn đánh giá mô-đun căn chỉnh Q-Former trên bài toán CTR với AUC và uAUC -- cùng quy trình với
 CoLLM -- trên MovieLens-1M và Amazon-Book, cho phép so sánh trực tiếp với CoLLM, BinLLM và
 CoRA. Phân tích ablation tách biệt đóng góp của từng kỹ thuật, và phân rã warm/cold làm rõ
 trần uAUC nằm ở chất lượng embedding MF.
@@ -45,7 +45,7 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
     nâng khả năng phân biệt \textit{giữa} các người dùng (AUC) và gần trung tính với xếp hạng
     \textit{trong} từng người dùng (uAUC), đúng như phân tích khác biệt AUC--uAUC.
 
-    \item \textbf{Trần uAUC nằm ở MF teacher, không phải cầu nối.} Phân rã warm/cold trên
+    \item \textbf{Trần uAUC nằm ở MF teacher, không phải mô-đun căn chỉnh.} Phân rã warm/cold trên
     MovieLens-1M cho thấy uAUC nhóm warm cao hơn hẳn nhóm cold ($0{,}7254$ vs $0{,}5969$), cho
     thấy hướng cải thiện tiếp theo nằm ở chất lượng embedding MF cho người dùng/sản phẩm nguội
     (cold).
@@ -65,7 +65,7 @@ Luận văn nêu rõ các hạn chế sau một cách minh bạch:
     đóng góp của cấu trúc Q-Former. Cùng với các ablation thành phần khác (đa token, tách
     projector), đây là phần thực nghiệm còn để ngỏ.
 
-    \item \textbf{Chi phí tính toán cao hơn CoLLM:} Cầu nối Q-Former làm tăng chi phí huấn
+    \item \textbf{Chi phí tính toán cao hơn CoLLM:} Mô-đun căn chỉnh Q-Former làm tăng chi phí huấn
     luyện so với lớp MLP đơn giản của CoLLM (dù không sinh trọng số theo từng mẫu như CoRA).
 
     \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone LLM khác họ, và trên
@@ -73,7 +73,7 @@ Luận văn nêu rõ các hạn chế sau một cách minh bạch:
     khác CoQLLM chọn theo uAUC) -- giới hạn khả năng so sánh thuần về cơ chế căn chỉnh.
 
     \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
-    người dùng/sản phẩm nguội, không phải bởi cầu nối.
+    người dùng/sản phẩm nguội, không phải bởi mô-đun căn chỉnh.
 \end{enumerate}
 
 \section{Hướng nghiên cứu tương lai}
@@ -114,5 +114,5 @@ Từ các hạn chế và quan sát trên, luận văn đề xuất những hư�
     \item Khảo sát hướng sinh trọng số theo từng mẫu kiểu CoRA như một đường \textit{bổ sung} cho soft
     token (chưa hiện thực trong luận văn này) để so sánh trực tiếp hai cơ chế đưa tín hiệu cộng tác vào LLM.
     \item Khảo sát các backbone LLM khác (Llama-3, Mistral) để kiểm chứng tính tổng
-    quát của cầu nối Q-Former.
+    quát của mô-đun căn chỉnh Q-Former.
 \end{itemize}
