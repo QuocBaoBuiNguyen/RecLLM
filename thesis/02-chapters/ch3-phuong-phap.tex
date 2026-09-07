@@ -128,15 +128,45 @@ việc phân tích đóng góp của từng thành phần.
 \section{Mô-đun phân rã ma trận}
 \label{sec:mf}
 
-Mô-đun MF đóng vai trò cung cấp biểu diễn cộng tác đầu vào cho CoQLLM. Từ ma trận tương tác
-người dùng--sản phẩm, mô hình học các embedding $e_u, e_i \in \mathbb{R}^{d}$ sao cho mức độ
-tương thích giữa hai véc-tơ phản ánh sở thích của người dùng, đo bằng tích vô hướng
-$e_u^\top e_i$. MF được huấn luyện bằng mục tiêu xếp hạng cặp BPR~\cite{bpr2009} và được đóng
-băng trước khi tích hợp với các thành phần còn lại.
+Mô-đun MF đóng vai trò cung cấp biểu diễn cộng tác đầu vào cho CoQLLM. Gọi $\mathcal{U}$ và
+$\mathcal{I}$ lần lượt là tập người dùng và tập sản phẩm; tương tác quan sát được biểu diễn
+bằng ma trận $\mathbf{R} \in \{0,1\}^{|\mathcal{U}| \times |\mathcal{I}|}$, trong đó
+$R_{ui}=1$ khi người dùng $u$ có tương tác dương với sản phẩm $i$ (trong luận văn là đánh giá
+$\ge 4$ sao, chi tiết ở Mục~\ref{ssec:dataset}).
 
-Ba nhóm tín hiệu được trích xuất từ MF gồm: (i)~embedding người dùng $e_u$; (ii)~embedding
+Phân rã ma trận~\cite{mf2009} gán cho mỗi người dùng $u$ và mỗi sản phẩm $i$ một véc-tơ ẩn
+(embedding) $e_u, e_i \in \mathbb{R}^{d}$, rồi ước lượng mức độ ưa thích bằng tích vô hướng
+giữa hai véc-tơ:
+\begin{equation}\label{eq:mf-score}
+\hat{y}_{ui} \;=\; e_u^\top e_i \;=\; \sum_{k=1}^{d} e_{u,k}\, e_{i,k}.
+\end{equation}
+Công thức~\eqref{eq:mf-score} có thể được mở rộng với các hệ số điều chỉnh (bias) theo người
+dùng và sản phẩm, $\hat{y}_{ui} = \mu + b_u + b_i + e_u^\top e_i$~\cite{mf2009}; luận văn dùng
+dạng tích vô hướng cơ bản làm nguồn tín hiệu cộng tác, với chiều ẩn $d = 256$.
+
+Vì bài toán được đặt dưới dạng dự đoán tương tác nhị phân và được đánh giá bằng các độ đo xếp
+hạng (Mục~\ref{ssec:do-do}), MF được huấn luyện bằng mục tiêu xếp hạng cặp
+BPR~\cite{bpr2009}. Với mỗi người dùng $u$, một sản phẩm dương $i$ (đã tương tác) và một sản
+phẩm âm $j$ (lấy mẫu từ các sản phẩm chưa tương tác), BPR khuyến khích điểm của cặp dương cao
+hơn cặp âm:
+\begin{equation}\label{eq:bpr}
+\mathcal{L}_{\text{BPR}} \;=\; -\!\!\sum_{(u,i,j)\in\mathcal{D}_S}\!\!
+  \ln \sigma\!\big(\hat{y}_{ui} - \hat{y}_{uj}\big) \;+\; \lambda \lVert \Theta \rVert^2,
+\end{equation}
+trong đó $\sigma$ là hàm sigmoid, $\Theta = \{e_u, e_i\}$ là tập tham số embedding, $\lambda$
+là hệ số điều hòa, và $\mathcal{D}_S$ là tập các bộ ba $(u,i,j)$ được lấy mẫu. Việc tối ưu
+hiệu số $\hat{y}_{ui} - \hat{y}_{uj}$ tương đương với tối đa hóa một xấp xỉ khả vi của AUC, do
+đó phù hợp với độ đo đánh giá của luận văn.
+
+Sau khi huấn luyện, MF được \textit{đóng băng} và ba nhóm tín hiệu được trích xuất từ bảng
+embedding đã học để đưa vào mô-đun căn chỉnh: (i)~embedding người dùng $e_u$; (ii)~embedding
 sản phẩm mục tiêu $e_i$; và (iii)~embedding của các sản phẩm trong lịch sử tương tác
-$\{e_{i'} : i' \in \mathcal{H}_u\}$.
+$\{e_{i'} : i' \in \mathcal{H}_u\}$. Việc dùng một mô hình cộng tác đã huấn luyện làm nguồn
+embedding đầu vào cũng là điểm khởi đầu chung của các phương pháp tích hợp CF--LLM như
+CoLLM~\cite{collm2023} và BinLLM~\cite{binllm2024}; khác biệt giữa các phương pháp nằm ở
+\textit{cách} đưa những embedding này vào LLM (Chương~\ref{Chapter2}), không phải ở nguồn
+embedding. Ở vị trí này, MF có thể được thay bằng các mô hình cộng tác mạnh hơn như
+LightGCN~\cite{lightgcn2020}.
 
 Việc huấn luyện MF tách biệt khỏi Q-Former và LLM nhằm giữ cố định nguồn tín hiệu cộng tác
 trong các thí nghiệm phía sau. Cách thiết kế này giúp giảm sự đan xen giữa thay đổi của mô
