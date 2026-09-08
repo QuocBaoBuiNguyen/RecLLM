@@ -36,7 +36,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 
 \begin{figure}[tbp]
 \centering
-\resizebox{0.88\textwidth}{!}{%
+\resizebox{0.84\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\footnotesize, >={Stealth[length=2mm]},
   frozen/.style={trapezium, trapezium left angle=70, trapezium right angle=70,
@@ -53,16 +53,16 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 % ---- cột trái: MF -> item CF ----
 \node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (\cx,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
 \node[note, below=1mm of mf]{\textit{Đầu vào:} người dùng $u$, lịch sử $\mathcal{H}_u$, sản phẩm $i$};
-\node[cfb, minimum width=22mm] (cf) at (2.4,2.2) {item CF $e$};
-\draw[arr] (mf.west) -| (cf.south);
+\node[cfb, minimum width=24mm] (cf) at (2.4,2.2) {Véc-tơ CF $e$};
+\draw[arr, rounded corners=3pt] (mf.north) -- ++(0,0.3) -| (cf.south);
 % ---- learned queries (dưới, vào Self-Attention) ----
-\tokrow{(\cx,1.7)}{lq}{teal!45}{orange!55}{violet!55}
+\tokrow{(\cx,1.5)}{lq}{teal!45}{orange!55}{violet!55}
 \node[note, below=0.4mm of lq]{learned queries};
 \node[lbl, right=2mm of lq, align=left, text width=30mm]{điều kiện hóa truy vấn $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
 % ---- Q-Former: các khối bên trong ----
 \node[qbar, fill=orange!34] (qsa) at (\cx,2.9) {Self-Attention};
-\node[qbar, fill=orange!48, above=3mm of qsa] (qca) {Cross-Attention};
-\node[qbar, fill=orange!28, above=3mm of qca] (qff) {Feed-Forward};
+\node[qbar, fill=orange!48, above=5mm of qsa] (qca) {Cross-Attention};
+\node[qbar, fill=orange!28, above=5mm of qca] (qff) {Feed-Forward};
 \begin{scope}[on background layer]
   \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12, fit=(qsa)(qca)(qff), inner sep=5mm] (qf) {};
 \end{scope}
@@ -74,32 +74,32 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \draw[arr, rounded corners=3pt] (cf.north) |- (qca.west);  % item CF -> Cross-Attention (hông, dây thẳng)
 \node[lbl, anchor=south east] at ($(qca.west)+(-1mm,1mm)$){tín hiệu CF};
 % ---- spine dọc: Lớp chiếu -> soft token -> prompt -> LLM ----
-\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,6.1) {Lớp chiếu $W_{\text{proj}}$\,\fire};
+\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,6.5) {Linear\,\fire};
 \draw[arr] (qff) -- (lin);
-\tokrow{(\cx,7.2)}{st}{teal!45}{orange!55}{violet!55}
+\tokrow{(\cx,7.6)}{st}{teal!45}{orange!55}{violet!55}
 \node[note, right=2mm of st, align=left]{Soft token $[8,768]$};
 \draw[arr] (lin) -- (st);
 % prompt (kiểu CoLLM; ô cam = vị trí chèn soft token CF)
-\node[io, text width=76mm] (prompt) at (\cx,8.8)
+\node[io, text width=76mm] (prompt) at (\cx,9.2)
   {\textbf{Prompt (chỉ dẫn)}\\[1.5pt]
    \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
    interaction-history signals are \hlcf{ItemIDList}. Predict whether the user would enjoy
    \ph{teal!55!black}{TargetItemTitle}. \hlcf{TargetItemID} Answer with ``Yes''/``No''. \texttt{ASSISTANT:}};
 \draw[arr] (st) -- (prompt);
 % LLM + LoRA
-\node[frozen, trapezium stretches=true, minimum width=82mm, minimum height=10mm] (llm) at (\cx,10.7)
+\node[frozen, trapezium stretches=true, minimum width=82mm, minimum height=10mm] (llm) at (\cx,11.1)
   {\textbf{LLM Vicuna-7B-v1.5}\,\snow};
 \node[yb, right=8mm of llm, minimum width=20mm] (lora) {\fire\,\textbf{LoRA}};
 \draw[->, thick, orange!75!black] (lora.west) to[out=180,in=0] (llm.east);
 \draw[arr] (prompt) -- (llm);
 % output
-\node[outb] (o) at (\cx,12.1) {\textbf{Yes / No}\ (CTR)};
+\node[outb] (o) at (\cx,12.5) {\textbf{Yes / No}\ (CTR)};
 \draw[arr] (llm) -- (o);
 % ---- legend (tiếng Việt, gọn) ----
 \node[draw, rounded corners, align=left, font=\scriptsize, anchor=north, inner sep=4pt] at (\cx,-1.4)
   {\tikz\filldraw[fill=icefill,draw=iceline](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
    \tikz\filldraw[fill=orange!25,draw=orange!80!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
-   \tikz\filldraw[fill=iceline,draw=iceline!80!black](0,0)rectangle(3.2mm,3.2mm);\ item CF\quad
+   \tikz\filldraw[fill=iceline,draw=iceline!80!black](0,0)rectangle(3.2mm,3.2mm);\ véc-tơ CF\quad
    \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ đầu ra\\[3pt]
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
@@ -213,7 +213,7 @@ lượng token hay việc gộp nhiều nguồn tín hiệu bên trong Q-Former.
 CoQLLM xây dựng mô-đun căn chỉnh dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}; việc
 dùng Q-Former làm cầu nối giữa tín hiệu cộng tác và LLM trong bài toán gợi ý kế thừa ý tưởng
 của ILM~\cite{ilm2024}. Mô hình sử dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in
-\mathbb{R}^{Q \times d_{\text{model}}}$ với $d_{\text{model}} = 768$, xếp chồng $L = 4$ lớp,
+\mathbb{R}^{Q \times d_{\text{qf}}}$ với $d_{\text{qf}} = 768$, xếp chồng $L = 4$ lớp,
 mỗi lớp có $8$ đầu attention; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased} và được dùng
 cho các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu diễn
 (Mục~\ref{ssec:stage1}). Hình~\ref{fig:qformer} minh họa cấu trúc bên trong.
@@ -221,8 +221,8 @@ cho các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn ti�
 \textbf{Kiến trúc một lớp.} Véc-tơ cộng tác $e \in \mathbb{R}^{d_{\text{cf}}}$ của sản phẩm cần
 mã hóa trước hết được chiếu về không gian truy vấn thành một ``token'' đầu vào:
 \begin{equation}\label{eq:cf-proj}
-\mathbf{H} = e\, W_{\text{cf}} \in \mathbb{R}^{1 \times d_{\text{model}}}, \qquad
-W_{\text{cf}} \in \mathbb{R}^{d_{\text{cf}} \times d_{\text{model}}}.
+\mathbf{H} = e\, W_{\text{cf}} \in \mathbb{R}^{1 \times d_{\text{qf}}}, \qquad
+W_{\text{cf}} \in \mathbb{R}^{d_{\text{cf}} \times d_{\text{qf}}}.
 \end{equation}
 Ký hiệu phép attention có tỉ lệ (scaled dot-product) là
 \begin{equation}\label{eq:attn}
@@ -247,7 +247,7 @@ diễn; bước~\eqref{eq:qf-ca} là \textit{cross-attention} từ truy vấn đ
 $\mathbf{H}$; bước~\eqref{eq:qf-ffn} là mạng truyền thẳng theo vị trí (feed-forward). Sau $L$
 lớp, đầu ra là khối truy vấn
 \begin{equation}\label{eq:qf-out}
-\mathbf{Z} = \mathbf{Q}^{(L)} = \text{cf\_q} \in \mathbb{R}^{Q \times d_{\text{model}}}.
+\mathbf{Z} = \mathbf{Q}^{(L)} = \text{cf\_q} \in \mathbb{R}^{Q \times d_{\text{qf}}}.
 \end{equation}
 
 \textbf{Lựa chọn số truy vấn.} Số truy vấn $Q = 8$ được chọn dựa trên khảo sát của
@@ -279,10 +279,10 @@ mã hóa tín hiệu cộng tác, và việc tăng thêm không những không c
 \end{scope}
 \node[anchor=west, font=\footnotesize\bfseries] at ($(blk.east)+(2mm,0)$) {$\times\,L=4$ lớp};
 \node[io, left=20mm of ca, align=center] (h)
-  {Véc-tơ CF\\ $\mathbf{H}=e\,W_{\text{cf}}$\\ $(1\times d_{\text{model}})$};
+  {Véc-tơ CF\\ $\mathbf{H}=e\,W_{\text{cf}}$\\ $(1\times d_{\text{qf}})$};
 \draw[arr] (h.east) -- (ca.west);
 \tokrow{($(ff.north)+(0,11mm)$)}{z}{teal!45}{orange!55}{violet!55}
-\node[font=\scriptsize, above=0.5mm of z] {Đầu ra $\mathbf{Z}=\text{cf\_q}$ ($Q\times d_{\text{model}}$)};
+\node[font=\scriptsize, above=0.5mm of z] {Đầu ra $\mathbf{Z}=\text{cf\_q}$ ($Q\times d_{\text{qf}}$)};
 \draw[arr] (ff) -- (z);
 \node[lbl, right=2mm of z, align=left] {$\to$ lớp chiếu $W_{\text{proj}}$\\ $\to$ soft token};
 \end{tikzpicture}%
@@ -312,8 +312,8 @@ trong Q-Former -- là thành phần quan trọng của mô-đun căn chỉnh.
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
 
-Đầu ra $\mathbf{Z}$ của Q-Former được chiếu từ không gian $d_{\text{model}}$ sang không gian
-embedding của LLM bằng lớp tuyến tính $W_{\text{proj}} \in \mathbb{R}^{d_{\text{model}} \times
+Đầu ra $\mathbf{Z}$ của Q-Former được chiếu từ không gian $d_{\text{qf}}$ sang không gian
+embedding của LLM bằng lớp tuyến tính $W_{\text{proj}} \in \mathbb{R}^{d_{\text{qf}} \times
 d_{\text{LLM}}}$. Kết quả là $Q$ soft token được chèn vào prompt tại vị trí dành cho biểu diễn
 cộng tác.
 
@@ -343,7 +343,7 @@ người dùng trước khi đưa truy vấn vào Q-Former:
 \end{equation}
 
 trong đó $g_u(e_u) = e_u W_u$ là một lớp chiếu tuyến tính (với $W_u \in \mathbb{R}^{d_{\text{cf}}
-\times d_{\text{model}}}$) từ không gian MF sang không gian truy vấn, được \textit{khởi tạo bằng
+\times d_{\text{qf}}}$) từ không gian MF sang không gian truy vấn, được \textit{khởi tạo bằng
 không} (zero-init: $W_u = \mathbf{0}$). Với cách khởi tạo này, ở bước đầu cơ chế không làm
 thay đổi truy vấn gốc, tức $\tilde{\mathbf{Q}} = \mathbf{Q}$; mức dịch chuyển chỉ được học khi
 mang lại lợi ích cho hàm mục tiêu trong quá trình huấn luyện.

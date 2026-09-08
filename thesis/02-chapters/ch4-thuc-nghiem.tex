@@ -101,7 +101,7 @@ khoảng cách ngữ nghĩa CF--LLM).
     dẫn USER/ASSISTANT.
     \item \textbf{MF}: phân rã ma trận huấn luyện bằng entropy chéo nhị phân (BCE), chiều ẩn $d = 256$, được huấn
     luyện và đóng băng trước khi tích hợp.
-    \item \textbf{Q-Former}: $Q = 8$ truy vấn, $d_{\text{model}} = 768$, $8$ đầu attention,
+    \item \textbf{Q-Former}: $Q = 8$ truy vấn, $d_{\text{qf}} = 768$, $8$ đầu attention,
     $4$ lớp; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased}.
     \item \textbf{LoRA}~\cite{lora2021}: hạng $r = 8$, $\alpha = 16$, dropout $0{,}05$, áp
     dụng trên các lớp $[q,v]$ của LLM.
