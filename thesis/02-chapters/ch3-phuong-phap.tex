@@ -146,44 +146,41 @@ dạng tích vô hướng cơ bản làm nguồn tín hiệu cộng tác, với 
 Do nhãn tương tác được nhị phân hóa ($y_{ui} \in \{0,1\}$, với $y_{ui}=1$ khi đánh giá $\ge 4$
 sao), MF được huấn luyện như một bộ phân loại nhị phân theo hàm mất mát entropy chéo nhị phân
 (binary cross-entropy -- BCE). Điểm tương thích $z_{ui} = e_u^\top e_i$ được đưa qua hàm
-sigmoid $\sigma$ để cho xác suất dự đoán $\hat{p}_{ui} = \sigma(z_{ui})$, và mất mát trên các
-cặp $(u,i)$ có nhãn là:
+sigmoid $\sigma$ để cho xác suất dự đoán $\hat{p}_{ui} = \sigma(z_{ui})$. Hàm mất mát trên các
+cặp $(u,i)$ được xác định như sau:
 \begin{equation}\label{eq:bce-mf}
 \mathcal{L}_{\text{BCE}} \;=\; -\!\!\sum_{(u,i)\in\mathcal{D}}\!\big[\,
   y_{ui}\log \hat{p}_{ui} + (1-y_{ui})\log\!\big(1-\hat{p}_{ui}\big) \,\big],
 \end{equation}
 trong đó $\mathcal{D}$ là tập các cặp người dùng--sản phẩm quan sát được (kèm nhãn). Việc tối
-ưu $\mathcal{L}_{\text{BCE}}$ giúp học các embedding sao cho điểm $z_{ui}$ phản ánh khả năng
-người dùng thích sản phẩm, tạo nguồn tín hiệu cộng tác cho các thành phần phía sau.
+ưu $\mathcal{L}_{\text{BCE}}$ giúp mô hình học được các embedding sao cho điểm $z_{ui}$ phản ánh 
+mức độ phù hợp giữa người dùng và sản phẩm, tạo nguồn tín hiệu cộng tác cho các thành phần phía sau.
 
 Sau khi huấn luyện, MF được \textit{đóng băng} và ba nhóm tín hiệu được trích xuất từ bảng
 embedding đã học để đưa vào mô-đun căn chỉnh: (i)~embedding người dùng $e_u$; (ii)~embedding
 sản phẩm mục tiêu $e_i$; và (iii)~embedding của các sản phẩm trong lịch sử tương tác
-$\{e_{i'} : i' \in \mathcal{H}_u\}$. Việc dùng một mô hình cộng tác đã huấn luyện làm nguồn
-embedding đầu vào cũng là điểm khởi đầu chung của các phương pháp tích hợp CF--LLM như
-CoLLM~\cite{collm2023} và BinLLM~\cite{binllm2024}; khác biệt giữa các phương pháp nằm ở
-\textit{cách} đưa những embedding này vào LLM (Chương~\ref{Chapter2}), không phải ở nguồn
-embedding. Ở vị trí này, MF có thể được thay bằng các mô hình cộng tác mạnh hơn như
-LightGCN~\cite{lightgcn2020}.
+$\{e_{i'} : i' \in \mathcal{H}_u\}$. Việc sử dụng một mô hình cộng tác đã được huấn luyện trước để
+cung cấp embedding đầu vào cũng là điểm chung của các phương pháp tích hợp CF--LLM như
+CoLLM~\cite{collm2023} và BinLLM~\cite{binllm2024}. Sự khác biệt chủ yếu giữa các phương pháp này nằm ở
+cách các embedding cộng tác được đưa vào LLM, thay vì ở nguồn tạo ra embedding. Trong thiết kế này,
+MF cũng có thể được thay thế bằng các mô hình cộng tác mạnh hơn như LightGCN~\cite{lightgcn2020}.
 
-Việc huấn luyện MF tách biệt khỏi Q-Former và LLM nhằm giữ cố định nguồn tín hiệu cộng tác
-trong các thí nghiệm phía sau. Cách thiết kế này giúp giảm sự đan xen giữa thay đổi của mô
-hình cộng tác và thay đổi của mô-đun căn chỉnh, từ đó thuận lợi hơn khi phân tích nguyên
-nhân của các chênh lệch thực nghiệm. Trong phạm vi luận văn, MF được huấn luyện trên phần dữ
-liệu huấn luyện tương ứng của từng tập dữ liệu và sau đó giữ nguyên trong các giai đoạn tích
-hợp.
+MF được huấn luyện độc lập với Q-Former và LLM nhằm cố định nguồn tín hiệu cộng tác
+trong các thí nghiệm phía sau. Cách thiết kế này giúp tách biệt ảnh hưởng của mô hình
+cộng tác khỏi ảnh hưởng của mô-đun căn chỉnh, từ đó thuận lợi hơn trong việc phân tích nguyên nhân
+của các khác biệt về kết quả thực nghiệm. Trong phạm vi luận văn, MF được huấn luyện trên phần dữ
+liệu huấn luyện tương ứng của từng tập dữ liệu và sau đó được giữ cố định trong toàn bộ các giai đoạn
+tích hợp tiếp theo.
 
-Việc giữ MF đóng băng trong các giai đoạn sau nhất quán với cấu hình mặc định của
-CoLLM~\cite{collm2023}. Trong khảo sát của CoLLM, việc tiếp tục tinh chỉnh mô hình cộng tác
-cùng với lớp chiếu có thể cải thiện nhẹ kết quả trong phần lớn trường hợp, nhưng làm tăng
+Việc giữ MF đóng băng trong các giai đoạn sau cũng nhất quán với cấu hình mặc định của
+CoLLM~\cite{collm2023}. Kết quả khảo sát trong CoLLM cho thấy việc tiếp tục tinh chỉnh
+mô hình cộng tác cùng với lớp chiếu có thể cải thiện nhẹ kết quả, nhưng làm tăng
 đáng kể chi phí huấn luyện (khoảng năm lần trên MovieLens-1M) và làm chậm hội tụ; vì vậy đóng
-băng là một đánh đổi hợp lý giữa hiệu năng và chi phí. Bên cạnh đó, một mô hình cộng tác đã
-được huấn luyện tốt còn đóng vai trò tiên nghiệm (prior) và ràng buộc cho quá trình học soft
-token. Quan trọng hơn đối với mục tiêu phân tích của luận văn, việc cố định MF cho phép quy
-phần trần của uAUC về chất lượng embedding của MF ở nhóm người dùng/sản phẩm nguội
-(Mục~\ref{ssec:user-group}), thay vì để đóng góp của MF và của mô-đun căn chỉnh trộn lẫn với
-nhau. Việc mở băng và tinh chỉnh đồng thời MF được ghi nhận như một hướng khảo sát trong
-tương lai.
+băng là một đánh đổi hợp lý giữa hiệu năng và chi phí. Bên cạnh đó, một mô hình cộng tác
+đã được huấn luyện ổn định có thể đóng vai trò như nguồn biểu diễn tham chiếu cho quá trình học soft
+token. Quan trọng hơn, việc cố định MF giúp tách biệt ảnh hưởng của chất lượng embedding cộng tác
+khỏi ảnh hưởng của mô-đun căn chỉnh, thay vì để đóng góp của MF và của mô-đun căn chỉnh trộn lẫn
+với nhau. Việc tinh chỉnh đồng thời MF được ghi nhận như một hướng khảo sát trong tương lai.
 
 \section{Mô-đun căn chỉnh Q-Former}
 \label{sec:qformer}
@@ -223,26 +220,89 @@ nguồn tín hiệu bên trong Q-Former.
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
 
-CoQLLM xây dựng mô-đun căn chỉnh dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. Mô hình sử
-dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in \mathbb{R}^{Q \times d_{\text{model}}}$,
-với $d_{\text{model}} = 768$. Nhánh văn bản được khởi tạo từ \texttt{bert-base-uncased} và
-được sử dụng trong các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu
-diễn (Mục~\ref{ssec:stage1}).
+CoQLLM xây dựng mô-đun căn chỉnh dựa trên kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}; việc
+dùng Q-Former làm cầu nối giữa tín hiệu cộng tác và LLM trong bài toán gợi ý kế thừa ý tưởng
+của ILM~\cite{ilm2024}. Mô hình sử dụng $Q = 8$ véc-tơ truy vấn học được $\mathbf{Q} \in
+\mathbb{R}^{Q \times d_{\text{model}}}$ với $d_{\text{model}} = 768$, xếp chồng $L = 4$ lớp,
+mỗi lớp có $8$ đầu attention; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased} và được dùng
+cho các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu diễn
+(Mục~\ref{ssec:stage1}). Hình~\ref{fig:qformer} minh họa cấu trúc bên trong.
 
-Trong mỗi lớp Q-Former, các truy vấn đi qua hai cơ chế attention:
+\textbf{Kiến trúc một lớp.} Véc-tơ cộng tác $e \in \mathbb{R}^{d_{\text{cf}}}$ của sản phẩm cần
+mã hóa trước hết được chiếu về không gian truy vấn thành một ``token'' đầu vào:
+\begin{equation}\label{eq:cf-proj}
+\mathbf{H} = e\, W_{\text{cf}} \in \mathbb{R}^{1 \times d_{\text{model}}}, \qquad
+W_{\text{cf}} \in \mathbb{R}^{d_{\text{cf}} \times d_{\text{model}}}.
+\end{equation}
+Ký hiệu phép attention có tỉ lệ (scaled dot-product) là
+\begin{equation}\label{eq:attn}
+\operatorname{Attn}(\mathbf{X},\mathbf{Y}) = \operatorname{softmax}\!\Big(
+\tfrac{(\mathbf{X}W_q)(\mathbf{Y}W_k)^\top}{\sqrt{d_h}}\Big)\,(\mathbf{Y}W_v),
+\end{equation}
+với $\mathbf{X}$ đóng vai truy vấn (query), $\mathbf{Y}$ đóng vai khóa--giá trị (key--value) và
+$d_h$ là chiều mỗi đầu attention. Đặt $\mathbf{Q}^{(0)} = \tilde{\mathbf{Q}}$ (tập truy vấn sau
+điều kiện hóa, Mục~\ref{ssec:user-conditioned}); mỗi lớp $\ell = 1,\dots,L$ cập nhật các truy
+vấn qua ba bước liên tiếp (kèm kết nối tắt residual và chuẩn hóa LayerNorm, lược bớt cho gọn):
+\begin{align}
+\mathbf{A}^{(\ell)} &= \mathbf{Q}^{(\ell-1)} + \operatorname{Attn}\!\big(\mathbf{Q}^{(\ell-1)},\,
+  \mathbf{Q}^{(\ell-1)}\big), \label{eq:qf-sa}\\
+\mathbf{C}^{(\ell)} &= \mathbf{A}^{(\ell)} + \operatorname{Attn}\!\big(\mathbf{A}^{(\ell)},\,
+  \mathbf{H}\big), \label{eq:qf-ca}\\
+\mathbf{Q}^{(\ell)} &= \mathbf{C}^{(\ell)} + \operatorname{FFN}\!\big(\mathbf{C}^{(\ell)}\big).
+  \label{eq:qf-ffn}
+\end{align}
+Bước~\eqref{eq:qf-sa} là \textit{self-attention} giữa các truy vấn (query đồng thời là
+$\mathbf{X}$ và $\mathbf{Y}$), cho phép chúng trao đổi thông tin và phân chia vai trò biểu
+diễn; bước~\eqref{eq:qf-ca} là \textit{cross-attention} từ truy vấn đến véc-tơ cộng tác
+$\mathbf{H}$; bước~\eqref{eq:qf-ffn} là mạng truyền thẳng theo vị trí (feed-forward). Sau $L$
+lớp, đầu ra là khối truy vấn
+\begin{equation}\label{eq:qf-out}
+\mathbf{Z} = \mathbf{Q}^{(L)} = \text{cf\_q} \in \mathbb{R}^{Q \times d_{\text{model}}}.
+\end{equation}
 
-\begin{enumerate}
-    \item \textit{Self-attention} giữa các truy vấn với nhau, cho phép các truy vấn trao đổi
-    thông tin và phối hợp vai trò biểu diễn, mỗi truy vấn đảm nhận một khía cạnh khác nhau của
-    tín hiệu cộng tác.
+\textbf{Lựa chọn số truy vấn.} Số truy vấn $Q = 8$ được chọn dựa trên khảo sát của
+ILM~\cite{ilm2024}: trên MovieLens-1M, hiệu quả gợi ý đạt đỉnh quanh $8$ query token rồi suy
+giảm mạnh khi tăng lên $16$--$32$ token. Điều này cho thấy một số lượng truy vấn nhỏ đã đủ để
+mã hóa tín hiệu cộng tác, và việc tăng thêm không những không cải thiện mà còn có thể gây hại.
 
-    \item \textit{Cross-attention} từ các truy vấn đến biểu diễn cộng tác của sản phẩm đang được
-    mã hóa: các truy vấn cùng đọc một véc-tơ cộng tác đầu vào và biến đổi nó thành nhiều kênh
-    biểu diễn khác nhau.
-\end{enumerate}
-
-Đầu ra là khối truy vấn $\mathbf{Z} = \text{cf\_q} \in \mathbb{R}^{B \times Q \times
-d_{\text{model}}}$, trong đó $B$ là kích thước batch và $Q = 8$.
+\begin{figure}[tbp]
+\centering
+\resizebox{0.72\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize, >={Stealth[length=2.2mm]},
+  qbar/.style={rectangle, rounded corners=2pt, draw=orange!80!black, align=center,
+               minimum width=42mm, minimum height=8mm, thick},
+  io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, inner sep=3pt},
+  arr/.style={->, semithick, black!65},
+  lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
+]
+\tokrow{(0,0)}{q}{teal!45}{orange!55}{violet!55}
+\node[font=\scriptsize, below=0.5mm of q] {Truy vấn (sau điều kiện hóa) $\tilde{\mathbf{Q}}$, $Q=8$};
+\node[qbar, fill=orange!30, above=11mm of q] (sa) {Self-Attention};
+\node[qbar, fill=orange!45, above=5mm of sa] (ca) {Cross-Attention};
+\node[qbar, fill=orange!24, above=5mm of ca] (ff) {Feed-Forward};
+\draw[arr] (q) -- (sa);
+\draw[arr] (sa) -- (ca);
+\draw[arr] (ca) -- (ff);
+\begin{scope}[on background layer]
+  \node[draw=black!55, dashed, thick, rounded corners=3pt, fit=(sa)(ca)(ff), inner sep=5mm] (blk) {};
+\end{scope}
+\node[anchor=west, font=\footnotesize\bfseries] at ($(blk.east)+(2mm,0)$) {$\times\,L=4$ lớp};
+\node[io, left=20mm of ca, align=center] (h)
+  {Véc-tơ CF\\ $\mathbf{H}=e\,W_{\text{cf}}$\\ $(1\times d_{\text{model}})$};
+\draw[arr] (h.east) -- (ca.west);
+\tokrow{($(ff.north)+(0,11mm)$)}{z}{teal!45}{orange!55}{violet!55}
+\node[font=\scriptsize, above=0.5mm of z] {Đầu ra $\mathbf{Z}=\text{cf\_q}$ ($Q\times d_{\text{model}}$)};
+\draw[arr] (ff) -- (z);
+\node[lbl, right=2mm of z, align=left] {$\to$ lớp chiếu $W_{\text{proj}}$\\ $\to$ soft token};
+\end{tikzpicture}%
+}
+\caption{Cấu trúc bên trong một lớp Q-Former và luồng mã hóa một véc-tơ cộng tác. Các truy vấn
+(đã điều kiện hóa) $\tilde{\mathbf{Q}}$ đi qua self-attention, rồi cross-attention tới véc-tơ CF
+$\mathbf{H}$, rồi mạng truyền thẳng; xếp chồng $L=4$ lớp cho đầu ra $\mathbf{Z}$, sau đó được
+chiếu qua $W_{\text{proj}}$ thành soft token.}
+\label{fig:qformer}
+\end{figure}
 
 Trong CoQLLM, mỗi sản phẩm (sản phẩm mục tiêu và từng sản phẩm trong lịch sử) được Q-Former mã
 hóa \textit{độc lập} từ một véc-tơ cộng tác thành $Q$ soft token. Tín hiệu người dùng không đi
@@ -292,8 +352,9 @@ người dùng trước khi đưa truy vấn vào Q-Former:
 \tilde{\mathbf{Q}} = \mathbf{Q} + g_u\big( e_u \big),
 \end{equation}
 
-trong đó $g_u$ là một lớp chiếu tuyến tính từ không gian MF sang không gian truy vấn, được
-\textit{khởi tạo bằng không} (zero-init). Với cách khởi tạo này, ở bước đầu cơ chế không làm
+trong đó $g_u(e_u) = e_u W_u$ là một lớp chiếu tuyến tính (với $W_u \in \mathbb{R}^{d_{\text{cf}}
+\times d_{\text{model}}}$) từ không gian MF sang không gian truy vấn, được \textit{khởi tạo bằng
+không} (zero-init: $W_u = \mathbf{0}$). Với cách khởi tạo này, ở bước đầu cơ chế không làm
 thay đổi truy vấn gốc, tức $\tilde{\mathbf{Q}} = \mathbf{Q}$; mức dịch chuyển chỉ được học khi
 mang lại lợi ích cho hàm mục tiêu trong quá trình huấn luyện.
 
