@@ -54,7 +54,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (\cx,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
 \node[note, below=1mm of mf]{\textit{Đầu vào:} người dùng $u$, lịch sử $\mathcal{H}_u$, sản phẩm $i$};
 \node[cfb, minimum width=24mm] (cf) at (2.4,2.2) {Véc-tơ CF $e$};
-\draw[arr, rounded corners=3pt] ($(mf.north)+(-1.5,0)$) |- (cf.east);
+\draw[arr, rounded corners=3pt] (mf.north) -- ++(0,0.25) -| (cf.west);
 % ---- learned queries (dưới, vào Self-Attention) ----
 \tokrow{(\cx,1.5)}{lq}{teal!45}{orange!55}{violet!55}
 \node[note, below=0.4mm of lq]{learned queries};
