@@ -43,7 +43,7 @@ báo cáo trên tập kiểm tra.
 \begin{itemize}
     \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP pointwise (mỗi véc-tơ cộng tác thành một token); cùng giao
     thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của mô-đun căn chỉnh
-    Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN.
+    Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN (dùng backbone Deep Interest Network -- DIN).
     \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân tín hiệu cộng tác vào LLM -- SOTA gần nhất
     theo quy trình này, có mặt trên cả hai tập dữ liệu.
 \end{itemize}
@@ -87,8 +87,8 @@ Cả hai độ đo đều được tính trên \textit{điểm dự đoán liên
 gán cho token ``Yes'' (so với ``No'') -- nên đo chất lượng \textit{xếp hạng} các mẫu theo điểm
 này, chứ không dựa trên nhãn ``Yes''/``No'' đã cứng hóa.
 
-Bổ sung: Accuracy và F1 (độ đo phân loại nhị phân), Precision@K và NDCG@K
-(độ đo xếp hạng top-K), và cosine similarity trước/sau căn chỉnh (đo mức độ thu hẹp
+Bổ sung: Accuracy và F1 (độ đo phân loại nhị phân), Precision@K và NDCG@K (Normalized Discounted Cumulative Gain;
+độ đo xếp hạng top-K), và cosine similarity trước/sau căn chỉnh (đo mức độ thu hẹp
 khoảng cách ngữ nghĩa CF--LLM).
 
 \subsection{Chi tiết cài đặt}

@@ -126,7 +126,7 @@ dự đoán nhị phân dưới dạng xác suất cho câu trả lời ``Yes'' 
 
 Quy trình huấn luyện của CoLLM gồm hai bước chính. Ở bước đầu, LoRA được tinh chỉnh trên
 phần prompt chỉ chứa thông tin văn bản để LLM thích nghi với nhiệm vụ gợi ý mà chưa sử
-dụng tín hiệu cộng tác. Ở bước sau, mô-đun CIE được huấn luyện để ánh xạ biểu diễn cộng tác
+dụng tín hiệu cộng tác. Ở bước sau, mô-đun mã hóa thông tin cộng tác (Collaborative Information Encoding -- CIE) được huấn luyện để ánh xạ biểu diễn cộng tác
 của người dùng và sản phẩm vào không gian embedding của LLM, trong khi các thành phần đã
 học ở bước trước được giữ cố định theo cấu hình mặc định.
 
@@ -141,7 +141,7 @@ tin theo mức độ liên quan với ngữ cảnh hiện tại.
 \label{ssec:sellarec}
 
 SellaRec~\cite{sellarec2024} căn chỉnh không gian cộng tác và không gian ngôn ngữ bằng học
-tương phản (contrastive learning), sử dụng hàm mục tiêu InfoNCE để kéo gần biểu diễn tương ứng
+tương phản (contrastive learning), sử dụng hàm mục tiêu InfoNCE (Info Noise-Contrastive Estimation) để kéo gần biểu diễn tương ứng
 của cùng một sản phẩm trong không gian CF và không gian ngôn ngữ;
 đồng thời đẩy xa các sản phẩm, các biểu diễn không tương ứng. Cơ chế này cung cấp một
 mục tiêu huấn luyện trực tiếp cho việc thu hẹp khoảng cách giữa hai không gian biểu diễn. Trong khi đó,
