@@ -39,77 +39,55 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  font=\footnotesize, >={Stealth[length=2.2mm]},
-  frozen/.style={trapezium, trapezium left angle=68, trapezium right angle=68,
-                 draw=iceline, fill=icefill, text=black, align=center, thick,
-                 minimum width=26mm, minimum height=11mm, inner sep=2pt},
-  io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, inner sep=3pt},
-  qbar/.style={rectangle, rounded corners=1.5pt, draw=orange!70!black, align=center,
-               minimum width=30mm, minimum height=6mm, font=\scriptsize},
-  tune/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!30, align=center, thick, inner sep=3pt},
+  font=\footnotesize, >={Stealth[length=2mm]},
+  ice/.style={rectangle, rounded corners=2pt, draw=iceline, fill=icefill, text=black, align=center, thick, inner sep=3pt},
+  yb/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!22, align=center, thick, minimum width=20mm, minimum height=7mm},
+  cfb/.style={rectangle, rounded corners=2pt, draw=iceline!80!black, fill=iceline, text=white, align=center, minimum width=24mm, minimum height=8mm, font=\scriptsize},
+  te/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, minimum width=14mm, minimum height=6mm, font=\scriptsize},
   outb/.style={rectangle, rounded corners=2pt, draw=green!55!black, fill=green!18, align=center, thick, inner sep=3pt},
-  arr/.style={->, semithick, black!65},
-  lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
+  arr/.style={->, semithick, black!65}, lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
 ]
-% central spine
-\tokrow{(5.2,8.4)}{qtok}{teal!45}{orange!55}{violet!55}
-\node[font=\scriptsize, above=0.6mm of qtok] {Truy vấn học được ($Q=8$)};
-\node[qbar, fill=orange!34] (qsa) at (5.2,6.6) {Self-Attention};
-\node[qbar, fill=orange!48, below=2mm of qsa] (qca) {Cross-Attention};
-\node[qbar, fill=orange!28, below=2mm of qca] (qff) {Feed-Forward};
-\begin{scope}[on background layer]
-  \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12,
-        fit=(qsa)(qca)(qff), inner sep=4mm] (qf) {};
-\end{scope}
-\node[anchor=west, font=\scriptsize, align=left, text=orange!45!black]
-  at ($(qf.east)+(2mm,0)$) {\textbf{Q-Former}\,\fire\\ \textnormal{(huấn luyện)}\\ \textnormal{$\times 4$ lớp}};
-\draw[arr] (qsa)--(qca);
-\draw[arr] (qca)--(qff);
-\draw[arr] (qtok) -- (qtok|-qf.north);
-% projection node
-\node[tune, below=6mm of qf.south, minimum width=34mm] (proj) {Lớp chiếu $W_{\text{proj}}$};
-\draw[arr] (qf.south) -- (proj);
-\tokrow{($(proj.south)+(0,-7mm)$)}{stok}{teal!45}{orange!55}{violet!55}
-\node[font=\scriptsize, right=1.5mm of stok, align=left] {Soft token\\ $[B,8,768]$};
-\draw[arr] (proj) -- (stok);
+\def\ax{2}\def\bx{7}
+% bottom: inputs + MF + CF emb
+\node[ice, minimum width=70mm] (mf) at (4.5,-1.5) {\textbf{Matrix Factorization (MF)}\ \ \snow\,\textit{frozen}};
+\node[font=\scriptsize, below=1.5mm of mf] (in) {\textit{inputs:} user $u$,\ history $\mathcal{H}_u$,\ target item $i$};
+\node[cfb] (cf1) at (\ax,0.4) {History item\\ CF emb};
+\node[cfb] (cf2) at (\bx,0.4) {Target item\\ CF emb};
+\draw[arr] (mf.north-|cf1) -- (cf1);
+\draw[arr] (mf.north-|cf2) -- (cf2);
+% per-item: queries -> Q-Former -> Linear
+\foreach \x/\n in {\ax/1,\bx/2}{
+  \tokrow{(\x,1.9)}{lq\n}{green!55!black!70!white}{orange!55}{violet!55}
+  \node[yb] (qf\n) at (\x,3.2) {Q-Former};
+  \node[yb, minimum height=6mm] (lin\n) at (\x,4.5) {Linear};
+  \draw[arr] (cf\n) -- (lq\n);
+  \draw[arr] (lq\n) -- (qf\n);
+  \draw[arr] (qf\n) -- (lin\n);
+}
+\node[font=\scriptsize, below=0.3mm of lq1]{Learned Queries};
+\node[font=\scriptsize, below=0.3mm of lq2]{Learned Queries};
+\node[lbl, align=center, text width=22mm] (uc) at (4.5,2.6) {user-conditioned: $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
+\draw[arr,dashed,black!45] (uc) -- (lq1);
+\draw[arr,dashed,black!45] (uc) -- (lq2);
+% interleaved LLM-input row (prompt broken at inject points)
+\def\ry{6.0}
+\node[te] (te0) at (-0.8,\ry) {text emb};
+\tokrow{(\ax,\ry)}{s1}{green!55!black!70!white}{orange!55}{violet!55}
+\node[te] (te1) at (4.5,\ry) {text emb};
+\tokrow{(\bx,\ry)}{s2}{green!55!black!70!white}{orange!55}{violet!55}
+\node[te] (te2) at (9.8,\ry) {text emb};
+\draw[arr] (lin1) -- (s1);
+\draw[arr] (lin2) -- (s2);
+\node[font=\scriptsize, below=0.3mm of s1, text=orange!60!black]{8 tokens \textit{(\textless ItemIDList\textgreater)}};
+\node[font=\scriptsize, below=0.3mm of s2, text=orange!60!black]{8 tokens \textit{(\textless TargetItemID\textgreater)}};
 % LLM
-\node[frozen, trapezium stretches=true, below=9mm of stok, minimum width=54mm] (llm)
-  {\textbf{LLM Vicuna-7B-v1.5}\;\snow};
-\draw[arr] (stok) -- (llm);
-\node[tune, right=12mm of llm] (lora) {\fire\,\textbf{LoRA}\\(huấn luyện)};
-\draw[->, thick, orange!75!black] (lora.west) to[out=180,in=0] (llm.east);
-\node[outb, below=8mm of llm] (out) {\textbf{Yes / No}\, (CTR)};
-\draw[arr] (llm) -- (out);
-% left feed: MF -> CF
-\node[io, left=34mm of qf, yshift=18mm] (inp)
-  {Người dùng $u$ \\ Lịch sử $\mathcal{H}_u$ \\ Sản phẩm mục tiêu $i$};
-\node[frozen, below=7mm of inp] (mf) {\textbf{Phân rã ma trận}\\(MF)\,\snow};
-\draw[arr] (inp) -- (mf);
-\tokrow{($(mf.south)+(0,-9mm)$)}{cftok}{blue!45}{teal!50}{violet!45}
-\node[font=\scriptsize, below=0.3mm of cftok] {$e_u,\ e_i,\ \{e_{i'}\}$};
-\draw[arr] (mf) -- (cftok);
-\draw[arr] (cftok.east) to[out=0,in=200] (qca.west);
-\node[lbl, anchor=south] at ($(cftok.east)!0.5!(qca.west)+(0,3.5mm)$) {tín hiệu CF};
-\node[lbl, left=7mm of qtok, align=right, text width=26mm] (uc)
-  {điều kiện hóa truy vấn\\ $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
-\draw[arr,dashed,black!45] (uc.east) -- (qtok.west);
-% left feed: text prompt -> LLM
-\node[io, left=20mm of llm, text width=52mm, align=left, font=\scriptsize] (prompt)
-  {\textbf{Prompt (chỉ dẫn)}\\[1pt]
-   \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
-   interaction-history signals are \ph{orange!75!black}{ItemIDList}. Predict whether the user
-   would enjoy \ph{teal!55!black}{TargetItemTitle}. \ph{orange!75!black}{TargetItemID}
-   Answer with ``Yes''/``No''. \texttt{ASSISTANT:}};
-\draw[arr] (prompt.east) -- (llm.west);
-% legend (bottom, tách khỏi Yes/No)
-\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west]
-  at ($(prompt.south west)+(0,-8mm)$)
-  {\tikz\filldraw[fill=icefill,draw=iceline](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
-   \tikz\filldraw[fill=orange!30,draw=orange!80!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
-   \tikz{\node[draw=black!45,fill=teal!45,minimum size=3.2mm,inner sep=0]{};}\ token / dữ liệu\quad
-   \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ đầu ra\\[4pt]
-   \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
-\end{tikzpicture}%
+\node[ice, minimum width=118mm, minimum height=12mm] (llm) at (4.5,7.7)
+  {\textbf{\large LLM Vicuna-7B-v1.5}\quad \snow\,\textit{frozen}\quad $+$\ \fire\,\textbf{LoRA}};
+\foreach \nd in {te0,s1,te1,s2,te2}{\draw[arr] (\nd) -- (\nd|-llm.south);}
+% output
+\node[outb] (o) at (4.5,9.4) {\textbf{Yes / No}\ (CTR)};
+\draw[arr] (llm) -- (o);
+\end{tikzpicture}
 }
 \caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; mô-đun căn chỉnh
 Q-Former chuyển tín hiệu này thành các soft token được chèn vào prompt; LLM thực hiện dự
