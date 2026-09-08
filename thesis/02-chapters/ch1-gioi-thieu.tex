@@ -61,9 +61,9 @@ MLP để ánh xạ véc-tơ cộng tác từ không gian của mô hình truy�
 embedding của LLM, sau đó chèn kết quả vào chỉ dẫn dưới dạng soft token. Cơ chế này đơn
 giản và hiệu quả, nhưng phép ánh xạ được áp dụng độc lập trên từng véc-tơ cộng tác. Mỗi
 biểu diễn đầu vào được chuyển thành một soft token thông qua cùng một hàm ánh xạ, nên
-mỗi nguồn cộng tác chỉ được cô đọng thành một soft token cố định. Mô-đun vì thế không có cơ
-chế mở rộng mỗi tín hiệu thành nhiều biểu diễn, cũng như không thích nghi phép ánh xạ theo
-từng người dùng ở phía căn chỉnh trước khi đưa vào LLM.
+mô-đun chỉ áp một phép chiếu cố định dùng chung cho mọi mẫu, nên chưa học một biểu diễn được
+căn chỉnh riêng với không gian ngữ nghĩa của LLM và không thích nghi theo từng người dùng ở
+phía căn chỉnh trước khi đưa vào LLM.
 
 Thách thức cốt lõi nằm ở sự khác biệt giữa hai không gian biểu diễn. Biểu diễn cộng tác được
 học từ cấu trúc tương tác người dùng--sản phẩm, trong khi không gian của LLM được hình
@@ -85,7 +85,7 @@ sau.
 
 Về nguyên tắc, cơ chế này cũng phù hợp với bài toán tích hợp biểu diễn cộng tác vào LLM.
 Biểu diễn cộng tác có thể thay thế đặc trưng ảnh ở phía đầu vào, trong khi các truy vấn của
-Q-Former đóng vai trò tái biểu diễn và biến đổi từng tín hiệu cộng tác trước khi chuyển sang không gian của
+Q-Former đóng vai trò học một biểu diễn được căn chỉnh cho tín hiệu cộng tác trước khi chuyển sang không gian của
 LLM. ILM~\cite{ilm2024} đã khai thác ý tưởng này trong bài toán gợi ý, cho thấy Q-Former
 có thể được sử dụng như một mô-đun trung gian giữa thông tin cộng tác và mô hình ngôn ngữ.
 

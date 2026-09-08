@@ -4,8 +4,8 @@
 
 Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
 Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
-Q-Former như một mô-đun căn chỉnh biểu diễn \textit{mỗi} tín hiệu cộng tác thành nhiều soft token
-(thay cho một token pointwise), có điều kiện hóa theo người dùng, trước khi đưa vào LLM. Các thành phần của mô hình được trình bày lần lượt:
+Q-Former như một mô-đun căn chỉnh học một biểu diễn cộng tác mới, phù hợp hơn với không gian
+của LLM so với phép chiếu pointwise cố định của CoLLM, kèm điều kiện hóa theo người dùng. Các thành phần của mô hình được trình bày lần lượt:
 kiến trúc tổng thể, mô-đun MF, mô-đun căn chỉnh Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
 huấn luyện ba giai đoạn.
 
@@ -105,9 +105,9 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
 }
-\caption{Kiến trúc tổng quan của CoQLLM. MF cung cấp biểu diễn cộng tác; Q-Former biến
-\emph{mỗi} véc-tơ CF thành 8 soft token (cross-attention KV độ dài 1, chạy độc lập cho từng sản
-phẩm), rồi chèn vào prompt tại \texttt{<ItemIDList>} ($L\times8$) và \texttt{<TargetItemID>}
+\caption{Kiến trúc tổng quan của CoQLLM. MF cung cấp biểu diễn cộng tác; Q-Former biến mỗi
+véc-tơ CF thành các soft token căn chỉnh (cross-attention KV độ dài 1, chạy độc lập cho từng sản
+phẩm), đặt vào prompt tại \texttt{<ItemIDList>} ($L\times8$) và \texttt{<TargetItemID>}
 ($8$); việc trộn giữa các sản phẩm diễn ra ở self-attention của LLM. Chỉ Q-Former, lớp chiếu và
 LoRA được huấn luyện.}
 \label{fig:kien-truc}
@@ -189,30 +189,25 @@ g_\phi(\mathbf{x}) = \mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathb
 + \mathbf{b}_2,
 \end{equation*}
 với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$. Phép biến đổi này được áp
-dụng độc lập trên từng embedding cộng tác và mỗi embedding tạo ra một soft token. Cần lưu ý
-rằng MLP đã là một phép biến đổi phi tuyến; hạn chế mà luận văn quan tâm không nằm ở tính
-tuyến tính hay phi tuyến, mà ở \textit{băng thông biểu diễn} và tính không thích nghi của phép
-ánh xạ, thể hiện ở hai điểm cụ thể sau.
+dụng độc lập trên từng embedding cộng tác. Cần lưu ý rằng MLP đã là một phép biến đổi phi
+tuyến; hạn chế mà luận văn quan tâm không nằm ở tính tuyến tính hay phi tuyến, mà ở chỗ đây là
+một phép chiếu cố định, dùng chung cho mọi mẫu: nó chưa học một biểu diễn được căn chỉnh riêng
+với không gian ngữ nghĩa của LLM và không thích nghi theo từng người dùng.
 
-Thứ nhất, mỗi embedding chỉ được cô đọng thành \textit{một} soft token duy nhất, nên băng thông
-biểu diễn của mỗi tín hiệu cộng tác truyền tới LLM bị giới hạn ở một véc-tơ. Thứ hai, cùng một
-hàm ánh xạ cố định được dùng cho mọi mẫu, nên mô-đun không có cơ chế điều chỉnh biểu diễn theo
-từng người dùng. Cần nói rõ: việc \textit{phối hợp} giữa các nguồn cộng tác (người dùng, sản phẩm
-mục tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai phương pháp, nên không phải là điểm
-khác biệt giữa CoLLM và mô-đun căn chỉnh Q-Former.
+Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định, mô-đun này học một biểu diễn
+được căn chỉnh cho mỗi véc-tơ cộng tác: một tập truy vấn học được phối hợp với nhau qua
+self-attention và đọc véc-tơ cộng tác qua cross-attention, qua nhiều lớp và qua các mục tiêu
+căn chỉnh ở giai đoạn tiền huấn luyện biểu diễn. Nhờ đó, biểu diễn đưa vào LLM được điều chỉnh
+theo tác vụ thay vì cố định như một hàm pointwise. Đây là điểm khác biệt cốt lõi so với CoLLM.
 
-Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định cho ra đúng một token, mỗi
-véc-tơ cộng tác được một \textit{tập truy vấn học được} khai triển thành nhiều biểu diễn: các
-truy vấn có khởi tạo riêng và phối hợp với nhau qua self-attention, nên có thể chuyên biệt hóa
-để nắm các khía cạnh khác nhau của cùng một tín hiệu cộng tác. Đây là điểm khác biệt cốt lõi
-so với một hàm pointwise duy nhất.
-
-Cần nói rõ giới hạn của lập luận này để tránh phóng đại. Lợi thế của Q-Former ở đây không đến
-từ khả năng nén như trong thị giác: mỗi sản phẩm được mã hóa từ \textit{một} véc-tơ cộng tác
-duy nhất, nên cross-attention chủ yếu đóng vai một phép đọc có học đối với véc-tơ đó (chi tiết
-ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của mô-đun căn chỉnh vì thế nằm ở tập truy vấn học được,
-sự phối hợp qua self-attention và độ sâu của phép biến đổi, chứ không nằm ở việc gộp nhiều
-nguồn tín hiệu bên trong Q-Former.
+Cần làm rõ hai điều để tránh hiểu nhầm và phóng đại. Thứ nhất, việc phối hợp giữa các nguồn
+cộng tác (người dùng, sản phẩm mục tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai
+phương pháp, nên đây không phải là điểm khác biệt giữa CoLLM và Q-Former. Thứ hai, lợi thế của
+Q-Former không đến từ khả năng nén như trong thị giác: mỗi sản phẩm được mã hóa từ một véc-tơ
+cộng tác duy nhất, nên cross-attention chủ yếu đóng vai một phép đọc có học đối với véc-tơ đó
+(chi tiết ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của mô-đun căn chỉnh vì thế nằm ở biểu
+diễn học được qua truy vấn, self-attention và độ sâu của phép biến đổi, chứ không nằm ở số
+lượng token hay việc gộp nhiều nguồn tín hiệu bên trong Q-Former.
 
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
