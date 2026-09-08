@@ -53,10 +53,10 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 % ---- cột trái: MF -> item CF ----
 \node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (\cx,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
 \node[note, below=1mm of mf]{\textit{Đầu vào:} người dùng $u$, lịch sử $\mathcal{H}_u$, sản phẩm $i$};
-\node[cfb, minimum width=24mm] (cf) at (2.4,2.2) {Véc-tơ CF $e$};
-\draw[arr, rounded corners=3pt] (mf.north) -- ++(0,0.25) -| (cf.west);
+\node[cfb, minimum width=24mm] (cf) at (2.4,2.4) {Véc-tơ CF $e$};
+\draw[arr, rounded corners=3pt] (mf.north) -- ++(0,0.35) -| (cf.south);
 % ---- learned queries (dưới, vào Self-Attention) ----
-\tokrow{(\cx,1.5)}{lq}{teal!45}{orange!55}{violet!55}
+\tokrow{(\cx,1.7)}{lq}{teal!45}{orange!55}{violet!55}
 \node[note, below=0.4mm of lq]{learned queries};
 \node[lbl, right=2mm of lq, align=left, text width=30mm]{điều kiện hóa truy vấn $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
 % ---- Q-Former: các khối bên trong ----
@@ -74,7 +74,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \draw[arr, rounded corners=3pt] (cf.north) |- (qca.west);  % item CF -> Cross-Attention (hông, dây thẳng)
 \node[lbl, anchor=south east] at ($(qca.west)+(-1mm,1mm)$){tín hiệu CF};
 % ---- spine dọc: Lớp chiếu -> soft token -> prompt -> LLM ----
-\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,6.5) {Linear\,\fire};
+\node[yb, minimum width=20mm, minimum height=5.5mm] (lin) at (\cx,6.5) {Linear\,\fire};
 \draw[arr] (qff) -- (lin);
 \tokrow{(\cx,7.6)}{st}{teal!45}{orange!55}{violet!55}
 \node[note, right=2mm of st, align=left]{Soft token $[8,768]$};
@@ -104,10 +104,9 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
 }
-\caption{Kiến trúc tổng quan của CoQLLM. Q-Former biến mỗi véc-tơ CF thành soft token căn chỉnh
-(cross-attention KV độ dài 1, chạy độc lập cho từng sản phẩm), đặt vào prompt tại
-\texttt{<ItemIDList>}/\texttt{<TargetItemID>}; việc trộn giữa các sản phẩm diễn ra ở LLM. Chỉ
-Q-Former, lớp chiếu và LoRA được huấn luyện.}
+\caption{Kiến trúc tổng quan của CoQLLM: MF cung cấp véc-tơ CF, Q-Former (cross-attention KV$=1$,
+độc lập từng sản phẩm) biến thành soft token đưa vào prompt cho LLM; chỉ Q-Former, lớp chiếu và
+LoRA được huấn luyện.}
 \label{fig:kien-truc}
 \end{figure}
 
