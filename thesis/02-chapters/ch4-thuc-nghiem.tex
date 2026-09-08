@@ -51,8 +51,8 @@ báo cáo trên tập kiểm tra.
     \item \textbf{MF}~\cite{mf2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
     làm mốc so sánh cho các phương pháp tích hợp CF--LLM.
     \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone Qwen2-7B-Base.
-    \item \textbf{ILM}~\cite{ilm2024}: hướng Q-Former cho gợi ý; được đối chiếu ở
-    Mục~\ref{ssec:doi-chieu-ilm}.
+    \item \textbf{ILM}~\cite{ilm2024}: hướng Q-Former cho gợi ý; không báo cáo AUC/uAUC cho bài
+    toán CTR nên không so sánh số liệu trực tiếp.
 \end{itemize}
 
 \subsection{Chỉ số đánh giá}
@@ -282,58 +282,3 @@ chứng trực tiếp giả thuyết này là một hướng nghiên cứu tiế
 (Mục~\ref{sec:huong-phat-trien}). Nhận định định tính này nhất quán với phân tích khác biệt
 AUC--uAUC ở Mục~\ref{sec:nghich-ly}.
 
-\section{Thảo luận}
-\label{sec:thao-luan}
-
-\subsection{Đối chiếu với ILM}
-\label{ssec:doi-chieu-ilm}
-
-ILM~\cite{ilm2024} không báo cáo AUC/uAUC cho bài toán CTR, nên không thể so sánh
-số liệu trực tiếp. Đây là lý do chính luận văn đặt ra mục tiêu đánh giá Q-Former dưới
-quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều kiện thực nghiệm.
-
-\subsection{Ưu điểm và hạn chế của Q-Former}
-\label{ssec:diem-manh-han-che}
-
-So với mô-đun chiếu MLP của CoLLM, mô-đun căn chỉnh Q-Former biến đổi véc-tơ cộng tác bằng một
-tập truy vấn học được, phối hợp qua self-attention và xếp chồng nhiều lớp. Trong cài đặt hiện
-tại, mỗi lần mã hóa cross-attention
-chỉ đọc \emph{một} token cộng tác ($\mathbf{H}$ có độ dài $1$); khi đó hàm softmax trên một khóa
-duy nhất luôn bằng $1$, nên cross-attention thực chất là một phép đọc có học đối với véc-tơ đó,
-chứ không phải cơ chế chọn lọc trên nhiều thành phần. Do đó, thành phần tạo nên $Q$ biểu diễn
-khác nhau -- và là điểm khác biệt thực sự so với một phép chiếu pointwise -- là tập truy vấn học
-được (mỗi truy vấn khởi tạo riêng), self-attention phối hợp giữa chúng và độ sâu của phép biến
-đổi, không phải khả năng nén hay việc gộp nhiều nguồn bên trong Q-Former. Việc CoQLLM đưa vào
-LLM số soft token nhiều hơn CoLLM ($Q$ so với $1$ trên mỗi véc-tơ) là một yếu tố gây nhiễu khi
-so sánh, không được xem là đóng góp; tách riêng ảnh hưởng của nó là một ablation còn để ngỏ
-(Mục~\ref{sec:han-che}).
-
-Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM được giữ nguyên khi suy luận -- không có
-chi phí sinh trọng số theo từng mẫu như hướng của CoRA. Đánh đổi là chi phí huấn luyện mô-đun
-căn chỉnh cao hơn lớp MLP đơn giản, cần cân nhắc tùy điều kiện triển khai.
-
-\section{Hạn chế nghiên cứu}
-\label{sec:han-che}
-
-Luận văn thừa nhận các hạn chế thực nghiệm sau:
-\begin{enumerate}
-    \item \textbf{Một seed:} Số liệu báo cáo từ một lần chạy duy nhất; chưa có khoảng tin
-    cậy, kết quả có thể dao động giữa các lần chạy.
-    \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay mô-đun căn chỉnh
-    Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là một đối chứng quan
-    trọng để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến và attention
-    đơn thuần; hiện còn để ngỏ.
-    \item \textbf{Các ablation thành phần chưa đầy đủ:} Việc bật/tắt riêng biểu diễn đa token
-    chưa được chạy dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
-    \item \textbf{Chưa phân tích căn chỉnh định lượng:} Phép đo cosine similarity giữa biểu diễn
-    cộng tác và embedding của LLM trước/sau huấn luyện -- nhằm định lượng mức thu hẹp khoảng cách
-    ngữ nghĩa -- chưa được tiến hành.
-    \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone Qwen2-Base khác họ với
-    Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên
-    Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn checkpoint theo
-    AUC), khác quy trình chọn checkpoint theo uAUC của CoQLLM; ngoài ra số liệu baseline trên
-    tập này dao động giữa các lần chạy lại trong tài liệu.
-    \item \textbf{uAUC trên nhóm cold:} uAUC ở nhóm người dùng/sản phẩm nguội thấp hơn đáng kể
-    so với nhóm ấm (Mục~\ref{ssec:user-group}); các phân tích trong chương gợi ý điều này liên
-    quan tới chất lượng embedding MF cho nhóm nguội, và cải thiện có thể cần MF teacher mạnh hơn.
-\end{enumerate}

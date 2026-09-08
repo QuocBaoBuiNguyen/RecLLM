@@ -281,8 +281,9 @@ Q-Former qua cross-attention mà qua điều kiện hóa truy vấn (Mục~\ref{
 việc kết hợp thông tin giữa các sản phẩm được thực hiện ở self-attention của LLM trên toàn bộ
 soft token, chứ không phải bên trong cầu nối. Khác với BLIP-2 -- nơi cross-attention nén hàng
 trăm patch ảnh thành số truy vấn nhỏ hơn -- ở đây mỗi lần mã hóa chỉ có một véc-tơ cộng tác, nên
-Q-Former không đóng vai trò nén. Hệ quả của thiết kế một token này đối với vai trò của
-cross-attention được phân tích ở Mục~\ref{ssec:diem-manh-han-che}.
+Q-Former không đóng vai trò nén. Vì cross-attention khi đó chỉ đọc một khóa duy nhất, hàm
+softmax của nó luôn bằng $1$; do đó cross-attention ở đây là một phép đọc có học đối với véc-tơ
+cộng tác, không phải cơ chế chọn lọc trên nhiều thành phần.
 
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}

@@ -52,65 +52,50 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
 \section{Hạn chế nghiên cứu}
 \label{sec:han-che-ch5}
 
-Luận văn nêu rõ các hạn chế sau một cách minh bạch:
+Luận văn còn hai hạn chế chính:
 
 \begin{enumerate}
-    \item \textbf{Thiếu khoảng tin cậy:} Kết quả từ một seed duy nhất. Biến động thống
-    kê giữa các lần chạy chưa được đo.
+    \item \textbf{Chi phí huấn luyện cao hơn:} Mô-đun căn chỉnh Q-Former có kiến trúc nhiều lớp
+    và số tham số lớn hơn lớp ánh xạ MLP của CoLLM, nên chi phí huấn luyện cao hơn (dù backbone
+    LLM vẫn được giữ đóng băng và không sinh trọng số theo từng mẫu như CoRA).
 
-    \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay Q-Former bằng
-    bộ chiếu attention-MLP (không truy vấn học được) -- đối chứng quan trọng nhất để cô lập
-    đóng góp của cấu trúc Q-Former. Cùng với các ablation thành phần khác (đa token, tách
-    projector), đây là phần thực nghiệm còn để ngỏ.
-
-    \item \textbf{Chi phí tính toán cao hơn CoLLM:} Mô-đun căn chỉnh Q-Former làm tăng chi phí huấn
-    luyện so với lớp MLP đơn giản của CoLLM (dù không sinh trọng số theo từng mẫu như CoRA).
-
-    \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone LLM khác họ, và trên
-    Amazon-Book số liệu baseline lấy từ lần chạy lại của CoRA (chọn checkpoint theo AUC,
-    khác CoQLLM chọn theo uAUC) -- giới hạn khả năng so sánh thuần về cơ chế căn chỉnh.
-
-    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
-    người dùng/sản phẩm nguội, không phải bởi mô-đun căn chỉnh.
+    \item \textbf{Hiệu suất chưa đạt mức tốt nhất trên mọi thiết lập:} Trên Amazon-Book, CoQLLM
+    cạnh tranh nhưng chưa vượt CoRA-MF ở cả hai độ đo. Khoảng cách này phản ánh một số hạn chế
+    còn lại trong thiết kế mô hình, chẳng hạn mỗi sản phẩm chỉ được mã hóa từ một véc-tơ cộng tác
+    và chất lượng embedding MF cho nhóm người dùng/sản phẩm nguội còn thấp.
 \end{enumerate}
 
 \section{Hướng nghiên cứu tương lai}
 \label{sec:huong-phat-trien}
 
-Từ các hạn chế và quan sát trên, luận văn đề xuất những hướng nghiên cứu tiếp theo:
+Từ các quan sát và hạn chế trên, luận văn đề xuất một số hướng nghiên cứu tiếp theo.
 
-\textbf{Mở rộng thực nghiệm:}
+\textbf{Ablation và phân tích sâu hơn.}
 \begin{itemize}
-    \item Đánh giá trên Amazon Books và các tập dữ liệu ngoài miền phim để kiểm chứng
-    khả năng tổng quát.
-    \item Chạy nhiều seed và báo cáo mean $\pm$ std để đánh giá độ ổn định.
+    \item Bổ sung hàng ablation attention-MLP (bộ chiếu có self-attention nhưng không có truy
+    vấn học được) để cô lập đóng góp của cấu trúc Q-Former khỏi phần phi tuyến và attention đơn
+    thuần.
+    \item Phân tích attention map của Q-Former để hiểu các truy vấn học cách trích xuất thông tin
+    gì từ tín hiệu cộng tác.
 \end{itemize}
 
-\textbf{Ablation và phân tích sâu hơn:}
+\textbf{Cải thiện uAUC.}
 \begin{itemize}
-    \item Bổ sung hàng ablation attention-MLP (bộ chiếu có self-attention nhưng không có
-    truy vấn học được) để cô lập đóng góp của cấu trúc Q-Former khỏi phần phi tuyến +
-    attention đơn thuần.
-    \item Phân tích attention map của Q-Former để hiểu truy vấn nào học cách trích xuất
-    thông tin gì từ tín hiệu cộng tác.
+    \item Tiền huấn luyện MF trên dữ liệu dày đặc hơn, đặc biệt cho nhóm người dùng/sản phẩm
+    nguội, nhằm nâng chất lượng biểu diễn cộng tác đầu vào.
+    \item Khảo sát các mục tiêu huấn luyện hướng tới thứ tự xếp hạng trong từng người dùng (chẳng
+    hạn tổn thất bảo toàn thứ hạng theo cặp).
 \end{itemize}
 
-\textbf{Cải thiện uAUC:}
+\textbf{Mở rộng kiến trúc.}
 \begin{itemize}
-    \item Tiền huấn luyện MF trên dữ liệu dày đặc hơn (nhiều tháng hơn), đặc biệt cho
-    nhóm người dùng/sản phẩm nguội -- điều mà phân rã warm/cold chỉ ra là trần thực sự
-    của uAUC.
-    \item Khảo sát các mục tiêu huấn luyện hướng tới thứ tự xếp hạng trong từng người dùng
-    (chẳng hạn tổn thất BPR theo cặp) như một hướng cải thiện uAUC ở những miền còn nhiều dư địa
-    xếp hạng.
-\end{itemize}
-
-\textbf{Mở rộng kiến trúc:}
-\begin{itemize}
-    \item Bổ sung hàng ablation attention-MLP và các ablation thành phần còn để ngỏ dưới
-    cùng backbone Vicuna để cô lập đầy đủ đóng góp của cấu trúc Q-Former.
-    \item Khảo sát hướng sinh trọng số theo từng mẫu kiểu CoRA như một đường \textit{bổ sung} cho soft
-    token (chưa hiện thực trong luận văn này) để so sánh trực tiếp hai cơ chế đưa tín hiệu cộng tác vào LLM.
-    \item Khảo sát các backbone LLM khác (Llama-3, Mistral) để kiểm chứng tính tổng
+    \item Sử dụng các mô hình cộng tác cung cấp \textit{nhiều} véc-tơ đặc trưng cho mỗi sản phẩm
+    thay vì một véc-tơ duy nhất (chẳng hạn biểu diễn theo nhiều khía cạnh hoặc theo chuỗi tương
+    tác), để cross-attention của Q-Former có thể chọn lọc trên nhiều thành phần thay vì chỉ đọc
+    một véc-tơ.
+    \item Áp dụng thêm các kỹ thuật huấn luyện và kiến trúc cho Q-Former ngoài điều kiện hóa truy
+    vấn theo người dùng, chẳng hạn tổn thất bảo toàn thứ hạng trên soft token, truy vấn nhận biết
+    sản phẩm ứng viên, hoặc chèn token biểu diễn người dùng.
+    \item Khảo sát các backbone LLM khác (chẳng hạn Llama-3, Mistral) để kiểm chứng tính tổng
     quát của mô-đun căn chỉnh Q-Former.
 \end{itemize}
