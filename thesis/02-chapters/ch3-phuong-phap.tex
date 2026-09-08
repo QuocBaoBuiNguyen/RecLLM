@@ -376,7 +376,7 @@ tiêu tương ứng trước khi kết hợp trong nhiệm vụ khuyến nghị 
 \label{ssec:stage1}
 
 Giai đoạn đầu nhằm giúp Q-Former học mối quan hệ giữa biểu diễn cộng tác và thông tin ngữ nghĩa
-của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu:
+của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu (Hình~\ref{fig:stage1}):
 
 \begin{itemize}
     \item \textit{Căn chỉnh sản phẩm--văn bản (ITC)}: tăng độ tương đồng giữa biểu diễn sản
@@ -396,6 +396,89 @@ của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu:
     các cặp người dùng--sản phẩm có tương tác dương, đồng thời tách biệt chúng khỏi các cặp âm
     trong không gian biểu diễn.
 \end{itemize}
+
+\begin{figure}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize, >={Stealth[length=1.8mm]},
+  sa/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!55, align=center, minimum width=19mm, minimum height=5.5mm, font=\scriptsize},
+  ca/.style={rectangle, rounded corners=2pt, draw=black!45, fill=black!12, align=center, minimum width=19mm, minimum height=5.5mm, font=\scriptsize},
+  ff/.style={rectangle, rounded corners=2pt, draw=violet!70!black, fill=violet!35, align=center, minimum width=19mm, minimum height=5.5mm, font=\scriptsize},
+  ffg/.style={rectangle, rounded corners=2pt, draw=green!60!black, fill=green!35, align=center, minimum width=19mm, minimum height=5.5mm, font=\scriptsize},
+  obj/.style={rectangle, rounded corners=3pt, draw=red!55!black, fill=red!20, align=center, minimum height=7mm, font=\scriptsize, inner sep=2pt},
+  cfb/.style={rectangle, rounded corners=2pt, draw=blue!60!black, fill=blue!55, text=white, align=center, font=\scriptsize, inner sep=2.5pt},
+  txt/.style={rectangle, rounded corners=2pt, draw=black!45, fill=white, align=center, font=\scriptsize, inner sep=2.5pt},
+  qf/.style={draw=orange!75!black, thick, rounded corners=4pt, fill=orange!8},
+  nt/.style={align=center, font=\scriptsize, text=black!72},
+  arr/.style={->, semithick, black!65}, lbl/.style={font=\scriptsize\itshape, inner sep=1.2pt},
+]
+% ===== PANEL (a): sản phẩm--văn bản =====
+\begin{scope}
+\def\lx{0}\def\rx{5.0}
+\tokrow{(\lx,0)}{lqA}{orange!45}{yellow!55}{teal!45}   \node[nt,below=0.2mm of lqA]{Learned Queries};
+\node[sa] (saLa) at (\lx,1.25) {Self-Attention};
+\node[ca, above=3mm of saLa] (caLa) {Cross-Attention};
+\node[ff, above=3mm of caLa] (ffLa) {Feed-Forward};
+\draw[arr] (lqA)--(saLa); \draw[arr] (saLa)--(caLa); \draw[arr] (caLa)--(ffLa);
+\node[txt] (txtA) at (\rx,-0.05) {Văn bản:\\ tên, thể loại\dots};
+\node[sa] (saRa) at (\rx,1.25) {Self-Attention};
+\node[ffg, above=12mm of saRa] (ffRa) {Feed-Forward};
+\draw[arr] (txtA)--(saRa); \draw[arr] (saRa)--(ffRa);
+\node[obj] (itcA) at (2.5,4.65) {ITC\\ (tương phản)};
+\node[obj] (itmA) at (\lx,3.95) {ITM\\ (so khớp)};
+\node[obj] (itgA) at (\rx,3.95) {ITG\\ (sinh VB)};
+\draw[arr] (ffLa)--(itmA); \draw[arr] (ffRa)--(itgA);
+\draw[arr] (ffLa.north) to[out=90,in=180] (itcA.west);
+\draw[arr] (ffRa.north) to[out=90,in=0] (itcA.east);
+\node[nt] (amA) at (2.5,1.05) {\textit{Attention Masking}\\ bidirectional\\ multimodal causal\\ uni-modal};
+\node[font=\scriptsize] at (\lx-1.6,2.1) {$\times N$};
+\node[font=\scriptsize] at (\rx+1.6,2.1) {$\times N$};
+\begin{scope}[on background layer]
+  \node[qf, fit=(saLa)(ffLa)(saRa)(ffRa)(itmA)(itgA)(itcA)(lqA)(txtA)(amA), inner sep=3.5mm] (qfa) {};
+\end{scope}
+\node[font=\footnotesize\bfseries, anchor=south, yshift=1mm] at (qfa.north) {Q-Former};
+\node[cfb] (cfA) at (\lx-0.6,-1.9) {CF sản phẩm $e_i$};
+\draw[arr, rounded corners=2pt] (cfA.north) |- ($(caLa.west)+(-3mm,0)$) -- (caLa.west);
+\node[font=\footnotesize\bfseries, anchor=north] at (2.5,-2.7) {(a) Học biểu diễn sản phẩm--văn bản};
+\end{scope}
+% ===== PANEL (b): người dùng--sản phẩm =====
+\begin{scope}[xshift=10.2cm]
+\def\lx{0}\def\rx{5.0}
+\tokrow{(\lx,0)}{lqB}{orange!45}{yellow!55}{teal!45}   \node[nt,below=0.2mm of lqB]{Learned Queries};
+\node[sa] (saLb) at (\lx,1.25) {Self-Attention};
+\node[ca, above=3mm of saLb] (caLb) {Cross-Attention};
+\node[ff, above=3mm of caLb] (ffLb) {Feed-Forward};
+\draw[arr] (lqB)--(saLb); \draw[arr] (saLb)--(caLb); \draw[arr] (caLb)--(ffLb);
+\tokrow{(\rx,0)}{lqB2}{orange!45}{yellow!55}{teal!45}  \node[nt,below=0.2mm of lqB2]{Learned Queries};
+\node[sa] (saRb) at (\rx,1.25) {Self-Attention};
+\node[ca, above=3mm of saRb] (caRb) {Cross-Attention};
+\node[ff, above=3mm of caRb] (ffRb) {Feed-Forward};
+\draw[arr] (lqB2)--(saRb); \draw[arr] (saRb)--(caRb); \draw[arr] (caRb)--(ffRb);
+\node[obj] (itcB) at (2.5,4.65) {Tương phản\\ người dùng--SP};
+\draw[arr] (ffLb.north) to[out=90,in=180] (itcB.west);
+\draw[arr] (ffRb.north) to[out=90,in=0] (itcB.east);
+\node[nt] (amB) at (2.5,2.3) {\textit{Attention Masking}\\ uni-modal};
+\node[font=\scriptsize] at (\lx-1.6,2.1) {$\times N$};
+\node[font=\scriptsize] at (\rx+1.6,2.1) {$\times N$};
+\begin{scope}[on background layer]
+  \node[qf, fit=(saLb)(ffLb)(saRb)(ffRb)(itcB)(lqB)(lqB2)(amB), inner sep=3.5mm] (qfb) {};
+\end{scope}
+\node[font=\footnotesize\bfseries, anchor=south, yshift=1mm] at (qfb.north) {Q-Former};
+\node[cfb] (cfBu) at (\lx-0.6,-1.9) {CF người dùng $e_u$};
+\node[cfb] (cfBi) at (\rx+0.6,-1.9) {CF sản phẩm $e_i$};
+\draw[arr, rounded corners=2pt] (cfBu.north) |- ($(caLb.west)+(-3mm,0)$) -- (caLb.west);
+\draw[arr, rounded corners=2pt] (cfBi.north) |- ($(caRb.east)+(3mm,0)$) -- (caRb.east);
+\node[font=\footnotesize\bfseries, anchor=north] at (2.5,-2.7) {(b) Học biểu diễn người dùng--sản phẩm};
+\end{scope}
+\end{tikzpicture}%
+}
+\caption{Bốn mục tiêu tiền huấn luyện biểu diễn ở Giai đoạn 1 (kế thừa BLIP-2~\cite{blip2_2023}
+và ILM~\cite{ilm2024}). (a) Ba mục tiêu sản phẩm--văn bản: so khớp (ITM), tương phản (ITC) và
+sinh văn bản có điều kiện (ITG); nhánh trái mã hóa véc-tơ CF của sản phẩm, nhánh phải mã hóa văn
+bản mô tả. (b) Mục tiêu tương phản người dùng--sản phẩm giữa hai nhánh Q-Former chia sẻ trọng số.
+Cùng một Q-Former được dùng cho cả bốn mục tiêu.}
+\label{fig:stage1}
+\end{figure}
 
 Một vấn đề thực nghiệm ở giai đoạn này là sự mất cân bằng đáng kể giữa số cặp người dùng--sản
 phẩm và số cặp sản phẩm--văn bản. Trên MovieLens-1M, dữ liệu gồm khoảng $888$ nghìn cặp người
