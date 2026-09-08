@@ -431,14 +431,12 @@ của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu (H�
 \draw[arr] (ffLa.north) to[out=90,in=180] (itcA.west);
 \draw[arr] (ffRa.north) to[out=90,in=0] (itcA.east);
 \node[nt] (amA) at (2.5,1.05) {\textit{Attention Masking}\\ bidirectional\\ multimodal causal\\ uni-modal};
-\node[font=\scriptsize] at (\lx-1.6,2.1) {$\times N$};
-\node[font=\scriptsize] at (\rx+1.6,2.1) {$\times N$};
 \begin{scope}[on background layer]
   \node[qf, fit=(saLa)(ffLa)(saRa)(ffRa)(itmA)(itgA)(itcA)(lqA)(txtA)(amA), inner sep=3.5mm] (qfa) {};
 \end{scope}
 \node[font=\footnotesize\bfseries, anchor=south, yshift=1mm] at (qfa.north) {Q-Former};
-\node[cfb] (cfA) at (\lx-0.6,-1.9) {CF sản phẩm $e_i$};
-\draw[arr, rounded corners=2pt] (cfA.north) |- ($(caLa.west)+(-3mm,0)$) -- (caLa.west);
+\node[cfb] (cfA) at (\lx-1.6,-1.9) {CF sản phẩm $e_i$};
+\draw[arr, rounded corners=2pt] (cfA.north) |- (caLa.west);
 \node[font=\footnotesize\bfseries, anchor=north] at (2.5,-2.7) {(a) Học biểu diễn sản phẩm--văn bản};
 \end{scope}
 % ===== PANEL (b): người dùng--sản phẩm =====
@@ -458,16 +456,14 @@ của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu (H�
 \draw[arr] (ffLb.north) to[out=90,in=180] (itcB.west);
 \draw[arr] (ffRb.north) to[out=90,in=0] (itcB.east);
 \node[nt] (amB) at (2.5,2.3) {\textit{Attention Masking}\\ uni-modal};
-\node[font=\scriptsize] at (\lx-1.6,2.1) {$\times N$};
-\node[font=\scriptsize] at (\rx+1.6,2.1) {$\times N$};
 \begin{scope}[on background layer]
   \node[qf, fit=(saLb)(ffLb)(saRb)(ffRb)(itcB)(lqB)(lqB2)(amB), inner sep=3.5mm] (qfb) {};
 \end{scope}
 \node[font=\footnotesize\bfseries, anchor=south, yshift=1mm] at (qfb.north) {Q-Former};
-\node[cfb] (cfBu) at (\lx-0.6,-1.9) {CF người dùng $e_u$};
-\node[cfb] (cfBi) at (\rx+0.6,-1.9) {CF sản phẩm $e_i$};
-\draw[arr, rounded corners=2pt] (cfBu.north) |- ($(caLb.west)+(-3mm,0)$) -- (caLb.west);
-\draw[arr, rounded corners=2pt] (cfBi.north) |- ($(caRb.east)+(3mm,0)$) -- (caRb.east);
+\node[cfb] (cfBu) at (\lx-1.6,-1.9) {CF người dùng $e_u$};
+\node[cfb] (cfBi) at (\rx+1.6,-1.9) {CF sản phẩm $e_i$};
+\draw[arr, rounded corners=2pt] (cfBu.north) |- (caLb.west);
+\draw[arr, rounded corners=2pt] (cfBi.north) |- (caRb.east);
 \node[font=\footnotesize\bfseries, anchor=north] at (2.5,-2.7) {(b) Học biểu diễn người dùng--sản phẩm};
 \end{scope}
 \end{tikzpicture}%
