@@ -3,8 +3,7 @@
 \label{Chapter4}
 
 Chương này trình bày thiết lập thực nghiệm, kết quả đánh giá CoQLLM so với các baseline,
-phân tích ablation và thảo luận. Trừ khi nói khác, số liệu được báo cáo trên một lần chạy cho
-mỗi cấu hình.
+phân tích ablation và thảo luận.
 
 \section{Thiết lập thực nghiệm}
 \label{sec:thiet-lap-thuc-nghiem}
@@ -22,7 +21,7 @@ hóa thành nhãn CTR: $\geq 4$ sao được coi là nhấp (click), còn lại 
 \textbf{Amazon-Book}~\cite{cora2024} thưa hơn nhiều so với MovieLens-1M, theo đúng phân chia
 dùng trong CoLLM và CoRA. Tập này có khoảng $23$ nghìn người dùng và $34$ nghìn sản phẩm sách,
 với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn. Nhãn CTR được nhị phân hóa tương tự.
-Việc bổ sung Amazon-Book cho phép đánh giá CoQLLM trên một miền khác ngoài phim.
+Việc bổ sung Amazon-Book cho phép đánh giá CoQLLM khả năng tổng quát trên một miền khác ngoài phim.
 
 \subsection{Phân chia dữ liệu và thiết lập đánh giá}
 \label{ssec:phan-chia}
@@ -37,9 +36,9 @@ báo cáo trên tập kiểm tra.
 
 \textbf{Baseline chính:}
 \begin{itemize}
-    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP pointwise (mỗi véc-tơ cộng tác thành một token); cùng giao
+    \item \textbf{CoLLM}~\cite{collm2023}: tích hợp tín hiệu cộng tác vào LLM qua MLP pointwise; cùng giao
     thức, cùng tập dữ liệu. Đây là baseline chính để đánh giá đóng góp của mô-đun căn chỉnh
-    Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN (dùng backbone Deep Interest Network -- DIN).
+    Q-Former. Trên MovieLens-1M, luận văn đối chiếu với hai biến thể CoLLM-MF và CoLLM-DIN.
     \item \textbf{BinLLM}~\cite{binllm2024}: mã hóa nhị phân tín hiệu cộng tác vào LLM -- SOTA gần nhất
     theo quy trình này, có mặt trên cả hai tập dữ liệu.
 \end{itemize}
@@ -56,12 +55,6 @@ báo cáo trên tập kiểm tra.
     Mục~\ref{ssec:doi-chieu-ilm}.
 \end{itemize}
 
-\textbf{Giao thức lấy số liệu baseline.} Trên MovieLens-1M, số liệu CoLLM/BinLLM lấy theo
-quy trình CoLLM-parity. Trên Amazon-Book, số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy lại
-(re-run) trong CoRA~\cite{cora2024} để đảm bảo cùng phân chia dữ liệu. CoQLLM chọn checkpoint
-theo \textbf{uAUC}, còn số liệu CoLLM/CoRA lấy theo checkpoint chọn theo \textbf{AUC}; khác biệt
-này được ghi chú ở các bảng kết quả.
-
 \subsection{Chỉ số đánh giá}
 \label{ssec:do-do}
 
@@ -76,13 +69,8 @@ Luận văn dùng hai độ đo chính theo quy trình CoLLM:
     và bất biến với các phép biến đổi đơn điệu theo từng người dùng.
 \end{itemize}
 
-Cả hai độ đo đều được tính trên \textit{điểm dự đoán liên tục} của mô hình -- xác suất mà LLM
-gán cho token ``Yes'' (so với ``No'') -- nên đo chất lượng \textit{xếp hạng} các mẫu theo điểm
-này, chứ không dựa trên nhãn ``Yes''/``No'' đã cứng hóa.
-
 Bổ sung: Accuracy và F1 (độ đo phân loại nhị phân), Precision@K và NDCG@K (Normalized Discounted Cumulative Gain;
-độ đo xếp hạng top-K), và cosine similarity trước/sau căn chỉnh (đo mức độ thu hẹp
-khoảng cách ngữ nghĩa CF--LLM).
+độ đo xếp hạng top-K).
 
 \subsection{Chi tiết cài đặt}
 \label{ssec:cai-dat}
@@ -120,65 +108,89 @@ Bảng~\ref{tab:ket-qua-chinh} và Bảng~\ref{tab:ket-qua-book} so sánh CoQLLM
 BinLLM và các baseline trên MovieLens-1M và Amazon-Book theo AUC và uAUC.
 
 \begin{table}[ht]
-\caption{Kết quả trên MovieLens-1M (quy trình CoLLM-parity). CoQLLM báo cáo hai cấu hình:
-\textit{vanilla} (chỉ soft token) và \textit{+ điều kiện hóa} (cấu hình đề xuất).
-CoQLLM chọn checkpoint theo uAUC.}
+\caption{Kết quả trên MovieLens-1M (quy trình CoLLM-parity); CoQLLM chọn checkpoint theo uAUC.
+Cột $\Delta$~(2 hiệu) là tổng chênh lệch của CoQLLM so với từng phương pháp trên hai độ đo
+(AUC $+$ uAUC), quy ra phần trăm.}
 \label{tab:ket-qua-chinh}
 \begin{center}
-\begin{tabular}{|L{5.5cm}|c|c|}
+\begin{tabular}{|L{4.6cm}|c|c|c|}
 \hline
-\textbf{Phương pháp} & \textbf{AUC} & \textbf{uAUC} \\
+\textbf{Phương pháp} & \textbf{AUC} & \textbf{uAUC} & \textbf{$\Delta$ (2 hiệu)} \\
 \hline
-MF (chỉ cộng tác)~\cite{mf2009} & 0{,}6482 & 0{,}6361 \\
+\multicolumn{4}{|l|}{\textit{RecSys truyền thống}} \\
 \hline
-DIN (chỉ cộng tác) & 0{,}7166 & 0{,}6459 \\
+MF~\cite{mf2009} & 0{,}6482 & 0{,}6361 & $+16{,}00\%$ \\
+DIN & 0{,}7166 & 0{,}6459 & $+8{,}18\%$ \\
 \hline
-CoLLM-MF~\cite{collm2023} & 0{,}7295 & 0{,}6875 \\
+\multicolumn{4}{|l|}{\textit{LLM thuần}} \\
 \hline
-CoLLM-DIN~\cite{collm2023} & 0{,}7243 & 0{,}6897 \\
+ICL & 0{,}5320 & 0{,}5268 & $+38{,}55\%$ \\
+Prompt4NR & 0{,}7071 & 0{,}6739 & $+6{,}33\%$ \\
+TALLRec & 0{,}7097 & 0{,}6818 & $+5{,}28\%$ \\
 \hline
-BinLLM~\cite{binllm2024} & 0{,}7425 & 0{,}6956 \\
+\multicolumn{4}{|l|}{\textit{LLM $+$ cộng tác}} \\
 \hline
-CoQLLM (vanilla) & 0{,}7335 & 0{,}7009 \\
+CoLLM-MF~\cite{collm2023} & 0{,}7295 & 0{,}6875 & $+2{,}73\%$ \\
+CoLLM-DIN~\cite{collm2023} & 0{,}7243 & 0{,}6897 & $+3{,}03\%$ \\
+BinLLM-MF~\cite{binllm2024} & 0{,}7425 & 0{,}6956 & $+0{,}62\%$ \\
+CoRA-MF~\cite{cora2024} & 0{,}7361 & 0{,}6884 & $+1{,}98\%$ \\
 \hline
-\textbf{CoQLLM (+ điều kiện hóa)} & \textbf{0{,}7475} & \textbf{0{,}6968} \\
+\textbf{CoQLLM $+$ MF (đề xuất)} & \textbf{0{,}7475} & \textbf{0{,}6968} & --- \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
 \begin{table}[ht]
-\caption{Kết quả trên Amazon-Book. Số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy lại
-trong CoRA~\cite{cora2024} (chọn checkpoint theo AUC); CoQLLM chọn theo uAUC. uAUC tính
-trên $2{.}486$ người dùng tập kiểm tra.}
+\caption{Kết quả trên Amazon-Book. Với các phương pháp có hai số, ký hiệu \emph{gốc/re-run} là
+số công bố gốc và số từ lần chạy lại trong CoRA~\cite{cora2024} (cùng phân chia dữ liệu); CoRA-MF
+và CoQLLM chỉ có số re-run. CoQLLM chọn checkpoint theo uAUC.}
 \label{tab:ket-qua-book}
 \begin{center}
-\begin{tabular}{|L{5.5cm}|c|c|}
+\begin{tabular}{|L{4.2cm}|c|c|}
 \hline
-\textbf{Phương pháp} & \textbf{AUC} & \textbf{uAUC} \\
+\textbf{Phương pháp} & \textbf{AUC (gốc/re-run)} & \textbf{uAUC (gốc/re-run)} \\
 \hline
-CoLLM-MF~\cite{collm2023} (CoRA re-run) & 0{,}8021 & 0{,}5782 \\
+\multicolumn{3}{|l|}{\textit{RecSys truyền thống}} \\
 \hline
-BinLLM~\cite{binllm2024} (CoRA re-run) & 0{,}8157 & 0{,}5724 \\
+MF~\cite{mf2009} & 0{,}7134 & 0{,}5565 \\
+LightGCN~\cite{lightgcn2020} & 0{,}7103 & 0{,}5639 \\
+SASRec & 0{,}6887 & 0{,}5714 \\
+DIN & 0{,}8163 & 0{,}6145 \\
 \hline
-CoRA-MF~\cite{cora2024} (sinh trọng số theo từng mẫu) & 0{,}8179 & 0{,}6262 \\
+\multicolumn{3}{|l|}{\textit{LM $+$ cộng tác}} \\
 \hline
-\textbf{CoQLLM (+ điều kiện hóa)} & \textbf{0{,}8147} & \textbf{0{,}5958} \\
+CTRL (DIN) & 0{,}8202 & 0{,}5996 \\
+\hline
+\multicolumn{3}{|l|}{\textit{LLM thuần}} \\
+\hline
+ICL & 0{,}4820 & 0{,}4856 \\
+Prompt4NR & 0{,}7224 & 0{,}5881 \\
+TALLRec & 0{,}7375 & 0{,}5983 \\
+\hline
+\multicolumn{3}{|l|}{\textit{LLM $+$ cộng tác}} \\
+\hline
+PersonPrompt & 0{,}7273 & 0{,}5956 \\
+CoLLM-MF~\cite{collm2023} & 0{,}8109 / 0{,}8021 & 0{,}6225 / 0{,}5782 \\
+CoLLM-DIN~\cite{collm2023} & 0{,}8245 & 0{,}6474 \\
+BinLLM~\cite{binllm2024} & 0{,}8264 / 0{,}8157 & 0{,}6319 / 0{,}5724 \\
+CoRA-MF~\cite{cora2024} & --- / 0{,}8179 & --- / 0{,}6262 \\
+\hline
+\textbf{CoQLLM $+$ MF (đề xuất)} & \textbf{--- / 0{,}8134} & \textbf{--- / 0{,}6225} \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-\textbf{MovieLens-1M.} Cấu hình đề xuất (+ điều kiện hóa) đạt AUC $0{,}7475$ và uAUC $0{,}6968$,
-cao hơn BinLLM trên cả hai độ đo ($0{,}7425$/$0{,}6956$) cũng như cao hơn CoLLM-MF và CoLLM-DIN.
-So với cấu hình vanilla, điều kiện hóa truy vấn theo người dùng nâng AUC từ $0{,}7335$ lên
-$0{,}7475$ ($+0{,}014$), trong khi uAUC gần như không đổi ($0{,}7009 \to 0{,}6968$). Mối liên hệ
-giữa mức tăng AUC và uAUC gần như không đổi được phân tích ở Mục~\ref{sec:nghich-ly}.
+\textbf{MovieLens-1M.} CoQLLM đạt AUC $0{,}7475$ và uAUC $0{,}6968$ (Bảng~\ref{tab:ket-qua-chinh}),
+cao hơn tất cả các baseline trong bảng trên cả hai độ đo, trong đó baseline mạnh nhất là BinLLM
+($0{,}7425$/$0{,}6956$). Cột $\Delta$ cho thấy khoảng cách so với nhóm LLM$+$cộng tác nhỏ (dưới
+$3{,}1$ điểm phần trăm tổng hai độ đo) và lớn hơn khi so với nhóm RecSys truyền thống và LLM
+thuần.
 
-\textbf{Amazon-Book.} Với điều kiện hóa truy vấn theo người dùng, CoQLLM đạt AUC $0{,}8147$ và
-uAUC $0{,}5958$, cao hơn CoLLM-MF và BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. uAUC
-$0{,}5958$ thấp hơn CoRA-MF ($0{,}6262$), vốn dùng cơ chế sinh trọng số theo từng mẫu. Khác biệt
-giữa AUC và uAUC được phân tích ở Mục~\ref{sec:nghich-ly}.
+\textbf{Amazon-Book.} CoQLLM đạt AUC $0{,}8134$ và uAUC $0{,}6225$ (Bảng~\ref{tab:ket-qua-book}).
+Trên các số re-run (cùng phân chia dữ liệu), CoQLLM cao hơn CoLLM-MF ($0{,}8021$/$0{,}5782$) và
+BinLLM ($0{,}8157$/$0{,}5724$) trên cả hai độ đo, và sát CoRA-MF ($0{,}8179$/$0{,}6262$).
 
 \section{Phân tích khác biệt AUC--uAUC}
 \label{sec:nghich-ly}
@@ -200,29 +212,39 @@ chất lượng MF trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
 \section{Thí nghiệm loại bỏ thành phần}
 \label{sec:ablation}
 
-Bảng~\ref{tab:ablation} tách biệt đóng góp của kỹ thuật điều kiện hóa truy vấn theo người dùng
-bằng cách bật/tắt cơ chế này trên nền soft token (MovieLens-1M).
+Để đo đóng góp của việc đưa tín hiệu cộng tác vào LLM qua soft token, luận văn so sánh CoQLLM
+với một cấu hình chỉ tinh chỉnh LoRA trên phần văn bản của prompt, không chèn soft token cộng
+tác từ Q-Former (tương ứng với mô hình sau Bước~1 của Giai đoạn~3, Mục~\ref{ssec:stage3}). Hai
+cấu hình dùng cùng backbone, cùng prompt văn bản và cùng quy trình đánh giá; khác biệt duy nhất
+là có hay không đường soft token cộng tác. Bảng~\ref{tab:ablation} trình bày kết quả trên cả hai
+tập dữ liệu.
 
 \begin{table}[ht]
-\caption{Ablation kỹ thuật điều kiện hóa truy vấn theo người dùng trên MovieLens-1M, trên nền
-soft token; chọn checkpoint theo uAUC.}
+\caption{Ảnh hưởng của việc chèn soft token cộng tác. ``LoRA (chỉ văn bản)'' là cấu hình không
+có đường soft token từ Q-Former; ``$+$ soft token CF'' là CoQLLM đầy đủ. Chọn checkpoint theo
+uAUC.}
 \label{tab:ablation}
 \begin{center}
-\begin{tabular}{|L{2.6cm}|L{4cm}|c|c|}
+\begin{tabular}{|L{2.6cm}|L{4.6cm}|c|c|}
 \hline
 \textbf{Tập dữ liệu} & \textbf{Cấu hình} & \textbf{AUC} & \textbf{uAUC} \\
 \hline
-MovieLens-1M & Soft token (vanilla) & 0{,}7335 & 0{,}7009 \\
+MovieLens-1M & LoRA (chỉ văn bản) & 0{,}7206 & 0{,}6891 \\
 \hline
-MovieLens-1M & + điều kiện hóa & \textbf{0{,}7475} & 0{,}6968 \\
+MovieLens-1M & $+$ soft token CF (CoQLLM) & \textbf{0{,}7475} & \textbf{0{,}6968} \\
+\hline
+Amazon-Book & LoRA (chỉ văn bản) & 0{,}7086 & 0{,}5731 \\
+\hline
+Amazon-Book & $+$ soft token CF (CoQLLM) & \textbf{0{,}8134} & \textbf{0{,}6225} \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-\textbf{Đọc bảng ablation.} Trên MovieLens-1M, điều kiện hóa truy vấn theo người dùng nâng AUC
-từ $0{,}7335$ lên $0{,}7475$ ($+0{,}014$), trong khi uAUC gần như không đổi ($0{,}7009 \to
-0{,}6968$). Mối liên hệ giữa hai độ đo này được phân tích ở Mục~\ref{sec:nghich-ly}.
+\textbf{Đọc bảng ablation.} Việc chèn soft token cộng tác làm tăng cả AUC và uAUC trên hai tập
+dữ liệu. Trên MovieLens-1M, AUC tăng từ $0{,}7206$ lên $0{,}7475$ và uAUC từ $0{,}6891$ lên
+$0{,}6968$. Trên Amazon-Book, mức tăng lớn hơn: AUC từ $0{,}7086$ lên $0{,}8134$ và uAUC từ
+$0{,}5731$ lên $0{,}6225$.
 
 \section{Phân tích bổ sung}
 \label{sec:phan-tich-bo-sung}

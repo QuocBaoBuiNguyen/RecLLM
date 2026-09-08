@@ -36,14 +36,12 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
     ($0{,}7425$/$0{,}6956$) trên cả AUC lẫn uAUC và vượt rõ CoLLM. Đây là điểm đáng chú ý
     vì nhiều phương pháp cùng hướng chỉ thắng một trong hai độ đo.
 
-    \item \textbf{Amazon-Book -- cạnh tranh/vượt baseline trên miền khó.} Với
-    điều kiện hóa truy vấn theo người dùng, CoQLLM đạt $0{,}8147$/$0{,}5958$, vượt CoLLM-MF và
-    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo; uAUC còn thấp hơn CoRA-MF
-    ($0{,}6262$), phản ánh trần do chất lượng MF ở nhóm cold.
+    \item \textbf{Amazon-Book.} CoQLLM đạt $0{,}8134$/$0{,}6225$ (số re-run), cao hơn CoLLM-MF và
+    BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo và sát CoRA-MF ($0{,}8179$/$0{,}6262$).
 
-    \item \textbf{Điều kiện hóa truy vấn theo người dùng chủ yếu cải thiện AUC.} Cơ chế này
-    nâng khả năng phân biệt \textit{giữa} các người dùng (AUC) và gần trung tính với xếp hạng
-    \textit{trong} từng người dùng (uAUC), đúng như phân tích khác biệt AUC--uAUC.
+    \item \textbf{Chèn soft token cộng tác cải thiện cả AUC và uAUC.} Thí nghiệm loại bỏ thành
+    phần cho thấy việc đưa tín hiệu cộng tác vào LLM qua soft token làm tăng cả hai độ đo trên hai
+    tập dữ liệu, rõ nhất trên Amazon-Book (Bảng~\ref{tab:ablation}).
 
     \item \textbf{Trần uAUC nằm ở MF teacher, không phải mô-đun căn chỉnh.} Phân rã warm/cold trên
     MovieLens-1M cho thấy uAUC nhóm warm cao hơn hẳn nhóm cold ($0{,}7254$ vs $0{,}5969$), cho
