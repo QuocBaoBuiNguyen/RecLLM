@@ -313,11 +313,22 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \subsection{Ưu điểm và hạn chế của Q-Former}
 \label{ssec:diem-manh-han-che}
 
-So với mô-đun chiếu MLP của CoLLM, mô-đun căn chỉnh Q-Former có cơ chế chọn lọc đặc trưng rõ
-ràng hơn qua tập truy vấn học được và self-attention. Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM
-được giữ nguyên khi suy luận -- không có chi phí sinh trọng số theo từng mẫu như hướng sinh
-trọng số của CoRA. Đánh đổi là chi phí huấn luyện mô-đun căn chỉnh cao hơn lớp MLP đơn giản, cần cân
-nhắc tùy điều kiện triển khai.
+So với mô-đun chiếu MLP của CoLLM, mô-đun căn chỉnh Q-Former biến đổi véc-tơ cộng tác bằng một
+tập truy vấn học được, phối hợp qua self-attention và xếp chồng nhiều lớp. Cần nêu rõ giới hạn
+của cơ chế trong cài đặt hiện tại để tránh diễn giải quá mức. Mỗi lần mã hóa, cross-attention
+chỉ đọc \emph{một} token cộng tác ($\mathbf{H}$ có độ dài $1$); khi đó hàm softmax trên một khóa
+duy nhất luôn bằng $1$, nên cross-attention thực chất là một phép đọc có học đối với véc-tơ đó,
+chứ không phải cơ chế chọn lọc trên nhiều thành phần. Do đó, thành phần tạo nên $Q$ biểu diễn
+khác nhau -- và là điểm khác biệt thực sự so với một phép chiếu pointwise -- là tập truy vấn học
+được (mỗi truy vấn khởi tạo riêng), self-attention phối hợp giữa chúng và độ sâu của phép biến
+đổi, không phải khả năng nén hay việc gộp nhiều nguồn bên trong Q-Former. Việc CoQLLM đưa vào
+LLM số soft token nhiều hơn CoLLM ($Q$ so với $1$ trên mỗi véc-tơ) là một yếu tố gây nhiễu khi
+so sánh, không được xem là đóng góp; tách riêng ảnh hưởng của nó là một ablation còn để ngỏ
+(Mục~\ref{sec:han-che}).
+
+Vì tín hiệu cộng tác chỉ đi qua đường soft token, LLM được giữ nguyên khi suy luận -- không có
+chi phí sinh trọng số theo từng mẫu như hướng của CoRA. Đánh đổi là chi phí huấn luyện mô-đun
+căn chỉnh cao hơn lớp MLP đơn giản, cần cân nhắc tùy điều kiện triển khai.
 
 \section{Hạn chế nghiên cứu}
 \label{sec:han-che}

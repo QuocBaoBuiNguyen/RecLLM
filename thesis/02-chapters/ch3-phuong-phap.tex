@@ -198,14 +198,11 @@ self-attention và đọc véc-tơ cộng tác qua cross-attention, qua nhiều 
 căn chỉnh ở giai đoạn tiền huấn luyện biểu diễn. Nhờ đó, biểu diễn đưa vào LLM được điều chỉnh
 theo tác vụ thay vì cố định như một hàm pointwise. Đây là điểm khác biệt cốt lõi so với CoLLM.
 
-Cần làm rõ hai điều để tránh hiểu nhầm và phóng đại. Thứ nhất, việc phối hợp giữa các nguồn
-cộng tác (người dùng, sản phẩm mục tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai
-phương pháp, nên đây không phải là điểm khác biệt giữa CoLLM và Q-Former. Thứ hai, lợi thế của
-Q-Former không đến từ khả năng nén như trong thị giác: mỗi sản phẩm được mã hóa từ một véc-tơ
-cộng tác duy nhất, nên cross-attention chủ yếu đóng vai một phép đọc có học đối với véc-tơ đó
-(chi tiết ở Mục~\ref{ssec:qformer-kien-truc}). Sức mạnh của mô-đun căn chỉnh vì thế nằm ở biểu
-diễn học được qua truy vấn, self-attention và độ sâu của phép biến đổi, chứ không nằm ở số
-lượng token hay việc gộp nhiều nguồn tín hiệu bên trong Q-Former.
+Cần làm rõ để tránh phóng đại: việc phối hợp giữa các nguồn cộng tác (người dùng, sản phẩm mục
+tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai phương pháp, nên không phải là điểm
+khác biệt giữa CoLLM và Q-Former. Vai trò cụ thể của cross-attention trong cài đặt một-token,
+cùng những gì thực sự tạo nên khác biệt so với phép chiếu pointwise, được phân tích ở
+Mục~\ref{ssec:diem-manh-han-che}.
 
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
@@ -218,36 +215,20 @@ mỗi lớp có $8$ đầu attention; nhánh văn bản khởi tạo từ \textt
 cho các mục tiêu căn chỉnh sản phẩm--văn bản ở giai đoạn tiền huấn luyện biểu diễn
 (Mục~\ref{ssec:stage1}). Hình~\ref{fig:qformer} minh họa cấu trúc bên trong.
 
-\textbf{Kiến trúc một lớp.} Véc-tơ cộng tác $e \in \mathbb{R}^{d_{\text{cf}}}$ của sản phẩm cần
-mã hóa trước hết được chiếu về không gian truy vấn thành một ``token'' đầu vào:
+\textbf{Luồng mã hóa.} Véc-tơ cộng tác $e \in \mathbb{R}^{d_{\text{cf}}}$ của sản phẩm cần mã
+hóa trước hết được chiếu về không gian truy vấn thành một token đầu vào:
 \begin{equation}\label{eq:cf-proj}
 \mathbf{H} = e\, W_{\text{cf}} \in \mathbb{R}^{1 \times d_{\text{qf}}}, \qquad
 W_{\text{cf}} \in \mathbb{R}^{d_{\text{cf}} \times d_{\text{qf}}}.
 \end{equation}
-Ký hiệu phép attention có tỉ lệ (scaled dot-product) là
-\begin{equation}\label{eq:attn}
-\operatorname{Attn}(\mathbf{X},\mathbf{Y}) = \operatorname{softmax}\!\Big(
-\tfrac{(\mathbf{X}W_q)(\mathbf{Y}W_k)^\top}{\sqrt{d_h}}\Big)\,(\mathbf{Y}W_v),
-\end{equation}
-với $\mathbf{X}$ đóng vai truy vấn (query), $\mathbf{Y}$ đóng vai khóa--giá trị (key--value) và
-$d_h$ là chiều mỗi đầu attention. Đặt $\mathbf{Q}^{(0)} = \tilde{\mathbf{Q}}$ (tập truy vấn sau
-điều kiện hóa, Mục~\ref{ssec:user-conditioned}); mỗi lớp $\ell = 1,\dots,L$ cập nhật các truy
-vấn qua ba bước liên tiếp (kèm kết nối tắt residual và chuẩn hóa LayerNorm, lược bớt cho gọn):
-\begin{align}
-\mathbf{A}^{(\ell)} &= \mathbf{Q}^{(\ell-1)} + \operatorname{Attn}\!\big(\mathbf{Q}^{(\ell-1)},\,
-  \mathbf{Q}^{(\ell-1)}\big), \label{eq:qf-sa}\\
-\mathbf{C}^{(\ell)} &= \mathbf{A}^{(\ell)} + \operatorname{Attn}\!\big(\mathbf{A}^{(\ell)},\,
-  \mathbf{H}\big), \label{eq:qf-ca}\\
-\mathbf{Q}^{(\ell)} &= \mathbf{C}^{(\ell)} + \operatorname{FFN}\!\big(\mathbf{C}^{(\ell)}\big).
-  \label{eq:qf-ffn}
-\end{align}
-Bước~\eqref{eq:qf-sa} là \textit{self-attention} giữa các truy vấn (query đồng thời là
-$\mathbf{X}$ và $\mathbf{Y}$), cho phép chúng trao đổi thông tin và phân chia vai trò biểu
-diễn; bước~\eqref{eq:qf-ca} là \textit{cross-attention} từ truy vấn đến véc-tơ cộng tác
-$\mathbf{H}$; bước~\eqref{eq:qf-ffn} là mạng truyền thẳng theo vị trí (feed-forward). Sau $L$
-lớp, đầu ra là khối truy vấn
+Tập truy vấn sau điều kiện hóa theo người dùng (Mục~\ref{ssec:user-conditioned})
+$\tilde{\mathbf{Q}} \in \mathbb{R}^{Q \times d_{\text{qf}}}$ cùng token $\mathbf{H}$ được đưa qua
+$L = 4$ lớp Q-Former. Mỗi lớp gồm self-attention giữa các truy vấn, cross-attention từ truy vấn
+tới $\mathbf{H}$, và một mạng truyền thẳng (kèm kết nối tắt residual và chuẩn hóa LayerNorm),
+theo đúng kiến trúc Q-Former của BLIP-2~\cite{blip2_2023}. Ký hiệu toàn bộ chồng lớp là ánh xạ
+$F_{\text{QF}}$, đầu ra là khối truy vấn đã mã hóa
 \begin{equation}\label{eq:qf-out}
-\mathbf{Z} = \mathbf{Q}^{(L)} = \text{cf\_q} \in \mathbb{R}^{Q \times d_{\text{qf}}}.
+\mathbf{Z} = F_{\text{QF}}(\tilde{\mathbf{Q}},\, \mathbf{H}) \in \mathbb{R}^{Q \times d_{\text{qf}}}.
 \end{equation}
 
 \textbf{Lựa chọn số truy vấn.} Số truy vấn $Q = 8$ được chọn dựa trên khảo sát của
@@ -295,19 +276,13 @@ chiếu qua $W_{\text{proj}}$ thành soft token.}
 \end{figure}
 
 Trong CoQLLM, mỗi sản phẩm (sản phẩm mục tiêu và từng sản phẩm trong lịch sử) được Q-Former mã
-hóa \textit{độc lập} từ một véc-tơ cộng tác thành $Q$ soft token. Tín hiệu người dùng không đi
-vào Q-Former dưới dạng đầu vào cross-attention mà được đưa vào qua điều kiện hóa truy vấn
-(Mục~\ref{ssec:user-conditioned}); còn việc kết hợp thông tin \textit{giữa} các sản phẩm được
-thực hiện ở lớp self-attention của LLM trên toàn bộ soft token, chứ không phải bên trong cầu
-nối.
-
-Điều này dẫn tới một khác biệt so với BLIP-2. Trong thị giác, cross-attention nén hàng trăm
-patch thành số truy vấn nhỏ hơn nhiều, nên đóng vai trò nén chính. Trong CoQLLM, do đầu vào chỉ
-là một véc-tơ cộng tác cho mỗi lần mã hóa, cross-attention gần như một phép đọc có học đối với
-véc-tơ đó; điều tạo ra $Q$ biểu diễn khác nhau chính là tập truy vấn học được (mỗi truy vấn
-khởi tạo riêng) cùng self-attention phối hợp giữa chúng. Vì vậy, luận văn xem \textit{tập truy
-vấn học được và self-attention} -- chứ không phải khả năng nén hay việc gộp nhiều nguồn bên
-trong Q-Former -- là thành phần quan trọng của mô-đun căn chỉnh.
+hóa độc lập từ một véc-tơ cộng tác thành $Q$ soft token. Tín hiệu người dùng không đi vào
+Q-Former qua cross-attention mà qua điều kiện hóa truy vấn (Mục~\ref{ssec:user-conditioned});
+việc kết hợp thông tin giữa các sản phẩm được thực hiện ở self-attention của LLM trên toàn bộ
+soft token, chứ không phải bên trong cầu nối. Khác với BLIP-2 -- nơi cross-attention nén hàng
+trăm patch ảnh thành số truy vấn nhỏ hơn -- ở đây mỗi lần mã hóa chỉ có một véc-tơ cộng tác, nên
+Q-Former không đóng vai trò nén. Hệ quả của thiết kế một token này đối với vai trò của
+cross-attention được phân tích ở Mục~\ref{ssec:diem-manh-han-che}.
 
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
