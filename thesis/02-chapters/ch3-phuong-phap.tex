@@ -44,70 +44,72 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
                  draw=iceline, fill=icefill, text=black, align=center, thick, inner sep=3pt},
   cfb/.style={rectangle, rounded corners=2pt, draw=iceline!80!black, fill=iceline, text=white, align=center, font=\scriptsize, inner sep=3pt},
   yb/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!25, align=center, thick, minimum width=26mm, minimum height=8mm},
+  qbar/.style={rectangle, rounded corners=1.5pt, draw=orange!70!black, align=center, minimum width=30mm, minimum height=6mm, font=\scriptsize},
   io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=left, font=\scriptsize, inner sep=3pt},
   outb/.style={rectangle, rounded corners=2pt, draw=green!55!black, fill=green!18, align=center, thick, inner sep=3pt},
   note/.style={align=center, font=\scriptsize, text=black!72},
   arr/.style={->, semithick, black!65}, lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
 ]
 \def\cx{5.8}
-% ---- cột trái: MF -> véc-tơ CF ----
-\node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (2.6,0.3) {\textbf{Phân rã ma trận (MF)}\,\snow};
+% ---- cột trái: MF -> item CF ----
+\node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (2.6,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
 \node[note, below=1mm of mf]{\textit{Đầu vào:} người dùng $u$, lịch sử $\mathcal{H}_u$, sản phẩm $i$};
-\node[cfb, minimum width=34mm] (cf) at (2.6,2.2) {Véc-tơ CF sản phẩm $e$\\ (mỗi lần một sản phẩm)};
+\node[cfb, minimum width=22mm] (cf) at (2.6,1.7) {item CF $e$};
 \draw[arr] (mf) -- (cf);
-% ---- Q-Former (giữa, xếp chồng = chạy mỗi sản phẩm một lần) ----
+% ---- learned queries (dưới, vào Self-Attention) ----
+\tokrow{(\cx,2.0)}{lq}{teal!45}{orange!55}{violet!55}
+\node[note, below=0.4mm of lq]{learned queries};
+\node[lbl, right=2mm of lq, align=left, text width=30mm]{điều kiện hóa truy vấn $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
+% ---- Q-Former: các khối bên trong ----
+\node[qbar, fill=orange!34] (qsa) at (\cx,3.1) {Self-Attention};
+\node[qbar, fill=orange!48, above=2mm of qsa] (qca) {Cross-Attention};
+\node[qbar, fill=orange!28, above=2mm of qca] (qff) {Feed-Forward};
 \begin{scope}[on background layer]
-  \node[yb, fill=orange!16, draw=orange!50] at ($(\cx,3.6)+(3mm,2mm)$) {};
-  \node[yb, fill=orange!20, draw=orange!60] at ($(\cx,3.6)+(1.5mm,1mm)$) {};
+  \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12, fit=(qsa)(qca)(qff), inner sep=3.5mm] (qf) {};
 \end{scope}
-\node[yb, minimum width=30mm] (qf) at (\cx,3.6) {Q-Former\,\fire};
-\node[note, below=0.5mm of qf, text=black!60, font=\scriptsize\itshape]{chạy mỗi sản phẩm một lần};
-% véc-tơ CF -> hông Q-Former (dây thẳng orthogonal, vào cạnh trái)
-\draw[arr, rounded corners=2pt] (cf.east) |- (qf.west);
-\node[lbl, above left=0.5mm and -6mm of qf.west]{cross-attention (KV$=1$)};
-% ---- phải: truy vấn học được ----
-\tokrow{(9.4,3.6)}{lq}{teal!45}{orange!55}{violet!55}
-\node[note, below=0.4mm of lq]{Truy vấn học được $\mathbf{Q}{=}8$};
-\node[lbl, above=0.6mm of lq, align=center, text width=34mm]{điều kiện hóa truy vấn $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
-\draw[arr] (lq.west) -- (qf.east);
+\node[anchor=west, align=left, text=orange!45!black, font=\scriptsize] at ($(qf.east)+(2mm,0)$)
+  {\textbf{Q-Former}\,\fire\\ \textnormal{(huấn luyện)}\\ \textnormal{$\times 4$ lớp}};
+\draw[arr] (qsa) -- (qca);
+\draw[arr] (qca) -- (qff);
+\draw[arr] (lq) -- (qsa);                                  % queries -> Self-Attention
+\draw[arr, rounded corners=3pt] (cf.north) |- (qca.west);  % item CF -> Cross-Attention (hông, dây thẳng)
+\node[lbl, anchor=south east] at ($(qca.west)+(-1mm,1mm)$){tín hiệu CF};
 % ---- spine dọc: Lớp chiếu -> soft token -> prompt -> LLM ----
-\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,5.1) {Lớp chiếu $W_{\text{proj}}$\,\fire};
-\draw[arr] (qf) -- (lin);
-\tokrow{(\cx,6.4)}{st}{teal!45}{orange!55}{violet!55}
-\node[note, right=2mm of st, align=left]{8 soft token / sản phẩm};
+\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,5.9) {Lớp chiếu $W_{\text{proj}}$\,\fire};
+\draw[arr] (qff) -- (lin);
+\tokrow{(\cx,7.0)}{st}{teal!45}{orange!55}{violet!55}
+\node[note, right=2mm of st, align=left]{Soft token $[8,768]$};
 \draw[arr] (lin) -- (st);
 % prompt (kiểu CoLLM; ô cam = vị trí chèn soft token CF)
-\node[io, text width=64mm] (prompt) at (\cx,8.1)
+\node[io, text width=76mm] (prompt) at (\cx,8.7)
   {\textbf{Prompt (chỉ dẫn)}\\[1.5pt]
    \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
    interaction-history signals are \hlcf{ItemIDList}. Predict whether the user would enjoy
    \ph{teal!55!black}{TargetItemTitle}. \hlcf{TargetItemID} Answer with ``Yes''/``No''. \texttt{ASSISTANT:}};
 \draw[arr] (st) -- (prompt);
 % LLM + LoRA
-\node[frozen, trapezium stretches=true, minimum width=96mm, minimum height=12mm] (llm) at (\cx,10.2)
+\node[frozen, trapezium stretches=true, minimum width=96mm, minimum height=12mm] (llm) at (\cx,11.0)
   {\textbf{\large LLM Vicuna-7B-v1.5}\quad \snow\,\textit{đóng băng}};
 \node[yb, right=8mm of llm, minimum width=20mm] (lora) {\fire\,\textbf{LoRA}};
 \draw[->, thick, orange!75!black] (lora.west) to[out=180,in=0] (llm.east);
 \draw[arr] (prompt) -- (llm);
 % output
-\node[outb] (o) at (\cx,11.9) {\textbf{Yes / No}\ (CTR)};
+\node[outb] (o) at (\cx,12.6) {\textbf{Yes / No}\ (CTR)};
 \draw[arr] (llm) -- (o);
 % ---- legend (tiếng Việt, gọn) ----
 \node[draw, rounded corners, align=left, font=\scriptsize, anchor=north, inner sep=4pt] at (\cx,-1.4)
   {\tikz\filldraw[fill=icefill,draw=iceline](0,0)rectangle(3.2mm,3.2mm);\ Đóng băng \snow\quad
    \tikz\filldraw[fill=orange!25,draw=orange!80!black](0,0)rectangle(3.2mm,3.2mm);\ Huấn luyện \fire\quad
-   \tikz\filldraw[fill=iceline,draw=iceline!80!black](0,0)rectangle(3.2mm,3.2mm);\ véc-tơ CF\quad
+   \tikz\filldraw[fill=iceline,draw=iceline!80!black](0,0)rectangle(3.2mm,3.2mm);\ item CF\quad
    \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ đầu ra\\[3pt]
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
 }
-\caption{Kiến trúc tổng quan của CoQLLM. Mô-đun MF cung cấp biểu diễn cộng tác; mô-đun căn chỉnh
-Q-Former biến \emph{mỗi} véc-tơ cộng tác thành 8 soft token nhờ tập truy vấn học được
-(cross-attention với KV độ dài 1, trọng số chia sẻ, chạy độc lập cho từng sản phẩm: mục tiêu và
-mỗi sản phẩm trong lịch sử). Các soft token được đặt vào hai vị trí \texttt{<ItemIDList>}
-($L\times8$) và \texttt{<TargetItemID>} ($8$) của prompt; việc trộn thông tin giữa các sản phẩm
-diễn ra ở self-attention của LLM, không ở Q-Former. Chỉ Q-Former, các lớp chiếu và bộ chuyển thể
-LoRA được cập nhật theo từng giai đoạn huấn luyện.}
+\caption{Kiến trúc tổng quan của CoQLLM. MF cung cấp biểu diễn cộng tác; Q-Former biến
+\emph{mỗi} véc-tơ CF thành 8 soft token (cross-attention KV độ dài 1, chạy độc lập cho từng sản
+phẩm), rồi chèn vào prompt tại \texttt{<ItemIDList>} ($L\times8$) và \texttt{<TargetItemID>}
+($8$); việc trộn giữa các sản phẩm diễn ra ở self-attention của LLM. Chỉ Q-Former, lớp chiếu và
+LoRA được huấn luyện.}
 \label{fig:kien-truc}
 \end{figure}
 
