@@ -132,7 +132,7 @@ học ở bước trước được giữ cố định theo cấu hình mặc đ
 
 Ưu điểm của CoLLM nằm ở cấu trúc đơn giản và chi phí bổ sung tương đối nhỏ. Tuy nhiên,
 phép ánh xạ MLP được áp dụng độc lập trên từng embedding. Cùng một hàm ánh xạ cố định được
-dùng cho mọi mẫu, nên mô-đun chưa học một biểu diễn được căn chỉnh riêng với không gian ngữ
+dùng cho mọi mẫu, nên mô-đun chưa học biểu diễn được căn chỉnh riêng với không gian ngữ
 nghĩa của LLM và không có cơ chế thích nghi biểu diễn theo từng người dùng ở phía căn chỉnh.
 
 \subsection{Căn chỉnh tương phản: SellaRec}
@@ -144,7 +144,7 @@ của cùng một sản phẩm trong không gian CF và không gian ngôn ngữ;
 đồng thời đẩy xa các sản phẩm, các biểu diễn không tương ứng. Cơ chế này cung cấp một
 mục tiêu huấn luyện trực tiếp cho việc thu hẹp khoảng cách giữa hai không gian biểu diễn. Trong khi đó,
 Q-Former đại diện cho một cơ chế khác: thay vì căn chỉnh chủ yếu thông qua một mục tiêu
-tương phản ở mức biểu diễn, Q-Former học một biểu diễn được căn chỉnh cho tín hiệu cộng tác
+tương phản ở mức biểu diễn, Q-Former học biểu diễn được căn chỉnh cho tín hiệu cộng tác
 thông qua các truy vấn học được và attention trước khi chuyển sang không gian của LLM. Vì vậy, SellaRec và CoQLLM có
 thể được xem là hai hướng tiếp cận bổ sung về cơ chế hơn là các biến thể trực tiếp của nhau.
 
@@ -223,7 +223,7 @@ ILM~\cite{ilm2024} & Q-Former và cross-attention & Học biểu diễn căn ch�
 \end{table}
 
 Tổng hợp các công trình cho thấy Q-Former là một hướng đáng khảo sát cho bài toán căn chỉnh
-biểu diễn cộng tác với LLM nhờ khả năng học một biểu diễn được căn chỉnh thông qua các truy vấn học được và attention.
+biểu diễn cộng tác với LLM nhờ khả năng học biểu diễn được căn chỉnh thông qua các truy vấn học được và attention.
 Hướng này vẫn thiếu đánh giá trực tiếp trong bài toán CTR với AUC/uAUC và chưa
 được khảo sát đầy đủ cùng các cơ chế huấn luyện hướng tới đặc tính của hai độ đo này. Đây là
 khoảng trống mà luận văn tập trung giải quyết.
@@ -258,7 +258,7 @@ Thiết kế này cho phép BLIP-2 đạt hiệu quả cao trên các tác vụ 
 ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa ảnh và LLM.
 
 Đối với bài toán của luận văn, đặc trưng ảnh được thay thế bằng biểu diễn cộng tác. Khi đó,
-Q-Former được sử dụng như một mô-đun căn chỉnh: các truy vấn học được học một biểu diễn được
+Q-Former được sử dụng như một mô-đun căn chỉnh: các truy vấn học được học biểu diễn được
 căn chỉnh cho từng véc-tơ cộng tác (embedding của sản phẩm mục tiêu và của mỗi sản phẩm trong
 lịch sử), có điều kiện hóa theo người dùng, trước khi chuyển sang không gian embedding của LLM.
 Việc trộn thông tin giữa các sản phẩm sau đó diễn ra ở self-attention của LLM, không ở Q-Former.
@@ -272,7 +272,7 @@ diễn đầy đủ bằng văn bản. Thứ hai, các cơ chế tích hợp hi�
 chỉnh giữa không gian cộng tác và không gian ngôn ngữ.
 
 CoLLM cung cấp một baseline đơn giản dựa trên phép chiếu MLP pointwise cố định, trong khi
-Q-Former học một biểu diễn được căn chỉnh cho mỗi véc-tơ cộng tác thông qua truy vấn học được và attention.
+Q-Former học biểu diễn được căn chỉnh cho mỗi véc-tơ cộng tác thông qua truy vấn học được và attention.
 ILM cho thấy hướng Q-Former có thể áp dụng trong gợi ý, nhưng chưa đánh giá theo AUC/uAUC
 trong thiết lập CTR tương tự CoLLM. Do đó, luận văn tập trung vào việc xây dựng và đánh giá
 một mô-đun căn chỉnh Q-Former trong cùng nhóm bài toán, đồng thời khảo sát các cơ chế huấn

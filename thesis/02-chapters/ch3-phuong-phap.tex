@@ -4,8 +4,7 @@
 
 Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
 Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
-Q-Former như một mô-đun căn chỉnh học một biểu diễn cộng tác mới, phù hợp hơn với không gian
-của LLM so với phép chiếu pointwise cố định của CoLLM, kèm điều kiện hóa theo người dùng. Các thành phần của mô hình được trình bày lần lượt:
+Q-Former như một mô-đun học biểu diễn cộng tác được căn chỉnh với không gian của LLM, phù hợp hơn so với phép chiếu pointwise cố định của CoLLM, kèm điều kiện hóa theo người dùng. Các thành phần của mô hình được trình bày lần lượt:
 kiến trúc tổng thể, mô-đun MF, mô-đun căn chỉnh Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
 huấn luyện ba giai đoạn.
 
@@ -37,7 +36,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 
 \begin{figure}[tbp]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.88\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\footnotesize, >={Stealth[length=2mm]},
   frozen/.style={trapezium, trapezium left angle=70, trapezium right angle=70,
@@ -52,20 +51,20 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 ]
 \def\cx{5.8}
 % ---- cột trái: MF -> item CF ----
-\node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (2.6,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
+\node[frozen, minimum width=40mm, minimum height=10mm] (mf) at (\cx,0) {\textbf{Phân rã ma trận (MF)}\,\snow};
 \node[note, below=1mm of mf]{\textit{Đầu vào:} người dùng $u$, lịch sử $\mathcal{H}_u$, sản phẩm $i$};
-\node[cfb, minimum width=22mm] (cf) at (2.6,1.7) {item CF $e$};
-\draw[arr] (mf) -- (cf);
+\node[cfb, minimum width=22mm] (cf) at (2.4,2.2) {item CF $e$};
+\draw[arr] (mf.west) -| (cf.south);
 % ---- learned queries (dưới, vào Self-Attention) ----
-\tokrow{(\cx,2.0)}{lq}{teal!45}{orange!55}{violet!55}
+\tokrow{(\cx,1.7)}{lq}{teal!45}{orange!55}{violet!55}
 \node[note, below=0.4mm of lq]{learned queries};
 \node[lbl, right=2mm of lq, align=left, text width=30mm]{điều kiện hóa truy vấn $\tilde{\mathbf{Q}}=\mathbf{Q}+g_u(e_u)$};
 % ---- Q-Former: các khối bên trong ----
-\node[qbar, fill=orange!34] (qsa) at (\cx,3.1) {Self-Attention};
-\node[qbar, fill=orange!48, above=2mm of qsa] (qca) {Cross-Attention};
-\node[qbar, fill=orange!28, above=2mm of qca] (qff) {Feed-Forward};
+\node[qbar, fill=orange!34] (qsa) at (\cx,2.9) {Self-Attention};
+\node[qbar, fill=orange!48, above=3mm of qsa] (qca) {Cross-Attention};
+\node[qbar, fill=orange!28, above=3mm of qca] (qff) {Feed-Forward};
 \begin{scope}[on background layer]
-  \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12, fit=(qsa)(qca)(qff), inner sep=3.5mm] (qf) {};
+  \node[draw=orange!80!black, thick, rounded corners=3pt, fill=orange!12, fit=(qsa)(qca)(qff), inner sep=5mm] (qf) {};
 \end{scope}
 \node[anchor=west, align=left, text=orange!45!black, font=\scriptsize] at ($(qf.east)+(2mm,0)$)
   {\textbf{Q-Former}\,\fire\\ \textnormal{(huấn luyện)}\\ \textnormal{$\times 4$ lớp}};
@@ -75,26 +74,26 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \draw[arr, rounded corners=3pt] (cf.north) |- (qca.west);  % item CF -> Cross-Attention (hông, dây thẳng)
 \node[lbl, anchor=south east] at ($(qca.west)+(-1mm,1mm)$){tín hiệu CF};
 % ---- spine dọc: Lớp chiếu -> soft token -> prompt -> LLM ----
-\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,5.9) {Lớp chiếu $W_{\text{proj}}$\,\fire};
+\node[yb, minimum width=24mm, minimum height=7mm] (lin) at (\cx,6.1) {Lớp chiếu $W_{\text{proj}}$\,\fire};
 \draw[arr] (qff) -- (lin);
-\tokrow{(\cx,7.0)}{st}{teal!45}{orange!55}{violet!55}
+\tokrow{(\cx,7.2)}{st}{teal!45}{orange!55}{violet!55}
 \node[note, right=2mm of st, align=left]{Soft token $[8,768]$};
 \draw[arr] (lin) -- (st);
 % prompt (kiểu CoLLM; ô cam = vị trí chèn soft token CF)
-\node[io, text width=76mm] (prompt) at (\cx,8.7)
+\node[io, text width=76mm] (prompt) at (\cx,8.8)
   {\textbf{Prompt (chỉ dẫn)}\\[1.5pt]
    \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
    interaction-history signals are \hlcf{ItemIDList}. Predict whether the user would enjoy
    \ph{teal!55!black}{TargetItemTitle}. \hlcf{TargetItemID} Answer with ``Yes''/``No''. \texttt{ASSISTANT:}};
 \draw[arr] (st) -- (prompt);
 % LLM + LoRA
-\node[frozen, trapezium stretches=true, minimum width=96mm, minimum height=12mm] (llm) at (\cx,11.0)
-  {\textbf{\large LLM Vicuna-7B-v1.5}\quad \snow\,\textit{đóng băng}};
+\node[frozen, trapezium stretches=true, minimum width=82mm, minimum height=10mm] (llm) at (\cx,10.7)
+  {\textbf{LLM Vicuna-7B-v1.5}\,\snow};
 \node[yb, right=8mm of llm, minimum width=20mm] (lora) {\fire\,\textbf{LoRA}};
 \draw[->, thick, orange!75!black] (lora.west) to[out=180,in=0] (llm.east);
 \draw[arr] (prompt) -- (llm);
 % output
-\node[outb] (o) at (\cx,12.6) {\textbf{Yes / No}\ (CTR)};
+\node[outb] (o) at (\cx,12.1) {\textbf{Yes / No}\ (CTR)};
 \draw[arr] (llm) -- (o);
 % ---- legend (tiếng Việt, gọn) ----
 \node[draw, rounded corners, align=left, font=\scriptsize, anchor=north, inner sep=4pt] at (\cx,-1.4)
@@ -105,11 +104,10 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
    \textbf{Huấn luyện 3 giai đoạn}: biểu diễn $\to$ sinh $\to$ tinh chỉnh CTR};
 \end{tikzpicture}%
 }
-\caption{Kiến trúc tổng quan của CoQLLM. MF cung cấp biểu diễn cộng tác; Q-Former biến mỗi
-véc-tơ CF thành các soft token căn chỉnh (cross-attention KV độ dài 1, chạy độc lập cho từng sản
-phẩm), đặt vào prompt tại \texttt{<ItemIDList>} ($L\times8$) và \texttt{<TargetItemID>}
-($8$); việc trộn giữa các sản phẩm diễn ra ở self-attention của LLM. Chỉ Q-Former, lớp chiếu và
-LoRA được huấn luyện.}
+\caption{Kiến trúc tổng quan của CoQLLM. Q-Former biến mỗi véc-tơ CF thành soft token căn chỉnh
+(cross-attention KV độ dài 1, chạy độc lập cho từng sản phẩm), đặt vào prompt tại
+\texttt{<ItemIDList>}/\texttt{<TargetItemID>}; việc trộn giữa các sản phẩm diễn ra ở LLM. Chỉ
+Q-Former, lớp chiếu và LoRA được huấn luyện.}
 \label{fig:kien-truc}
 \end{figure}
 
@@ -191,10 +189,10 @@ g_\phi(\mathbf{x}) = \mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathb
 với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$. Phép biến đổi này được áp
 dụng độc lập trên từng embedding cộng tác. Cần lưu ý rằng MLP đã là một phép biến đổi phi
 tuyến; hạn chế mà luận văn quan tâm không nằm ở tính tuyến tính hay phi tuyến, mà ở chỗ đây là
-một phép chiếu cố định, dùng chung cho mọi mẫu: nó chưa học một biểu diễn được căn chỉnh riêng
+một phép chiếu cố định, dùng chung cho mọi mẫu: nó chưa học biểu diễn được căn chỉnh riêng
 với không gian ngữ nghĩa của LLM và không thích nghi theo từng người dùng.
 
-Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định, mô-đun này học một biểu diễn
+Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định, mô-đun này học biểu diễn
 được căn chỉnh cho mỗi véc-tơ cộng tác: một tập truy vấn học được phối hợp với nhau qua
 self-attention và đọc véc-tơ cộng tác qua cross-attention, qua nhiều lớp và qua các mục tiêu
 căn chỉnh ở giai đoạn tiền huấn luyện biểu diễn. Nhờ đó, biểu diễn đưa vào LLM được điều chỉnh
@@ -357,26 +355,6 @@ vi một người dùng}, cơ chế này có thể nâng khả năng phân biệ
 nền riêng theo từng người dùng -- có thể nhỏ hơn. Giả thuyết này được đối chiếu với kết quả
 thực nghiệm ở Chương~\ref{Chapter4}. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng
 không, cơ chế tương thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
-
-\subsection{Biểu diễn cộng tác đa token}
-\label{ssec:da-token}
-
-Do Q-Former sử dụng $Q = 8$ truy vấn học được, đầu ra của nó là $Q$ véc-tơ. CoQLLM chiếu toàn
-bộ $Q$ véc-tơ này qua lớp chiếu và đưa vào LLM như $Q$ soft token riêng biệt cho mỗi sản phẩm
-(sản phẩm mục tiêu và từng sản phẩm trong lịch sử). Đây là \textit{hệ quả trực tiếp} của việc
-dùng nhiều truy vấn, không phải một mô-đun được thiết kế thêm: giữ nguyên cả $Q$ véc-tơ cho
-phép mỗi truy vấn truyền một khía cạnh biểu diễn khác nhau tới LLM, thay vì phải hợp nhất về
-một véc-tơ duy nhất trước khi đi vào mô hình ngôn ngữ.
-
-Điểm này tạo một khác biệt so với CoLLM~\cite{collm2023}, vốn cô đọng mỗi véc-tơ cộng tác
-thành đúng một soft token. Với cùng số nguồn cộng tác, CoQLLM đưa vào LLM số soft token gấp $Q$
-lần, tức băng thông biểu diễn cao hơn. Luận văn ghi nhận đây là một \textit{yếu tố gây nhiễu}
-(confound) cần lưu ý khi so sánh với CoLLM, chứ không xem việc dùng nhiều token là một đóng góp
-riêng.
-
-Việc tách riêng ảnh hưởng của số lượng soft token (một token so với $Q$ token) dưới cùng một
-backbone chưa được thực hiện trong luận văn; đây là một ablation còn để ngỏ, được ghi nhận minh
-bạch ở Mục~\ref{sec:han-che}.
 
 \section{Huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
