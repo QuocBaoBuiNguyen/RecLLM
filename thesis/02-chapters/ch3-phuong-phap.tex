@@ -119,10 +119,9 @@ huấn luyện.}
 \end{figure}
 
 Phần lớn tham số của hệ thống được giữ cố định trong quá trình huấn luyện. Cả MF lẫn backbone
-LLM đều được đóng băng, trong khi Q-Former, các lớp chiếu và LoRA~\cite{lora2021} được cập
-nhật ở các giai đoạn tương ứng. Tín hiệu cộng tác chỉ đi vào LLM qua soft token trong không
-gian đầu vào, không thông qua cơ chế sinh trọng số theo từng mẫu. Thiết kế này tách tương đối
-rõ vai trò của mô hình cộng tác, mô-đun căn chỉnh và mô hình ngôn ngữ, qua đó thuận lợi cho
+LLM đều được đóng băng, trong khi Q-Former, các lớp chiếu và LoRA~\cite{lora2021} được cập nhật tùy theo từng giai đoạn huấn luyện.
+Thông tin cộng tác được tích hợp vào LLM thông qua các soft token được ánh xạ trực tiếp vào không gian biểu diễn đầu vào của mô hình.
+Thiết kế này tách tương đối rõ vai trò của mô hình cộng tác, mô-đun căn chỉnh và mô hình ngôn ngữ, qua đó thuận lợi cho
 việc phân tích đóng góp của từng thành phần.
 
 \section{Mô-đun phân rã ma trận}
@@ -131,7 +130,7 @@ việc phân tích đóng góp của từng thành phần.
 Mô-đun MF đóng vai trò cung cấp biểu diễn cộng tác đầu vào cho CoQLLM. Gọi $\mathcal{U}$ và
 $\mathcal{I}$ lần lượt là tập người dùng và tập sản phẩm; tương tác quan sát được biểu diễn
 bằng ma trận $\mathbf{R} \in \{0,1\}^{|\mathcal{U}| \times |\mathcal{I}|}$, trong đó
-$R_{ui}=1$ khi người dùng $u$ có tương tác dương với sản phẩm $i$ (trong luận văn là đánh giá
+$R_{ui}=1$ khi người dùng $u$ có đánh giá tích cực với sản phẩm $i$ (tương ứng với các đánh giá
 $\ge 4$ sao, chi tiết ở Mục~\ref{ssec:dataset}).
 
 Phân rã ma trận~\cite{mf2009} gán cho mỗi người dùng $u$ và mỗi sản phẩm $i$ một véc-tơ ẩn
@@ -144,19 +143,18 @@ Công thức~\eqref{eq:mf-score} có thể được mở rộng với các hệ 
 dùng và sản phẩm, $\hat{y}_{ui} = \mu + b_u + b_i + e_u^\top e_i$~\cite{mf2009}; luận văn dùng
 dạng tích vô hướng cơ bản làm nguồn tín hiệu cộng tác, với chiều ẩn $d = 256$.
 
-Vì bài toán được đặt dưới dạng dự đoán tương tác nhị phân và được đánh giá bằng các độ đo xếp
-hạng (Mục~\ref{ssec:do-do}), MF được huấn luyện bằng mục tiêu xếp hạng cặp
-BPR~\cite{bpr2009}. Với mỗi người dùng $u$, một sản phẩm dương $i$ (đã tương tác) và một sản
-phẩm âm $j$ (lấy mẫu từ các sản phẩm chưa tương tác), BPR khuyến khích điểm của cặp dương cao
-hơn cặp âm:
-\begin{equation}\label{eq:bpr}
-\mathcal{L}_{\text{BPR}} \;=\; -\!\!\sum_{(u,i,j)\in\mathcal{D}_S}\!\!
-  \ln \sigma\!\big(\hat{y}_{ui} - \hat{y}_{uj}\big) \;+\; \lambda \lVert \Theta \rVert^2,
+Do nhãn tương tác được nhị phân hóa ($y_{ui} \in \{0,1\}$, với $y_{ui}=1$ khi đánh giá $\ge 4$
+sao), MF được huấn luyện như một bộ phân loại nhị phân theo hàm mất mát entropy chéo nhị phân
+(binary cross-entropy -- BCE). Điểm tương thích $z_{ui} = e_u^\top e_i$ được đưa qua hàm
+sigmoid $\sigma$ để cho xác suất dự đoán $\hat{p}_{ui} = \sigma(z_{ui})$, và mất mát trên các
+cặp $(u,i)$ có nhãn là:
+\begin{equation}\label{eq:bce-mf}
+\mathcal{L}_{\text{BCE}} \;=\; -\!\!\sum_{(u,i)\in\mathcal{D}}\!\big[\,
+  y_{ui}\log \hat{p}_{ui} + (1-y_{ui})\log\!\big(1-\hat{p}_{ui}\big) \,\big],
 \end{equation}
-trong đó $\sigma$ là hàm sigmoid, $\Theta = \{e_u, e_i\}$ là tập tham số embedding, $\lambda$
-là hệ số điều hòa, và $\mathcal{D}_S$ là tập các bộ ba $(u,i,j)$ được lấy mẫu. Việc tối ưu
-hiệu số $\hat{y}_{ui} - \hat{y}_{uj}$ tương đương với tối đa hóa một xấp xỉ khả vi của AUC, do
-đó phù hợp với độ đo đánh giá của luận văn.
+trong đó $\mathcal{D}$ là tập các cặp người dùng--sản phẩm quan sát được (kèm nhãn). Việc tối
+ưu $\mathcal{L}_{\text{BCE}}$ giúp học các embedding sao cho điểm $z_{ui}$ phản ánh khả năng
+người dùng thích sản phẩm, tạo nguồn tín hiệu cộng tác cho các thành phần phía sau.
 
 Sau khi huấn luyện, MF được \textit{đóng băng} và ba nhóm tín hiệu được trích xuất từ bảng
 embedding đã học để đưa vào mô-đun căn chỉnh: (i)~embedding người dùng $e_u$; (ii)~embedding

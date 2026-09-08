@@ -53,7 +53,7 @@ báo cáo trên tập kiểm tra.
     \item \textbf{CoRA}~\cite{cora2024}: đại diện hướng \textit{sinh trọng số theo từng mẫu} (không soft
     token). Trên Amazon-Book, biến thể CoRA-MF được đưa vào bảng so sánh như một điểm tham
     chiếu cho hướng thiết kế khác với CoQLLM (Mục~\ref{ssec:cora-rel}).
-    \item \textbf{MF}~\cite{bpr2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
+    \item \textbf{MF}~\cite{mf2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
     làm mốc sàn để đo phần đóng góp thêm của mô-đun căn chỉnh CF--LLM.
     \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone
     Qwen2-7B-Base; \textit{lưu ý: CoQLLM dùng Vicuna-7B-v1.5, khác họ backbone, nên so sánh
@@ -99,7 +99,7 @@ khoảng cách ngữ nghĩa CF--LLM).
     nền Llama-2) -- cùng lớp backbone Vicuna instruction-tuned mà CoLLM sử dụng
     (Vicuna-7B-v1.1), nhằm bảo đảm so sánh công bằng; đóng băng hoàn toàn; khuôn mẫu chỉ
     dẫn USER/ASSISTANT.
-    \item \textbf{MF}: phân rã ma trận BPR~\cite{bpr2009}, chiều ẩn $d = 256$, được huấn
+    \item \textbf{MF}: phân rã ma trận huấn luyện bằng entropy chéo nhị phân (BCE), chiều ẩn $d = 256$, được huấn
     luyện và đóng băng trước khi tích hợp.
     \item \textbf{Q-Former}: $Q = 8$ truy vấn, $d_{\text{model}} = 768$, $8$ đầu attention,
     $4$ lớp; nhánh văn bản khởi tạo từ \texttt{bert-base-uncased}.
@@ -136,7 +136,7 @@ CoQLLM chọn checkpoint theo uAUC.}
 \hline
 \textbf{Phương pháp} & \textbf{AUC} & \textbf{uAUC} \\
 \hline
-MF (chỉ cộng tác)~\cite{bpr2009} & 0{,}6482 & 0{,}6361 \\
+MF (chỉ cộng tác)~\cite{mf2009} & 0{,}6482 & 0{,}6361 \\
 \hline
 DIN (chỉ cộng tác) & 0{,}7166 & 0{,}6459 \\
 \hline
