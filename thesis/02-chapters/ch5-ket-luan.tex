@@ -43,10 +43,9 @@ Bảng~\ref{tab:ablation}, có thể rút ra các kết luận sau:
     phần cho thấy việc đưa tín hiệu cộng tác vào LLM qua soft token làm tăng cả hai độ đo trên hai
     tập dữ liệu, rõ nhất trên Amazon-Book (Bảng~\ref{tab:ablation}).
 
-    \item \textbf{Trần uAUC nằm ở MF teacher, không phải mô-đun căn chỉnh.} Phân rã warm/cold trên
-    MovieLens-1M cho thấy uAUC nhóm warm cao hơn hẳn nhóm cold ($0{,}7254$ vs $0{,}5969$), cho
-    thấy hướng cải thiện tiếp theo nằm ở chất lượng embedding MF cho người dùng/sản phẩm nguội
-    (cold).
+    \item \textbf{uAUC và nhóm cold.} Phân rã warm/cold trên MovieLens-1M cho thấy uAUC nhóm
+    warm ($0{,}7254$) cao hơn nhóm cold ($0{,}5969$); quan sát này gợi ý hướng cải thiện uAUC
+    tiếp theo là nâng chất lượng embedding MF cho người dùng/sản phẩm nguội.
 \end{itemize}
 
 \section{Hạn chế nghiên cứu}
