@@ -362,99 +362,123 @@ với việc cộng một hằng số vào điểm dự đoán cuối cùng và 
 sản phẩm của cùng một người dùng. Tác động thực tế của cơ chế lên AUC và uAUC được phân tích ở
 Chương~\ref{Chapter4}.
 
-\section{Huấn luyện ba giai đoạn}
+\section{Quy trình huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
 
-CoQLLM được huấn luyện theo ba giai đoạn nối tiếp, theo quy trình của CoLLM~\cite{collm2023}
-với điều chỉnh cho phù hợp với kiến trúc Q-Former. Quy trình kế thừa tinh thần tách biệt giữa
-học biểu diễn cộng tác, căn chỉnh với không gian ngôn ngữ và tinh chỉnh cho nhiệm vụ gợi ý.
+CoQLLM được huấn luyện theo ba giai đoạn nối tiếp, kế thừa quy trình huấn luyện của
+CoLLM~\cite{collm2023} và được điều chỉnh để phù hợp với kiến trúc Q-Former. Ba giai đoạn lần
+lượt tập trung vào: (i) học mối quan hệ giữa biểu diễn cộng tác và biểu diễn văn bản; (ii) căn
+chỉnh đầu ra của Q-Former với không gian embedding của LLM; và (iii) thích nghi mô hình cho
+nhiệm vụ dự đoán CTR. Cách tổ chức này cho phép từng thành phần của mô hình được tối ưu theo mục
+tiêu tương ứng trước khi kết hợp trong nhiệm vụ khuyến nghị cuối cùng.
 
 \subsection{Tiền huấn luyện biểu diễn}
 \label{ssec:stage1}
 
-Giai đoạn đầu tập trung giúp Q-Former học mối quan hệ giữa biểu diễn cộng tác và thông tin văn
-bản, thông qua bốn mục tiêu:
+Giai đoạn đầu nhằm giúp Q-Former học mối quan hệ giữa biểu diễn cộng tác và thông tin ngữ nghĩa
+của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu:
 
 \begin{itemize}
-    \item \textit{Căn chỉnh sản phẩm--văn bản (ITC)}: tăng độ tương đồng giữa biểu diễn
-    Q-Former của một sản phẩm (từ embedding MF) và biểu diễn văn bản tương ứng (tên phim, thể
-    loại). Đây là mục tiêu căn chỉnh chính.
+    \item \textit{Căn chỉnh sản phẩm--văn bản (ITC)}: tăng độ tương đồng giữa biểu diễn sản
+    phẩm được tạo từ embedding cộng tác và biểu diễn văn bản tương ứng, chẳng hạn tên phim và
+    thể loại. Mục tiêu này trực tiếp khuyến khích hai dạng biểu diễn tiến gần nhau trong không
+    gian đặc trưng.
 
-    \item \textit{So khớp sản phẩm--văn bản (ITM)}: phân loại nhị phân một cặp sản phẩm--văn
-    bản là tương ứng hay không tương ứng.
+    \item \textit{So khớp sản phẩm--văn bản (ITM)}: học phân biệt một cặp sản phẩm--văn bản có
+    tương ứng với nhau hay không. Mục tiêu được xây dựng dưới dạng bài toán phân loại nhị phân
+    trên các cặp khớp và không khớp.
 
-    \item \textit{Sinh văn bản có điều kiện (ITG)}: sử dụng biểu diễn sản phẩm để hỗ trợ sinh
-    mô tả văn bản.
+    \item \textit{Sinh văn bản có điều kiện (ITG)}: sử dụng biểu diễn sản phẩm làm điều kiện để
+    sinh nội dung văn bản mô tả tương ứng. Qua đó, Q-Former được khuyến khích duy trì những
+    thông tin cần thiết để hỗ trợ quá trình sinh ngôn ngữ ở các giai đoạn tiếp theo.
 
-    \item \textit{Tương phản người dùng--sản phẩm}: đưa các cặp tương tác dương lại gần nhau và
-    tách các cặp âm trong không gian biểu diễn.
+    \item \textit{Tương phản người dùng--sản phẩm}: tăng mức độ tương đồng giữa biểu diễn của
+    các cặp người dùng--sản phẩm có tương tác dương, đồng thời tách biệt chúng khỏi các cặp âm
+    trong không gian biểu diễn.
 \end{itemize}
 
-Một vấn đề thực tế là sự mất cân bằng giữa số cặp người dùng--sản phẩm và số cặp sản phẩm--văn
-bản. Trên MovieLens-1M, số cặp người dùng--sản phẩm dương khoảng $888$ nghìn, trong khi số cặp
-sản phẩm--văn bản chỉ khoảng $3$ nghìn (tỉ lệ khoảng $0{,}34\%$). Nếu lấy mẫu trực tiếp từ toàn
-bộ dữ liệu, các mục tiêu ITC/ITM/ITG có thể được kích hoạt quá ít trong từng batch -- điều kiện
-``ít nhất hai mẫu cùng loại'' hiếm khi được thỏa -- và gradient từ mục tiêu người dùng--sản
-phẩm chiếm ưu thế.
+Một vấn đề thực nghiệm ở giai đoạn này là sự mất cân bằng đáng kể giữa số cặp người dùng--sản
+phẩm và số cặp sản phẩm--văn bản. Trên MovieLens-1M, dữ liệu gồm khoảng $888$ nghìn cặp người
+dùng--sản phẩm dương, trong khi chỉ có khoảng $3$ nghìn cặp sản phẩm--văn bản, tương ứng tỉ lệ
+khoảng $0{,}34\%$. Với cách lấy mẫu trực tiếp từ toàn bộ dữ liệu, các mẫu phục vụ cho các mục
+tiêu ITC, ITM và ITG xuất hiện với tần suất thấp trong mỗi batch. Trong khi đó, mục tiêu người
+dùng--sản phẩm được cập nhật thường xuyên hơn và có thể chiếm ưu thế trong tín hiệu gradient.
 
-Để giảm mất cân bằng, luận văn áp dụng hai điều chỉnh, tổng hợp ở
-Bảng~\ref{tab:balance-stage1}:
+Để giảm sự mất cân bằng này, luận văn áp dụng hai điều chỉnh được tổng hợp trong
+Bảng~\ref{tab:balance-stage1}. Thứ nhất, số cặp người dùng--sản phẩm sử dụng ở giai đoạn tiền
+huấn luyện được giới hạn ở mức $20{.}000$, qua đó tăng tỉ lệ tương đối của các cặp sản phẩm--văn
+bản trong mỗi batch và tạo điều kiện để các mục tiêu ITC, ITM và ITG được kích hoạt thường xuyên
+hơn. Thứ hai, trọng số của hàm mất mát người dùng--sản phẩm được giảm từ $1{,}0$ xuống $0{,}5$
+nhằm cân bằng ảnh hưởng của các mục tiêu trong quá trình tối ưu.
 
 \begin{table}[ht]
-\caption{Hai điều chỉnh cân bằng dữ liệu Giai đoạn 1}
+\caption{Hai điều chỉnh cân bằng dữ liệu ở Giai đoạn 1}
 \label{tab:balance-stage1}
 \begin{center}
 \begin{tabular}{|L{4.5cm}|L{2.5cm}|L{5cm}|}
 \hline
 \textbf{Điều chỉnh} & \textbf{Mức áp dụng} & \textbf{Mục đích} \\
 \hline
-Giới hạn số cặp người dùng--sản phẩm ở mức $20{.}000$ & Dữ liệu & Tăng tỉ lệ mẫu sản
-phẩm--văn bản trong batch, giúp các mục tiêu ITC/ITM/ITG được kích hoạt thường xuyên hơn \\
+Giới hạn số cặp người dùng--sản phẩm ở mức $20{.}000$ & Dữ liệu & Tăng tỉ lệ mẫu sản phẩm--văn
+bản trong mỗi batch, giúp các mục tiêu ITC/ITM/ITG được cập nhật thường xuyên hơn \\
 \hline
 Giảm trọng số mất mát người dùng--sản phẩm từ $1{,}0$ xuống $0{,}5$ & Hàm mất mát & Cân bằng
-cường độ gradient giữa các mục tiêu \\
+cường độ gradient giữa các mục tiêu huấn luyện \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
-Danh sách cặp người dùng--sản phẩm kế thừa thứ tự sắp theo thời gian của dữ liệu gốc, nên việc
-lấy phần đầu danh sách sẽ thiên lệch về các tương tác sớm. Để tránh thiên lệch này, danh sách
-được xáo trộn ngẫu nhiên với hạt giống cố định trước khi cắt, biến giới hạn $20{.}000$ thành
-một mẫu ngẫu nhiên đồng nhất mà vẫn bảo đảm tính tái lập.
+Danh sách các cặp người dùng--sản phẩm trong dữ liệu gốc được sắp xếp theo thời gian. Vì vậy,
+việc trực tiếp lấy phần đầu của danh sách có thể làm mẫu huấn luyện thiên về các tương tác xuất
+hiện sớm. Để giảm ảnh hưởng của thứ tự này, danh sách được xáo trộn ngẫu nhiên với hạt giống cố
+định trước khi giới hạn số mẫu. Cách xử lý này đồng thời duy trì tính tái lập của quá trình xây
+dựng dữ liệu.
 
 \subsection{Tiền huấn luyện sinh}
 \label{ssec:stage2}
 
-Ở giai đoạn thứ hai, Q-Former và lớp chiếu được huấn luyện với mục tiêu sinh ngôn ngữ. Từ biểu
-diễn cộng tác đã qua Q-Former, mô hình học tạo ra các soft token mà LLM đóng băng có thể khai
-thác để sinh văn bản mô tả sản phẩm. Có thể xem đây là bước căn chỉnh đầu ra của Q-Former với
-không gian embedding mà LLM sử dụng trong quá trình sinh.
+Ở giai đoạn thứ hai, Q-Former và lớp chiếu sang không gian LLM được huấn luyện với mục tiêu sinh
+ngôn ngữ. Từ biểu diễn cộng tác đã được Q-Former xử lý, mô hình học tạo ra các soft token mà LLM
+đóng băng có thể khai thác để sinh nội dung văn bản mô tả sản phẩm.
 
-\subsection{Tinh chỉnh CTR}
+Giai đoạn này thực hiện bước căn chỉnh giữa đầu ra của Q-Former và không gian embedding của LLM.
+Nếu Giai đoạn 1 tập trung xây dựng mối quan hệ giữa biểu diễn cộng tác và thông tin văn bản, thì
+Giai đoạn 2 tiếp tục chuyển các biểu diễn đã học sang dạng phù hợp với giao diện đầu vào của LLM.
+Sau quá trình này, các trạng thái truy vấn đầu ra của Q-Former có thể được chiếu thành soft token
+và kết hợp trực tiếp với các embedding văn bản trong chuỗi đầu vào của LLM.
+
+\subsection{Tinh chỉnh cho nhiệm vụ CTR}
 \label{ssec:stage3}
 
-Giai đoạn cuối theo quy trình hai bước của CoLLM~\cite{collm2023}.
+Giai đoạn cuối thích nghi mô hình cho nhiệm vụ dự đoán CTR và được thực hiện theo quy trình hai
+bước của CoLLM~\cite{collm2023}.
 
-\textbf{Bước 1 -- Tinh chỉnh LoRA chỉ với thông tin văn bản.} LoRA được huấn luyện bằng prompt
-chỉ chứa tên sản phẩm, thể loại và lịch sử ở dạng văn bản, chưa đưa tín hiệu cộng tác vào. Mục
-tiêu của bước này là giúp LLM thích nghi với nhiệm vụ dự đoán nhị phân từ thông tin ngôn ngữ và
-ổn định hóa mô hình trước khi tiếp nhận soft token cộng tác.
+\textbf{Bước 1 -- Tinh chỉnh LoRA chỉ với thông tin văn bản.} Ở bước đầu, LoRA được tinh chỉnh
+bằng các prompt chỉ chứa thông tin văn bản, chẳng hạn tên sản phẩm, thể loại và lịch sử tương
+tác được biểu diễn dưới dạng văn bản. Tín hiệu cộng tác do Q-Former sinh ra chưa được sử dụng ở
+bước này. Mục tiêu là giúp LLM thích nghi với dạng bài toán dự đoán nhị phân trước khi tích hợp
+thêm biểu diễn cộng tác.
+
+Sau bước này, các tham số LoRA được giữ cố định và checkpoint tương ứng được sử dụng để khởi tạo
+bước huấn luyện tiếp theo.
 
 \textbf{Bước 2 -- Tinh chỉnh mô-đun căn chỉnh với tín hiệu cộng tác.} Mô hình được khởi tạo từ
-checkpoint của Bước 1. LoRA được giữ cố định, trong khi Q-Former và các lớp chiếu được cập nhật
-để học cách đưa biểu diễn cộng tác vào LLM dưới dạng soft token -- tách bạch phần ``ngôn ngữ''
-(LoRA, học ở Bước 1) khỏi phần ``cộng tác'' (mô-đun căn chỉnh, học ở Bước 2). Đây cũng là bước
-duy nhất kích hoạt kỹ thuật điều kiện hóa truy vấn theo người dùng
-(Mục~\ref{ssec:user-conditioned}). Nhãn giám sát là ``Yes''/``No'' tương ứng với nhãn
-CTR, và checkpoint tốt nhất được chọn theo uAUC trên tập kiểm định.
+checkpoint của Bước 1. Trong bước này, LoRA được đóng băng, trong khi Q-Former và các lớp chiếu
+được cập nhật để học cách chuyển biểu diễn cộng tác thành các soft token phù hợp với không gian
+đầu vào của LLM. Cách tổ chức này tách quá trình thích nghi LLM với dạng nhiệm vụ ở Bước 1 khỏi
+quá trình học tích hợp tín hiệu cộng tác ở Bước 2.
 
-So với mô-đun chiếu MLP của CoLLM, Q-Former làm tăng chi phí huấn luyện do có nhiều lớp
-attention và tham số hơn. Vì tín hiệu cộng tác chỉ đi qua đường soft token và không sinh trọng
-số theo từng mẫu, LLM được giữ nguyên hoàn toàn khi suy luận. Luận văn xem đây là một đánh đổi
-có chủ đích để khảo sát khả năng căn chỉnh biểu diễn tốt hơn, thay vì giả định chi phí tăng
-thêm là ``không đáng kể''. Chi tiết về số tham số và thời gian huấn luyện được trình bày ở
-Chương~\ref{Chapter4}.
+Cơ chế điều kiện hóa truy vấn theo người dùng trình bày tại Mục~\ref{ssec:user-conditioned} cũng
+được kích hoạt trong bước này. Nhãn giám sát được biểu diễn thông qua hai token ``Yes'' và
+``No'', tương ứng với hai lớp của bài toán dự đoán. Checkpoint cuối cùng được lựa chọn dựa trên
+uAUC trên tập kiểm định.
+
+So với mô-đun ánh xạ MLP của CoLLM, Q-Former làm tăng chi phí huấn luyện do có kiến trúc nhiều
+lớp và số tham số lớn hơn. Tuy nhiên, backbone LLM vẫn được giữ cố định trong giai đoạn tích hợp
+tín hiệu cộng tác; các tham số được cập nhật chủ yếu tập trung ở Q-Former, các lớp chiếu và
+những thành phần huấn luyện hiệu quả tham số được chỉ định cho từng giai đoạn. Chi tiết về số
+tham số có thể huấn luyện và thời gian huấn luyện được trình bày trong Chương~\ref{Chapter4}.
 
 \section{Tổng kết chương}
 \label{sec:ket-chuong-3}
