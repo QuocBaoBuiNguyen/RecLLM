@@ -47,6 +47,7 @@
   \fill[yellow!92!orange] (0.05mm,1.4mm) .. controls (0.5mm,1.8mm) and (0.32mm,2.5mm) .. (0.12mm,2.9mm)
     .. controls (-0.25mm,2.4mm) and (-0.32mm,1.7mm) .. (0.05mm,1.4mm) -- cycle;}}
 \newcommand{\ph}[2]{\texttt{\textcolor{#1}{\textless #2\textgreater}}}
+\newcommand{\hlcf}[1]{{\setlength{\fboxsep}{0.8pt}\colorbox{orange!25}{\texttt{\textcolor{orange!62!black}{\textless #1\textgreater}}}}}
 \newcommand{\tokrow}[5]{%
   \node[draw, rounded corners=2pt, fill=white, inner xsep=1.4mm, inner ysep=1.2mm] (#2) at #1 {%
     \tikz[baseline=-0.6ex]{%

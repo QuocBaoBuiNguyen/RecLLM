@@ -4,8 +4,8 @@
 
 Chương này trình bày kiến trúc CoQLLM, cơ sở thiết kế và quy trình huấn luyện của mô hình.
 Xuất phát từ hạn chế của phép ánh xạ pointwise bằng MLP trong CoLLM, luận văn khảo sát
-Q-Former như một mô-đun căn chỉnh có khả năng tổng hợp nhiều nguồn tín hiệu cộng tác trước
-khi chuyển chúng thành soft token cho LLM. Các thành phần của mô hình được trình bày lần lượt:
+Q-Former như một mô-đun căn chỉnh biểu diễn \textit{mỗi} tín hiệu cộng tác thành nhiều soft token
+(thay cho một token pointwise), có điều kiện hóa theo người dùng, trước khi đưa vào LLM. Các thành phần của mô hình được trình bày lần lượt:
 kiến trúc tổng thể, mô-đun MF, mô-đun căn chỉnh Q-Former, các kỹ thuật huấn luyện bổ sung và quy trình
 huấn luyện ba giai đoạn.
 
@@ -44,8 +44,7 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
                  draw=iceline, fill=icefill, text=black, align=center, thick, inner sep=3pt},
   cfb/.style={rectangle, rounded corners=2pt, draw=iceline!80!black, fill=iceline, text=white, align=center, font=\scriptsize, inner sep=3pt},
   yb/.style={rectangle, rounded corners=2pt, draw=orange!80!black, fill=orange!25, align=center, thick, minimum width=26mm, minimum height=8mm},
-  te/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=center, font=\scriptsize, inner sep=3pt},
-  slot/.style={rectangle, rounded corners=2pt, draw=orange!70!black, fill=orange!12, align=center, font=\scriptsize, inner sep=3pt},
+  io/.style={rectangle, rounded corners=2pt, draw=black!45, fill=gray!12, align=left, font=\scriptsize, inner sep=3pt},
   outb/.style={rectangle, rounded corners=2pt, draw=green!55!black, fill=green!18, align=center, thick, inner sep=3pt},
   note/.style={align=left, font=\scriptsize, text=black!72},
   arr/.style={->, semithick, black!65}, lbl/.style={font=\scriptsize\itshape, inner sep=1.5pt},
@@ -77,30 +76,32 @@ CoQLLM gồm ba khối chính, minh họa ở Hình~\ref{fig:kien-truc}:
 \tokrow{(\sx,7.1)}{st}{green!55!black!70!white}{orange!55}{violet!55}
 \node[note, right=2mm of st]{\textbf{8 soft tokens / item}};
 \draw[arr] (lin) -- (st);
-% ---- prompt bar (two ID slots) ----
-\def\ry{8.9}
-\node[te, text width=20mm] (p0) at (-1.4,\ry) {\texttt{USER:} \dots\ rated \ph{teal!55!black}{titles}, history:};
-\node[slot] (pH) at (2.7,\ry) {\ph{orange!70!black}{ItemIDList}\\ $L\times8$ soft tokens};
-\node[te, text width=18mm] (p1) at (5.7,\ry) {\dots\ enjoy \ph{teal!55!black}{title}?};
-\node[slot] (pT) at (8.6,\ry) {\ph{orange!70!black}{TargetItemID}\\ $8$ soft tokens};
-\node[te, text width=16mm] (p2) at (11.3,\ry) {Answer Yes/No.};
-\draw[arr] (st.north) to[out=90,in=-90] (pH.south);
-\draw[arr] (st.north) to[out=80,in=-90] (pT.south);
-% ---- LLM + LoRA ----
-\node[frozen, trapezium stretches=true, minimum width=120mm, minimum height=13mm] (llm) at (5.0,10.7)
+% ---- LLM + LoRA + full prompt (CoLLM-style, inject points highlighted) ----
+\node[frozen, trapezium stretches=true, minimum width=92mm, minimum height=13mm] (llm) at (7.0,9.6)
   {\textbf{\large LLM Vicuna-7B-v1.5}\quad \snow\,\textit{frozen}};
 \node[yb, right=8mm of llm, minimum width=20mm] (lora) {\fire\,\textbf{LoRA}};
 \draw[->, thick, orange!75!black] (lora.west) to[out=180,in=0] (llm.east);
-\foreach \nd in {p0,pH,p1,pT,p2}{\draw[arr] (\nd) -- (\nd|-llm.south);}
+% full prompt box; the two <...ID> placeholders are the CF inject points
+\node[io, text width=54mm] (prompt) at (-0.8,9.6)
+  {\textbf{Prompt (instruction)}\\[1.5pt]
+   \texttt{USER:} A user has given high ratings to \ph{teal!55!black}{ItemTitleList}. The
+   interaction-history signals are \hlcf{ItemIDList}. Predict whether the user would enjoy
+   \ph{teal!55!black}{TargetItemTitle}. \hlcf{TargetItemID} Answer with ``Yes''/``No''.
+   \texttt{ASSISTANT:}};
+\draw[arr] (prompt.east) -- (prompt.east-|llm.west);
+% CF soft tokens injected at the highlighted ID slots
+\draw[arr] (st.north) to[out=90,in=-90] (llm.south);
+\node[lbl, right=1mm of st, yshift=-6.5mm, text width=42mm, align=left, text=orange!55!black]
+  {CF soft tokens fill \hlcf{ItemIDList} ($L{\times}8$) and \hlcf{TargetItemID} ($8$)};
 % ---- output ----
-\node[outb] (o) at (5.0,12.4) {\textbf{Yes / No}\ (CTR)};
+\node[outb] (o) at (7.0,11.3) {\textbf{Yes / No}\ (CTR)};
 \draw[arr] (llm) -- (o);
-% ---- legend ----
-\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north] at (5.0,-1.5)
+% ---- legend (compact, bottom-left như hình cũ) ----
+\node[draw, rounded corners, align=left, font=\scriptsize, anchor=north west, inner sep=4pt] at (-3.2,-1.4)
   {\tikz\filldraw[fill=icefill,draw=iceline](0,0)rectangle(3.2mm,3.2mm);\ Frozen \snow\quad
    \tikz\filldraw[fill=orange!25,draw=orange!80!black](0,0)rectangle(3.2mm,3.2mm);\ Trained \fire\quad
    \tikz\filldraw[fill=iceline,draw=iceline!80!black](0,0)rectangle(3.2mm,3.2mm);\ CF vector\quad
-   \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ output\quad
+   \tikz\filldraw[fill=green!18,draw=green!55!black](0,0)rectangle(3.2mm,3.2mm);\ output\\[3pt]
    \textbf{3-stage training}: representation $\to$ generative $\to$ CTR};
 \end{tikzpicture}%
 }
@@ -192,19 +193,15 @@ g_\phi(\mathbf{x}) = \mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathb
 với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$. Phép biến đổi này được áp
 dụng độc lập trên từng embedding cộng tác và mỗi embedding tạo ra một soft token. Cần lưu ý
 rằng MLP đã là một phép biến đổi phi tuyến; hạn chế mà luận văn quan tâm không nằm ở tính
-tuyến tính hay phi tuyến, mà ở cách thông tin được tổng hợp.
+tuyến tính hay phi tuyến, mà ở \textit{băng thông biểu diễn} và tính không thích nghi của phép
+ánh xạ, thể hiện ở hai điểm cụ thể sau.
 
-Mỗi embedding cộng tác được biến đổi
-độc lập và ánh xạ thành một soft token trong không gian embedding của LLM. Do có 
-hàm kích hoạt ReLU, phép ánh xạ này đã mang tính phi tuyến; vì vậy, hạn chế được
-xem xét trong luận văn không nằm ở khả năng mô hình hóa phi tuyến, mà chủ yếu ở cách
-thức các tín hiệu cộng tác được xử lý và tổng hợp trước khi đưa vào LLM
-
-Thứ nhất, phép ánh xạ có tính pointwise: đầu ra ứng với một embedding được tính độc lập với
-các embedding còn lại trong cùng mẫu. Vì vậy, embedding người dùng, sản phẩm mục tiêu và lịch
-sử không được phối hợp ở phía mô-đun ánh xạ trước khi đi vào LLM. Thứ hai, mỗi embedding được
-cô đọng thành một soft token duy nhất, nên mô-đun không có một cơ chế riêng để học cách phân
-bổ mức độ chú ý khác nhau cho các nguồn tín hiệu cộng tác theo từng mẫu.
+Thứ nhất, mỗi embedding chỉ được cô đọng thành \textit{một} soft token duy nhất, nên băng thông
+biểu diễn của mỗi tín hiệu cộng tác truyền tới LLM bị giới hạn ở một véc-tơ. Thứ hai, cùng một
+hàm ánh xạ cố định được dùng cho mọi mẫu, nên mô-đun không có cơ chế điều chỉnh biểu diễn theo
+từng người dùng. Cần nói rõ: việc \textit{phối hợp} giữa các nguồn cộng tác (người dùng, sản phẩm
+mục tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai phương pháp, nên không phải là điểm
+khác biệt giữa CoLLM và mô-đun căn chỉnh Q-Former.
 
 Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định cho ra đúng một token, mỗi
 véc-tơ cộng tác được một \textit{tập truy vấn học được} khai triển thành nhiều biểu diễn: các

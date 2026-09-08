@@ -146,8 +146,8 @@ của cùng một sản phẩm trong không gian CF và không gian ngôn ngữ;
 đồng thời đẩy xa các sản phẩm, các biểu diễn không tương ứng. Cơ chế này cung cấp một
 mục tiêu huấn luyện trực tiếp cho việc thu hẹp khoảng cách giữa hai không gian biểu diễn. Trong khi đó,
 Q-Former đại diện cho một cơ chế khác: thay vì căn chỉnh chủ yếu thông qua một mục tiêu
-tương phản ở mức biểu diễn, Q-Former sử dụng các truy vấn học được để chọn lọc và tổng hợp
-tín hiệu cộng tác trước khi chuyển sang không gian của LLM. Vì vậy, SellaRec và CoQLLM có
+tương phản ở mức biểu diễn, Q-Former sử dụng các truy vấn học được để tái biểu diễn mỗi
+tín hiệu cộng tác thành nhiều token trước khi chuyển sang không gian của LLM. Vì vậy, SellaRec và CoQLLM có
 thể được xem là hai hướng tiếp cận bổ sung về cơ chế hơn là các biến thể trực tiếp của nhau.
 
 SellaRec đã được đánh giá trên bài toán CTR với AUC và uAUC trên MovieLens-1M và Amazon-Book, do đó
@@ -210,7 +210,7 @@ luận ở trên.
 \hline
 \textbf{Phương pháp} & \textbf{Cơ chế tích hợp} & \textbf{Điểm mạnh} & \textbf{Hạn chế / Lưu ý} \\
 \hline
-CoLLM~\cite{collm2023} & MLP pointwise, mỗi embedding thành một soft token & Đơn giản; baseline mạnh & Ánh xạ độc lập; thiếu cơ chế tổng hợp và chọn lọc thích nghi \\
+CoLLM~\cite{collm2023} & MLP pointwise, mỗi embedding thành một soft token & Đơn giản; baseline mạnh & Ánh xạ độc lập; mỗi véc-tơ chỉ một token, không thích nghi theo người dùng \\
 \hline
 SellaRec~\cite{sellarec2024} & Học tương phản & Căn chỉnh trực tiếp hai không gian biểu diễn & Khác backbone; khó quy chênh lệch số liệu hoàn toàn cho cơ chế \\
 \hline
@@ -218,14 +218,14 @@ BinLLM~\cite{binllm2024} & Mã hóa nhị phân & Giao diện đơn giản với
 \hline
 CoRA~\cite{cora2024} & Sinh trọng số theo từng mẫu & Cá nhân hóa sâu trong tính toán của LLM & Can thiệp vào trọng số thay vì không gian đầu vào \\
 \hline
-ILM~\cite{ilm2024} & Q-Former và cross-attention & Có khả năng chọn lọc và tổng hợp tín hiệu & Chưa báo cáo AUC/uAUC theo thiết lập CoLLM \\
+ILM~\cite{ilm2024} & Q-Former và cross-attention & Biểu diễn tín hiệu bằng truy vấn học được (nhiều token) & Chưa báo cáo AUC/uAUC theo thiết lập CoLLM \\
 \hline
 \end{tabular}
 \end{center}
 \end{table}
 
 Tổng hợp các công trình cho thấy Q-Former là một hướng đáng khảo sát cho bài toán căn chỉnh
-biểu diễn cộng tác với LLM nhờ khả năng tổng hợp tín hiệu thông qua các truy vấn học được.
+biểu diễn cộng tác với LLM nhờ khả năng biểu diễn mỗi tín hiệu cộng tác thành nhiều token thông qua các truy vấn học được.
 Hướng này vẫn thiếu đánh giá trực tiếp trong bài toán CTR với AUC/uAUC và chưa
 được khảo sát đầy đủ cùng các cơ chế huấn luyện hướng tới đặc tính của hai độ đo này. Đây là
 khoảng trống mà luận văn tập trung giải quyết.
@@ -260,9 +260,10 @@ Thiết kế này cho phép BLIP-2 đạt hiệu quả cao trên các tác vụ 
 ngữ mà chỉ cần huấn luyện Q-Former nhẹ, giữ nguyên bộ mã hóa ảnh và LLM.
 
 Đối với bài toán của luận văn, đặc trưng ảnh được thay thế bằng biểu diễn cộng tác. Khi đó,
-Q-Former được sử dụng như một mô-đun căn chỉnh: các truy vấn học được tổng hợp thông tin
-từ embedding người dùng, sản phẩm mục tiêu và lịch sử trước khi đầu ra được chuyển sang
-không gian embedding của LLM.
+Q-Former được sử dụng như một mô-đun căn chỉnh: các truy vấn học được biến đổi \textit{từng}
+véc-tơ cộng tác (embedding của sản phẩm mục tiêu và của mỗi sản phẩm trong lịch sử) thành nhiều
+soft token, có điều kiện hóa theo người dùng, trước khi chuyển sang không gian embedding của LLM.
+Việc tổng hợp giữa các sản phẩm sau đó diễn ra ở self-attention của LLM, không ở Q-Former.
 
 \section{Khoảng trống nghiên cứu và định hướng đề xuất}
 \label{sec:tong-ket-ch2}
@@ -272,8 +273,8 @@ cộng tác vào LLM dưới dạng biểu diễn nén là cần thiết khi l�
 diễn đầy đủ bằng văn bản. Thứ hai, các cơ chế tích hợp hiện có khác nhau đáng kể về cách căn
 chỉnh giữa không gian cộng tác và không gian ngôn ngữ.
 
-CoLLM cung cấp một baseline đơn giản dựa trên MLP pointwise, trong khi Q-Former cung cấp
-khả năng tổng hợp nhiều nguồn tín hiệu thông qua truy vấn học được và attention.
+CoLLM cung cấp một baseline đơn giản dựa trên MLP pointwise (mỗi véc-tơ một token), trong khi
+Q-Former biểu diễn mỗi véc-tơ cộng tác thành nhiều token thông qua truy vấn học được và self-attention.
 ILM cho thấy hướng Q-Former có thể áp dụng trong gợi ý, nhưng chưa đánh giá theo AUC/uAUC
 trong thiết lập CTR tương tự CoLLM. Do đó, luận văn tập trung vào việc xây dựng và đánh giá
 một mô-đun căn chỉnh Q-Former trong cùng nhóm bài toán, đồng thời khảo sát các cơ chế huấn
