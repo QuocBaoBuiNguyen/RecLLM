@@ -428,8 +428,8 @@ của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu (H�
 \node[obj] (itmA) at (\lx,3.95) {ITM\\ (so khớp)};
 \node[obj] (itgA) at (\rx,3.95) {ITG\\ (sinh VB)};
 \draw[arr] (ffLa)--(itmA); \draw[arr] (ffRa)--(itgA);
-\draw[arr] (ffLa.north) to[out=90,in=180] (itcA.west);
-\draw[arr] (ffRa.north) to[out=90,in=0] (itcA.east);
+\draw[arr] (ffLa.east) to[out=0,in=200] (itcA.south west);
+\draw[arr] (ffRa.west) to[out=180,in=-20] (itcA.south east);
 \node[nt] (amA) at (2.5,1.05) {\textit{Attention Masking}\\ bidirectional\\ multimodal causal\\ uni-modal};
 \begin{scope}[on background layer]
   \node[qf, fit=(saLa)(ffLa)(saRa)(ffRa)(itmA)(itgA)(itcA)(lqA)(txtA)(amA), inner sep=3.5mm] (qfa) {};
@@ -453,8 +453,8 @@ của sản phẩm. Quá trình huấn luyện sử dụng bốn mục tiêu (H�
 \node[ff, above=3mm of caRb] (ffRb) {Feed-Forward};
 \draw[arr] (lqB2)--(saRb); \draw[arr] (saRb)--(caRb); \draw[arr] (caRb)--(ffRb);
 \node[obj] (itcB) at (2.5,4.65) {Tương phản\\ người dùng--SP};
-\draw[arr] (ffLb.north) to[out=90,in=180] (itcB.west);
-\draw[arr] (ffRb.north) to[out=90,in=0] (itcB.east);
+\draw[arr] (ffLb.east) to[out=0,in=200] (itcB.south west);
+\draw[arr] (ffRb.west) to[out=180,in=-20] (itcB.south east);
 \node[nt] (amB) at (2.5,2.3) {\textit{Attention Masking}\\ uni-modal};
 \begin{scope}[on background layer]
   \node[qf, fit=(saLb)(ffLb)(saRb)(ffRb)(itcB)(lqB)(lqB2)(amB), inner sep=3.5mm] (qfb) {};
