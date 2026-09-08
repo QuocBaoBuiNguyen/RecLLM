@@ -3,9 +3,8 @@
 \label{Chapter4}
 
 Chương này trình bày thiết lập thực nghiệm, kết quả đánh giá CoQLLM so với các baseline,
-phân tích ablation và thảo luận. Tất cả số liệu trong chương được báo cáo trên một lần
-chạy duy nhất (một seed); khoảng tin cậy chưa được tính -- đây là một hạn chế được thừa
-nhận (Mục~\ref{sec:han-che}).
+phân tích ablation và thảo luận. Trừ khi nói khác, số liệu được báo cáo trên một lần chạy cho
+mỗi cấu hình.
 
 \section{Thiết lập thực nghiệm}
 \label{sec:thiet-lap-thuc-nghiem}
@@ -20,20 +19,17 @@ CoLLM~\cite{collm2023}.
 người dùng cho $3{.}706$ phim, mỗi đánh giá là số sao từ 1 đến 5. Đánh giá được nhị phân
 hóa thành nhãn CTR: $\geq 4$ sao được coi là nhấp (click), còn lại là không nhấp.
 
-\textbf{Amazon-Book}~\cite{cora2024} là một tập dữ liệu thưa hơn nhiều so với MovieLens-1M,
-theo đúng phân chia dùng trong CoLLM và CoRA. Tập này có khoảng $23$ nghìn người dùng và
-$34$ nghìn sản phẩm sách, với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn hẳn -- đây
-chính là điều kiện để kiểm chứng mô-đun căn chỉnh CF--LLM trên miền khó, nơi tín hiệu cộng tác yếu và
-LLM/Q-Former có nhiều dư địa đóng góp. Nhãn CTR được nhị phân hóa tương tự. Việc bổ sung
-Amazon-Book cho phép đánh giá khả năng tổng quát của CoQLLM ngoài miền phim, nơi tín hiệu
-cộng tác yếu và tỉ lệ người dùng/sản phẩm nguội cao.
+\textbf{Amazon-Book}~\cite{cora2024} thưa hơn nhiều so với MovieLens-1M, theo đúng phân chia
+dùng trong CoLLM và CoRA. Tập này có khoảng $23$ nghìn người dùng và $34$ nghìn sản phẩm sách,
+với độ thưa và tỉ lệ người dùng/sản phẩm nguội cao hơn. Nhãn CTR được nhị phân hóa tương tự.
+Việc bổ sung Amazon-Book cho phép đánh giá CoQLLM trên một miền khác ngoài phim.
 
 \subsection{Phân chia dữ liệu và thiết lập đánh giá}
 \label{ssec:phan-chia}
 
 Theo quy trình của CoLLM~\cite{collm2023}, dữ liệu được sắp xếp theo thời gian và phân
 chia thành tập huấn luyện, kiểm định và kiểm tra theo tỉ lệ 8:1:1. Để đảm bảo so sánh
-công bằng, các siêu tham số được chọn dựa trên tập kiểm định và số liệu cuối cùng được
+công bằng, các tham số được chọn dựa trên tập kiểm định và số liệu cuối cùng được
 báo cáo trên tập kiểm tra.
 
 \subsection{Mô hình so sánh}
@@ -54,20 +50,17 @@ báo cáo trên tập kiểm tra.
     token). Trên Amazon-Book, biến thể CoRA-MF được đưa vào bảng so sánh như một điểm tham
     chiếu cho hướng thiết kế khác với CoQLLM (Mục~\ref{ssec:cora-rel}).
     \item \textbf{MF}~\cite{mf2009} và \textbf{DIN}: các mô hình lọc cộng tác thuần (không LLM),
-    làm mốc sàn để đo phần đóng góp thêm của mô-đun căn chỉnh CF--LLM.
-    \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone
-    Qwen2-7B-Base; \textit{lưu ý: CoQLLM dùng Vicuna-7B-v1.5, khác họ backbone, nên so sánh
-    trực tiếp về số liệu bị giới hạn -- được thảo luận như baseline không đồng nhất}.
-    \item \textbf{ILM}~\cite{ilm2024}: Q-Former cho gợi ý; \textit{lưu ý: ILM không báo
-    cáo AUC/uAUC cho bài toán CTR, nên không thể so sánh trực tiếp về số liệu; được
-    đề cập trong phần thảo luận}.
+    làm mốc so sánh cho các phương pháp tích hợp CF--LLM.
+    \item \textbf{SellaRec}~\cite{sellarec2024}: học tương phản InfoNCE, backbone Qwen2-7B-Base.
+    \item \textbf{ILM}~\cite{ilm2024}: hướng Q-Former cho gợi ý; được đối chiếu ở
+    Mục~\ref{ssec:doi-chieu-ilm}.
 \end{itemize}
 
 \textbf{Giao thức lấy số liệu baseline.} Trên MovieLens-1M, số liệu CoLLM/BinLLM lấy theo
-quy trình CoLLM-parity. Trên Amazon-Book, số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy
-lại (re-run) trong CoRA~\cite{cora2024} để đảm bảo cùng phân chia dữ liệu. Cần lưu ý một
-khác biệt quy trình: CoQLLM chọn checkpoint tốt nhất theo \textbf{uAUC}, trong khi
-CoLLM/CoRA chọn theo \textbf{AUC}; điều này được ghi chú trực tiếp ở bảng kết quả.
+quy trình CoLLM-parity. Trên Amazon-Book, số liệu CoLLM-MF/BinLLM/CoRA-MF lấy từ lần chạy lại
+(re-run) trong CoRA~\cite{cora2024} để đảm bảo cùng phân chia dữ liệu. CoQLLM chọn checkpoint
+theo \textbf{uAUC}, còn số liệu CoLLM/CoRA lấy theo checkpoint chọn theo \textbf{AUC}; khác biệt
+này được ghi chú ở các bảng kết quả.
 
 \subsection{Chỉ số đánh giá}
 \label{ssec:do-do}
@@ -176,28 +169,16 @@ CoRA-MF~\cite{cora2024} (sinh trọng số theo từng mẫu) & 0{,}8179 & 0{,}6
 \end{center}
 \end{table}
 
-\textbf{MovieLens-1M.} Cấu hình đề xuất (+ điều kiện hóa) đạt AUC $0{,}7475$ và uAUC
-$0{,}6968$, \textit{vượt BinLLM trên cả hai độ đo} ($0{,}7425$/$0{,}6956$) và vượt rõ
-CoLLM-MF/CoLLM-DIN. Đây là điểm đáng chú ý nhất: nhiều phương pháp CF--LLM chỉ thắng một
-trong hai độ đo. So với cấu hình vanilla, điều kiện hóa truy vấn theo người dùng nâng AUC từ $0{,}7335$
-lên $0{,}7475$ ($+0{,}014$) trong khi uAUC gần như không đổi ($0{,}7009 \to 0{,}6968$, chênh
-lệch nằm trong biên độ nhiễu) -- đúng như phân tích ở Mục~\ref{sec:nghich-ly}: phần dịch
-theo người dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người dùng (AUC), gần như
-trung tính với xếp hạng \textit{trong} người dùng (uAUC).
+\textbf{MovieLens-1M.} Cấu hình đề xuất (+ điều kiện hóa) đạt AUC $0{,}7475$ và uAUC $0{,}6968$,
+cao hơn BinLLM trên cả hai độ đo ($0{,}7425$/$0{,}6956$) cũng như cao hơn CoLLM-MF và CoLLM-DIN.
+So với cấu hình vanilla, điều kiện hóa truy vấn theo người dùng nâng AUC từ $0{,}7335$ lên
+$0{,}7475$ ($+0{,}014$), trong khi uAUC gần như không đổi ($0{,}7009 \to 0{,}6968$). Mối liên hệ
+giữa mức tăng AUC và uAUC gần như không đổi được phân tích ở Mục~\ref{sec:nghich-ly}.
 
-\textbf{Amazon-Book.} Đây là miền thưa và khó hơn. Với điều kiện hóa truy vấn theo người dùng,
-CoQLLM đạt AUC $0{,}8147$ và uAUC $0{,}5958$ -- \textit{vượt cả CoLLM-MF và BinLLM (theo lần
-chạy lại của CoRA) trên cả hai độ đo}. uAUC $0{,}5958$ vẫn thấp hơn CoRA-MF ($0{,}6262$), vốn
-dùng cơ chế sinh trọng số theo từng mẫu khác hẳn; phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly})
-cho thấy dư địa của uAUC trên miền này chủ yếu nằm ở chất lượng embedding MF cho nhóm người
-dùng/sản phẩm nguội.
-
-\textit{Về quy trình so sánh.} CoQLLM chọn checkpoint theo \textbf{uAUC}, còn
-CoLLM/CoRA theo \textbf{AUC}; do đó uAUC của CoQLLM là uAUC-tối-ưu-trên-frontier (lợi thế
-nhẹ) và cần được đọc kèm khác biệt này. Trên Amazon-Book, số liệu CoLLM/BinLLM có sai khác
-đáng kể giữa các lần chạy lại trong tài liệu (uAUC dao động $\approx 0{,}57$--$0{,}63$ tùy
-cấu hình huấn luyện và cỡ tập người dùng nhiễu); luận văn vì thế định vị kết quả là ``cạnh
-tranh/vượt baseline dưới quy trình có kiểm soát'' thay vì đuổi theo một con số tuyệt đối.
+\textbf{Amazon-Book.} Với điều kiện hóa truy vấn theo người dùng, CoQLLM đạt AUC $0{,}8147$ và
+uAUC $0{,}5958$, cao hơn CoLLM-MF và BinLLM (theo lần chạy lại của CoRA) trên cả hai độ đo. uAUC
+$0{,}5958$ thấp hơn CoRA-MF ($0{,}6262$), vốn dùng cơ chế sinh trọng số theo từng mẫu. Khác biệt
+giữa AUC và uAUC được phân tích ở Mục~\ref{sec:nghich-ly}.
 
 \section{Phân tích khác biệt AUC--uAUC}
 \label{sec:nghich-ly}
@@ -209,13 +190,12 @@ dự đoán của mỗi người dùng) thì cải thiện AUC nhưng không c�
 học thứ tự xếp hạng \textit{trong} từng người dùng -- cặp sản phẩm nào người dùng này
 thích hơn -- thay vì chỉ phân biệt người dùng với nhau.
 
-Đặc điểm này được xác nhận trực tiếp qua phân rã warm/cold (Mục~\ref{ssec:user-group}).
-Trên MovieLens-1M, uAUC ở nhóm người dùng \textit{ấm} (warm, MF có tín hiệu) đạt $0{,}7254$,
-cao hơn hẳn nhóm \textit{nguội} (cold) chỉ $0{,}5969$; trong khi AUC hai nhóm chênh ít hơn
-($0{,}7787$ so với $0{,}7030$). Điều này cho thấy trần của uAUC không nằm ở mô-đun căn chỉnh Q-Former
-(nếu mô-đun căn chỉnh yếu thì AUC cũng phải sập) mà ở \textit{chất lượng embedding MF cho người
-dùng/sản phẩm nguội}. Đây là căn cứ để định hướng cải thiện uAUC về phía MF teacher
-(Mục~\ref{sec:huong-phat-trien}) thay vì tinh chỉnh thêm kiến trúc mô-đun căn chỉnh.
+Phân rã warm/cold (Mục~\ref{ssec:user-group}) cung cấp một quan sát phù hợp với đặc điểm này.
+Trên MovieLens-1M, uAUC ở nhóm người dùng \textit{ấm} (warm, MF có tín hiệu) đạt $0{,}7254$, cao
+hơn nhóm \textit{nguội} (cold) là $0{,}5969$, trong khi AUC hai nhóm chênh ít hơn ($0{,}7787$ so
+với $0{,}7030$). Quan sát này gợi ý rằng phần lớn chênh lệch uAUC giữa hai nhóm liên quan tới
+chất lượng embedding MF cho người dùng/sản phẩm nguội, và gợi ý một hướng cải thiện uAUC là nâng
+chất lượng MF trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
 
 \section{Thí nghiệm loại bỏ thành phần}
 \label{sec:ablation}
@@ -241,35 +221,16 @@ MovieLens-1M & + điều kiện hóa & \textbf{0{,}7475} & 0{,}6968 \\
 \end{table}
 
 \textbf{Đọc bảng ablation.} Trên MovieLens-1M, điều kiện hóa truy vấn theo người dùng nâng AUC
-từ $0{,}7335$ lên $0{,}7475$ ($+0{,}014$) trong khi uAUC gần như không đổi ($0{,}7009 \to
-0{,}6968$). Kết quả này phù hợp với phân tích ở Mục~\ref{sec:nghich-ly}: phần dịch theo người
-dùng chủ yếu nâng khả năng phân biệt \textit{giữa} các người dùng (AUC) và gần trung tính với
-xếp hạng \textit{trong} từng người dùng (uAUC).
-
-\textbf{Các ablation chưa thực hiện.} Do giới hạn tài nguyên, một số ablation vẫn còn để
-ngỏ và được ghi nhận minh bạch như hạn chế (Mục~\ref{sec:han-che}): (i)~thay mô-đun căn chỉnh Q-Former
-bằng một bộ chiếu \textit{attention-MLP} (MLP có self-attention nhưng không có truy vấn học
-được) để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến + attention đơn
-thuần; và (ii)~bật/tắt riêng biểu diễn đa token dưới cùng backbone Vicuna. Luận văn không điền
-số ước lượng cho các hàng này.
+từ $0{,}7335$ lên $0{,}7475$ ($+0{,}014$), trong khi uAUC gần như không đổi ($0{,}7009 \to
+0{,}6968$). Mối liên hệ giữa hai độ đo này được phân tích ở Mục~\ref{sec:nghich-ly}.
 
 \section{Phân tích bổ sung}
 \label{sec:phan-tich-bo-sung}
 
-\subsection{Khoảng cách ngữ nghĩa}
-\label{ssec:cosine-sim}
-
-Để kiểm chứng rằng mô-đun căn chỉnh Q-Former thực sự thu hẹp khoảng cách ngữ nghĩa giữa không
-gian cộng tác và không gian LLM, luận văn đo cosine similarity giữa:
-(i)~véc-tơ cộng tác thô (đầu ra MF) và embedding token LLM tương ứng trước khi huấn luyện
-mô-đun căn chỉnh; (ii)~soft token đầu ra Q-Former và embedding token LLM sau khi huấn luyện.
-Kết quả kỳ vọng: cosine similarity tăng sau huấn luyện, cho thấy Q-Former thực sự căn
-chỉnh không gian cộng tác về phía không gian ngữ nghĩa LLM.
-
 \subsection{Phân tích theo nhóm warm/cold}
 \label{ssec:user-group}
 
-Để kiểm chứng động lực cold-start, luận văn phân rã tập kiểm tra thành hai nhóm: người dùng
+Luận văn phân rã tập kiểm tra thành hai nhóm: người dùng
 \textit{ấm} (warm -- có embedding MF, tức MF đã ``thấy'' người dùng/sản phẩm trong huấn luyện)
 và người dùng \textit{nguội} (cold -- MF không có embedding, phải dùng đại diện mặc định).
 Bảng~\ref{tab:warm-cold} trình bày AUC/uAUC theo từng nhóm trên MovieLens-1M.
@@ -292,13 +253,12 @@ MovieLens-1M & cold & $3{.}178$ & 0{,}7030 & 0{,}5969 \\
 \end{center}
 \end{table}
 
-Trên MovieLens-1M, nhóm warm đạt uAUC $0{,}7254$ -- cao hơn hẳn nhóm cold ($0{,}5969$) -- trong
-khi AUC hai nhóm chênh ít hơn nhiều ($0{,}7787$ so với $0{,}7030$). Điều này khẳng định uAUC bị
-chặn trên bởi \textit{chất lượng embedding MF cho người dùng/sản phẩm nguội} chứ không phải bởi
-mô-đun căn chỉnh: nếu mô-đun căn chỉnh là nút thắt thì AUC ở nhóm cold cũng phải sập, nhưng AUC vẫn giữ ở mức
-khá. Ở nhóm warm -- nơi MF cung cấp tín hiệu tốt -- CoQLLM khai thác hiệu quả hơn hẳn. Nhận định
-này khớp với phân tích khác biệt AUC--uAUC (Mục~\ref{sec:nghich-ly}) và chỉ ra hướng cải thiện
-tiếp theo nằm ở MF teacher trên nhóm cold (Mục~\ref{sec:huong-phat-trien}).
+Trên MovieLens-1M, nhóm warm đạt uAUC $0{,}7254$, cao hơn nhóm cold ($0{,}5969$), trong khi AUC
+hai nhóm chênh ít hơn ($0{,}7787$ so với $0{,}7030$). Quan sát này gợi ý rằng chênh lệch uAUC
+giữa hai nhóm liên quan chủ yếu tới chất lượng embedding MF cho người dùng/sản phẩm nguội; kiểm
+chứng trực tiếp giả thuyết này là một hướng nghiên cứu tiếp theo
+(Mục~\ref{sec:huong-phat-trien}). Nhận định định tính này nhất quán với phân tích khác biệt
+AUC--uAUC ở Mục~\ref{sec:nghich-ly}.
 
 \section{Thảo luận}
 \label{sec:thao-luan}
@@ -314,8 +274,8 @@ quy trình CoLLM: cung cấp cơ sở so sánh công bằng trong cùng điều 
 \label{ssec:diem-manh-han-che}
 
 So với mô-đun chiếu MLP của CoLLM, mô-đun căn chỉnh Q-Former biến đổi véc-tơ cộng tác bằng một
-tập truy vấn học được, phối hợp qua self-attention và xếp chồng nhiều lớp. Cần nêu rõ giới hạn
-của cơ chế trong cài đặt hiện tại để tránh diễn giải quá mức. Mỗi lần mã hóa, cross-attention
+tập truy vấn học được, phối hợp qua self-attention và xếp chồng nhiều lớp. Trong cài đặt hiện
+tại, mỗi lần mã hóa cross-attention
 chỉ đọc \emph{một} token cộng tác ($\mathbf{H}$ có độ dài $1$); khi đó hàm softmax trên một khóa
 duy nhất luôn bằng $1$, nên cross-attention thực chất là một phép đọc có học đối với véc-tơ đó,
 chứ không phải cơ chế chọn lọc trên nhiều thành phần. Do đó, thành phần tạo nên $Q$ biểu diễn
@@ -338,16 +298,20 @@ Luận văn thừa nhận các hạn chế thực nghiệm sau:
     \item \textbf{Một seed:} Số liệu báo cáo từ một lần chạy duy nhất; chưa có khoảng tin
     cậy, kết quả có thể dao động giữa các lần chạy.
     \item \textbf{Thiếu ablation attention-MLP:} Chưa có hàng ablation thay mô-đun căn chỉnh
-    Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là đối chứng quan
-    trọng nhất để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến +
-    attention đơn thuần; hiện được ghi nhận là hướng thực nghiệm còn để ngỏ.
+    Q-Former bằng bộ chiếu attention-MLP (không truy vấn học được). Đây là một đối chứng quan
+    trọng để cô lập đóng góp của \textit{cấu trúc Q-Former} khỏi phần phi tuyến và attention
+    đơn thuần; hiện còn để ngỏ.
     \item \textbf{Các ablation thành phần chưa đầy đủ:} Việc bật/tắt riêng biểu diễn đa token
     chưa được chạy dưới cùng backbone Vicuna; kết luận về từng thành phần vì thế còn hạn chế.
+    \item \textbf{Chưa phân tích căn chỉnh định lượng:} Phép đo cosine similarity giữa biểu diễn
+    cộng tác và embedding của LLM trước/sau huấn luyện -- nhằm định lượng mức thu hẹp khoảng cách
+    ngữ nghĩa -- chưa được tiến hành.
     \item \textbf{Baseline không đồng nhất:} SellaRec dùng backbone Qwen2-Base khác họ với
     Vicuna; so sánh với SellaRec phản ánh khác biệt cả về cơ chế lẫn backbone LLM. Trên
-    Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn theo AUC),
-    khác quy trình chọn checkpoint theo uAUC của CoQLLM.
-    \item \textbf{Trần uAUC ở nhóm cold:} uAUC bị chặn trên bởi chất lượng embedding MF cho
-    người dùng/sản phẩm nguội (Mục~\ref{ssec:user-group}), không phải bởi mô-đun căn chỉnh; cải
-    thiện tiếp theo cần MF teacher mạnh hơn trên nhóm cold.
+    Amazon-Book, số liệu CoLLM/BinLLM/CoRA lấy từ lần chạy lại của CoRA (chọn checkpoint theo
+    AUC), khác quy trình chọn checkpoint theo uAUC của CoQLLM; ngoài ra số liệu baseline trên
+    tập này dao động giữa các lần chạy lại trong tài liệu.
+    \item \textbf{uAUC trên nhóm cold:} uAUC ở nhóm người dùng/sản phẩm nguội thấp hơn đáng kể
+    so với nhóm ấm (Mục~\ref{ssec:user-group}); các phân tích trong chương gợi ý điều này liên
+    quan tới chất lượng embedding MF cho nhóm nguội, và cải thiện có thể cần MF teacher mạnh hơn.
 \end{enumerate}
