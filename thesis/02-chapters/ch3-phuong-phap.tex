@@ -178,7 +178,7 @@ với nhau. Việc tinh chỉnh đồng thời MF được ghi nhận như một
 \section{Mô-đun căn chỉnh Q-Former}
 \label{sec:qformer}
 
-\subsection{Động cơ lựa chọn Q-Former}
+\subsection{Cơ sở lựa chọn Q-Former}
 \label{ssec:ly-do-qformer}
 
 Trong CoLLM~\cite{collm2023}, mô-đun ánh xạ được cài đặt bằng một MLP hai lớp:
@@ -186,23 +186,23 @@ Trong CoLLM~\cite{collm2023}, mô-đun ánh xạ được cài đặt bằng m�
 g_\phi(\mathbf{x}) = \mathbf{W}_2\,\mathrm{ReLU}(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1)
 + \mathbf{b}_2,
 \end{equation*}
-với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$. Phép biến đổi này được áp
-dụng độc lập trên từng embedding cộng tác. Cần lưu ý rằng MLP đã là một phép biến đổi phi
-tuyến; hạn chế mà luận văn quan tâm không nằm ở tính tuyến tính hay phi tuyến, mà ở chỗ đây là
-một phép chiếu cố định, dùng chung cho mọi mẫu: nó chưa học biểu diễn được căn chỉnh riêng
-với không gian ngữ nghĩa của LLM và không thích nghi theo từng người dùng.
+với $g_\phi: \mathbb{R}^d \rightarrow \mathbb{R}^{d_{\text{LLM}}}$, áp dụng độc lập trên từng
+embedding cộng tác. Đây là một thiết kế đơn giản và hiệu quả. Câu hỏi mà luận văn quan tâm là
+liệu một phép chiếu cố định, dùng chung cho mọi mẫu và không thích nghi theo từng người dùng, có
+phải là lựa chọn phù hợp nhất để căn chỉnh không gian cộng tác với không gian ngữ nghĩa của LLM
+hay không.
 
-Q-Former cung cấp một cơ chế khác. Thay vì một phép chiếu cố định, mô-đun này học biểu diễn
-được căn chỉnh cho mỗi véc-tơ cộng tác: một tập truy vấn học được phối hợp với nhau qua
-self-attention và đọc véc-tơ cộng tác qua cross-attention, qua nhiều lớp và qua các mục tiêu
-căn chỉnh ở giai đoạn tiền huấn luyện biểu diễn. Nhờ đó, biểu diễn đưa vào LLM được điều chỉnh
-theo tác vụ thay vì cố định như một hàm pointwise. Đây là điểm khác biệt cốt lõi so với CoLLM.
+Q-Former cung cấp một hướng khác. Thay vì một phép chiếu cố định, mô-đun này biến đổi mỗi véc-tơ
+cộng tác bằng một tập truy vấn học được, phối hợp qua self-attention và xếp chồng nhiều lớp, kèm
+các mục tiêu căn chỉnh ở giai đoạn tiền huấn luyện biểu diễn. Nhờ đó, biểu diễn cộng tác đưa vào
+LLM có thể được điều chỉnh theo tác vụ thay vì cố định cho mọi mẫu.
 
-Cần làm rõ để tránh phóng đại: việc phối hợp giữa các nguồn cộng tác (người dùng, sản phẩm mục
-tiêu, lịch sử) diễn ra ở self-attention của LLM ở cả hai phương pháp, nên không phải là điểm
-khác biệt giữa CoLLM và Q-Former. Vai trò cụ thể của cross-attention trong cài đặt một-token,
-cùng những gì thực sự tạo nên khác biệt so với phép chiếu pointwise, được phân tích ở
-Mục~\ref{ssec:diem-manh-han-che}.
+Cần lưu ý rằng trong cài đặt của CoQLLM, mỗi sản phẩm được mã hóa từ một embedding cộng tác duy
+nhất. Vì vậy, cross-attention không đảm nhiệm vai trò nén một chuỗi đầu vào dài như trong
+BLIP-2. Thay vào đó, nó chủ yếu đưa tín hiệu cộng tác vào các trạng thái truy vấn, trong khi khả
+năng biểu diễn của mô-đun đến từ tập truy vấn học được, self-attention và chuỗi biến đổi nhiều
+lớp. Việc phối hợp thông tin giữa nhiều sản phẩm vẫn được thực hiện ở phía LLM sau khi các soft
+token được đưa vào chuỗi đầu vào.
 
 \subsection{Q-Former cho bài toán gợi ý}
 \label{ssec:qformer-kien-truc}
@@ -287,49 +287,80 @@ cross-attention được phân tích ở Mục~\ref{ssec:diem-manh-han-che}.
 \subsection{Tích hợp biểu diễn cộng tác qua soft token}
 \label{ssec:hai-duong}
 
-Đầu ra $\mathbf{Z}$ của Q-Former được chiếu từ không gian $d_{\text{qf}}$ sang không gian
-embedding của LLM bằng lớp tuyến tính $W_{\text{proj}} \in \mathbb{R}^{d_{\text{qf}} \times
-d_{\text{LLM}}}$. Kết quả là $Q$ soft token được chèn vào prompt tại vị trí dành cho biểu diễn
-cộng tác.
+Đầu ra của Q-Former, $\mathbf{Z} \in \mathbb{R}^{Q \times d_{\text{qf}}}$, được ánh xạ sang
+không gian embedding của LLM thông qua một lớp chiếu tuyến tính:
+\begin{equation}\label{eq:soft-proj}
+\mathbf{S} = \operatorname{LN}\!\big(\mathbf{Z}\,\mathbf{W}_{\text{proj}}\big), \qquad
+\mathbf{W}_{\text{proj}} \in \mathbb{R}^{d_{\text{qf}} \times d_{\text{LLM}}},
+\end{equation}
+trong đó $\mathbf{S} \in \mathbb{R}^{Q \times d_{\text{LLM}}}$ gồm $Q$ soft token có cùng số
+chiều với embedding đầu vào của LLM. Lớp chuẩn hóa (LayerNorm) được áp dụng sau phép chiếu nhằm
+duy trì thang độ của các soft token tương thích với biểu diễn văn bản của LLM.
 
-Phần văn bản của prompt đánh dấu lịch sử và sản phẩm mục tiêu bằng các token chuyên dụng. Một
-token định danh riêng được sử dụng cho vị trí soft token nhằm tránh phụ thuộc vào
-\verb|<unk>| hoặc các token có chức năng khác trong từ vựng gốc. Sau lớp chiếu, một lớp chuẩn
-hóa (LayerNorm) được áp dụng để giữ thang độ của soft token tương thích hơn với embedding văn
-bản của LLM.
+Các soft token này được chèn trực tiếp vào chuỗi embedding đầu vào tại vị trí dành cho biểu diễn
+cộng tác. Phần văn bản của prompt vẫn chứa thông tin mô tả lịch sử tương tác, sản phẩm mục tiêu
+và yêu cầu dự đoán. Một ký hiệu đặc biệt được dùng để đánh dấu vị trí chèn; tại bước xây dựng
+input embedding, vị trí này được thay thế bằng $Q$ biểu diễn liên tục do Q-Former sinh ra. Cách
+triển khai này tránh việc phụ thuộc vào các token có sẵn như \verb|<unk>| và tách biệt rõ biểu
+diễn cộng tác khỏi từ vựng gốc của LLM.
 
-Nhờ cơ chế này, tín hiệu cộng tác được đưa vào cùng không gian đầu vào với văn bản mà không
-cần thay đổi trực tiếp trọng số backbone LLM theo từng mẫu. Đây là điểm khác với
-CoRA~\cite{cora2024}, nơi biểu diễn cộng tác được sử dụng để sinh cập nhật trọng số hạng thấp
-theo từng mẫu cho các lớp attention. CoQLLM chủ động giới hạn đường tích hợp ở soft token để giữ LLM hoàn
-toàn đóng băng và tập trung phân tích vai trò của mô-đun căn chỉnh. Trên nền đường soft token
-này, luận văn bổ sung một kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
+Cụ thể, prompt sử dụng trong luận văn (minh họa trên MovieLens-1M) có dạng:
+\begin{quote}
+\small\ttfamily\raggedright
+A user has given high ratings to the following movies: \ph{teal!55!black}{ItemTitleList}. The
+interaction-history signals are: \ph{orange!70!black}{ItemIDList}. Leverage the information above
+to predict whether the user would enjoy the movie titled \ph{teal!55!black}{TargetItemTitle}.
+\ph{orange!70!black}{TargetItemID} Answer with ``Yes'' or ``No''.
+\end{quote}
+Trong đó \ph{teal!55!black}{ItemTitleList} và \ph{teal!55!black}{TargetItemTitle} được điền bằng
+tiêu đề văn bản của sản phẩm, còn \ph{orange!70!black}{ItemIDList} và
+\ph{orange!70!black}{TargetItemID} là các vị trí được thay bằng soft token cộng tác ($L \times Q$
+token cho các sản phẩm trong lịch sử và $Q$ token cho sản phẩm mục tiêu). Luận văn dùng một số
+biến thể diễn đạt tương đương của prompt này trong huấn luyện.
+
+Nhờ đó, thông tin cộng tác và thông tin văn bản được đưa vào cùng một chuỗi biểu diễn đầu vào,
+cho phép LLM xử lý chúng thông qua cơ chế self-attention mà không cần thay đổi trực tiếp trọng số
+của backbone. Đây là điểm khác với CoRA~\cite{cora2024}, nơi tín hiệu cộng tác được dùng để sinh
+các cập nhật trọng số hạng thấp phụ thuộc từng mẫu cho các lớp attention. CoQLLM chỉ sử dụng
+đường tích hợp qua soft token và giữ backbone LLM ở trạng thái đóng băng. Trên nền đường soft
+token này, luận văn bổ sung một kỹ thuật huấn luyện -- điều kiện hóa truy vấn theo người dùng
 (Mục~\ref{ssec:user-conditioned}) -- nhằm cải thiện AUC.
 
 \subsection{Điều kiện hóa truy vấn theo người dùng}
 \label{ssec:user-conditioned}
 
-Trong cấu hình cơ sở, tập truy vấn $\mathbf{Q}$ là tham số dùng chung cho mọi mẫu. Để tăng khả
-năng thích nghi theo người dùng, luận văn bổ sung một phép dịch chuyển phụ thuộc vào embedding
-người dùng trước khi đưa truy vấn vào Q-Former:
-
+Trong cấu hình cơ sở, tập truy vấn học được $\mathbf{Q}$ được sử dụng chung cho mọi người dùng.
+Để cho phép trạng thái truy vấn thích nghi theo thông tin cộng tác của từng người dùng, luận văn
+bổ sung một thành phần điều kiện hóa được sinh từ embedding người dùng trước khi tập truy vấn
+được đưa vào Q-Former. Cụ thể, với truy vấn thứ $m$:
 \begin{equation} \label{eq:user-cond}
-\tilde{\mathbf{Q}} = \mathbf{Q} + g_u\big( e_u \big),
+\tilde{\mathbf{q}}_{u,m} = \mathbf{q}_m + g_u(e_u), \qquad m = 1,\dots,Q,
 \end{equation}
+trong đó
+\[
+g_u(e_u) = e_u\, W_u, \qquad W_u \in \mathbb{R}^{d_{\text{cf}} \times d_{\text{qf}}}.
+\]
 
-trong đó $g_u(e_u) = e_u W_u$ là một lớp chiếu tuyến tính (với $W_u \in \mathbb{R}^{d_{\text{cf}}
-\times d_{\text{qf}}}$) từ không gian MF sang không gian truy vấn, được \textit{khởi tạo bằng
-không} (zero-init: $W_u = \mathbf{0}$). Với cách khởi tạo này, ở bước đầu cơ chế không làm
-thay đổi truy vấn gốc, tức $\tilde{\mathbf{Q}} = \mathbf{Q}$; mức dịch chuyển chỉ được học khi
-mang lại lợi ích cho hàm mục tiêu trong quá trình huấn luyện.
+Như vậy, cùng một véc-tơ điều kiện $g_u(e_u)$ được cộng vào toàn bộ tập truy vấn, trong khi sự
+khác biệt vốn có giữa các truy vấn $\mathbf{q}_m$ vẫn được bảo toàn. Cơ chế này có thể được hiểu
+như một phép hiệu chỉnh tập truy vấn nền theo biểu diễn cộng tác của người dùng trước khi
+Q-Former xử lý tín hiệu sản phẩm.
 
-Về mặt trực giác, thành phần $g_u(e_u)$ tạo ra một mức điều chỉnh riêng theo người dùng.
-Vì phần dịch chuyển \textit{thay đổi giữa các người dùng} nhưng \textit{không đổi trong phạm
-vi một người dùng}, cơ chế này có thể nâng khả năng phân biệt giữa các người dùng và do đó tác
-động tích cực đến AUC toàn cục, trong khi tác động lên uAUC -- vốn bất biến với dịch chuyển mức
-nền riêng theo từng người dùng -- có thể nhỏ hơn. Giả thuyết này được đối chiếu với kết quả
-thực nghiệm ở Chương~\ref{Chapter4}. Vì $g_u$ chỉ xuất hiện khi bật cờ và được khởi tạo bằng
-không, cơ chế tương thích với checkpoint cũ và chỉ cần huấn luyện lại Bước 2 của Giai đoạn 3.
+Ma trận $W_u$ được khởi tạo bằng không, do đó tại thời điểm bắt đầu huấn luyện:
+\[
+\widetilde{\mathbf{Q}}_u = \mathbf{Q}.
+\]
+Cách khởi tạo này bảo toàn hành vi của cấu hình cơ sở và cho phép thành phần điều kiện hóa được
+cập nhật dần thông qua gradient của hàm mục tiêu trong quá trình huấn luyện.
+
+Về mặt thiết kế, cơ chế điều kiện hóa cung cấp cho Q-Former một trạng thái truy vấn phụ thuộc
+người dùng thay vì sử dụng cùng một tập truy vấn cho mọi mẫu. Do cùng một thành phần điều kiện
+được sử dụng cho các mẫu thuộc cùng người dùng, cơ chế được kỳ vọng giúp mô hình thích nghi tốt
+hơn với khác biệt về sở thích giữa các người dùng. Tuy nhiên, phép điều kiện hóa diễn ra trước
+các lớp self-attention và cross-attention của Q-Former; do đó ảnh hưởng của nó không tương đương
+với việc cộng một hằng số vào điểm dự đoán cuối cùng và vẫn có thể làm thay đổi thứ hạng giữa các
+sản phẩm của cùng một người dùng. Tác động thực tế của cơ chế lên AUC và uAUC được phân tích ở
+Chương~\ref{Chapter4}.
 
 \section{Huấn luyện ba giai đoạn}
 \label{sec:ba-giai-doan}
