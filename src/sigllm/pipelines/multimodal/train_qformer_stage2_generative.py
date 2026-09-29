@@ -34,7 +34,7 @@ from sigllm.common import EarlyStopping, NotebookLogger
 from sigllm.common.config import Config
 from sigllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
 from sigllm.datasets.qformer.qformer_loader import build_qformer_loader
-from sigllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
+from sigllm.models.q_former.bridges import build_bridge
 from sigllm.models.rec.matrix_factorization import MatrixFactorization
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -84,7 +84,9 @@ def _init_rec_model(cfg, device):
 
 def _init_qformer(cfg, device):
     qformer_output_dim = cfg.get("qformer_output_dim") or cfg.qformer_d_model
-    qformer = HFQFormerAdapter(
+    bridge = str(cfg.get("bridge", "qformer")).lower()
+    qformer = build_bridge(
+        bridge,
         d_cf=int(cfg.embedding_size),
         d_model=int(cfg.qformer_d_model),
         num_queries=int(cfg.num_queries),
@@ -97,7 +99,10 @@ def _init_qformer(cfg, device):
     ).to(device)
 
     ckpt_path = cfg.get("qformer_ckpt_in")
-    if ckpt_path and os.path.exists(ckpt_path):
+    if bridge != "qformer":
+        # No Stage 1 for a text-free bridge: Stage 2 trains it from init.
+        log_step("Skipping Stage-1 checkpoint", f"bridge={bridge} trains from init in Stage 2")
+    elif ckpt_path and os.path.exists(ckpt_path):
         state_dict = torch.load(ckpt_path, map_location="cpu")
         qformer.load_state_dict(state_dict, strict=True)
         log_step("Loaded Phase 1 Q-Former", ckpt_path)
@@ -418,6 +423,13 @@ def main():
     missing = [k for k in required_keys if k not in stage2_cfg]
     if missing:
         raise KeyError("Missing required keys in 'run.qformer_stage2': " + ", ".join(missing))
+
+    bridge = str(stage2_cfg.get("bridge", "qformer")).lower()
+    if bridge != "qformer" and not stage2_cfg.get("bridge_tag"):
+        raise ValueError(
+            f"bridge={bridge} needs model.qformer_config.bridge_tag (e.g. '_attnmlp'); "
+            f"otherwise it would overwrite the Q-Former Stage-2 checkpoint in {stage2_cfg.output_dir}"
+        )
 
     first_dataset_key = list(cfg.datasets_cfg.keys())[0]
     stage2_cfg.data_dir = cfg.datasets_cfg[first_dataset_key].path

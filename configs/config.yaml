@@ -88,6 +88,16 @@ model:
     # to AUC ~0.75 while vanilla (False) sat at ~0.73 but max uAUC. Stage-2 does
     # NOT read user_cf, so only Step-2 needs retraining to adopt this.
     user_conditioned: True
+    # CF -> soft-token bridge (sigllm/models/q_former/bridges.py):
+    #   "qformer"  : BLIP-2 Q-Former (headline).
+    #   "attn_mlp" : ablation control — same 8 tokens / width / depth / heads, but
+    #                no learned queries, no cross-attention, no instruction text.
+    #                No Stage 1: run Stage 2 then Step 2, reusing the Step-1 LoRA.
+    # bridge_tag is appended to the Stage-2 and Step-2 output dirs. Leave it "" for
+    # the Q-Former (paths unchanged); any other bridge MUST set it (e.g. "_attnmlp"),
+    # otherwise its Stage-2 run would overwrite the Q-Former checkpoint.
+    bridge: "qformer"
+    bridge_tag: ""
 
   rec_config:
     user_num: 839
@@ -194,7 +204,9 @@ run:
     qformer_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}"
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage2_vicuna/"
+    bridge: ${model.qformer_config.bridge}
+    bridge_tag: ${model.qformer_config.bridge_tag}
+    output_dir: "/content/SigLLM/ckpt/qformer_stage2${model.qformer_config.bridge_tag}_vicuna/"
     # Winning Vicuna Stage-2 recipe (baked in from the --options sweep):
     #   lr 1e-4 -> 2e-4 + wd 1e-3 -> 1e-4 converged MUCH faster and lower
     #   (val_loss 0.6016@ep20 old -> 0.5426@ep39), no instability. Still dropping
@@ -227,7 +239,7 @@ run:
     # `qformer_stage3_step1`: only the keys that differ from the top-level
     # defaults are listed here.
     prompt_path: "/content/SigLLM/prompts/qformer_prompt_movie.txt"
-    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_ucq_vicuna/"
+    output_dir: "/content/SigLLM/ckpt/qformer_stage3_step2_ucq${model.qformer_config.bridge_tag}_vicuna/"
     ckpt: "${run.qformer_stage3_step1.output_dir}${run.qformer_stage3_step1.best_ckpt_name}"
     init_lr: 3e-5
     # Must stay below init_lr: the top-level min_lr (8e-5) is ABOVE this stage's
