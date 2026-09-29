@@ -111,6 +111,16 @@ model:
     # Set it together with `run.qformer_stage3_step2.arm` so the checkpoints of
     # the two arms do not overwrite each other.
     user_conditioned: True
+    # CF -> soft-token bridge (coqllm/models/q_former/bridges.py):
+    #   "qformer"  : BLIP-2 Q-Former (headline).
+    #   "attn_mlp" : ablation control — same 8 tokens / width / depth / heads, but
+    #                no learned queries and no cross-attention. No Stage 1 (no text
+    #                stream): run Stage 2 then Step 2, reusing the Step-1 LoRA ckpt.
+    # bridge_tag is appended to the Stage-2 and Step-2 output dirs. Leave it "" for
+    # the Q-Former (paths unchanged); any other bridge MUST set it (e.g. "_attnmlp"),
+    # otherwise its Stage-2 run would overwrite the Q-Former checkpoint.
+    bridge: "qformer"
+    bridge_tag: ""
 
   rec_config:
     user_num: 839
@@ -217,7 +227,9 @@ run:
     qformer_ckpt_in: "${run.qformer_stage1.output_dir}${run.qformer_stage1.best_qformer_weights_name}"
     qformer_ckpt_out: "qformer_stage2_best_qformer.pth"
     proj_ckpt_out: "qformer_stage2_best_proj.pth"
-    output_dir: "/content/CoQLLM/ckpt/qformer_stage2_vicuna/"
+    bridge: ${model.qformer_config.bridge}
+    bridge_tag: ${model.qformer_config.bridge_tag}
+    output_dir: "/content/CoQLLM/ckpt/qformer_stage2${model.qformer_config.bridge_tag}_vicuna/"
     # Winning Vicuna Stage-2 recipe (baked in from the --options sweep):
     #   lr 1e-4 -> 2e-4 + wd 1e-3 -> 1e-4 converged MUCH faster and lower
     #   (val_loss 0.6016@ep20 old -> 0.5426@ep39), no instability. Still dropping
@@ -265,8 +277,11 @@ run:
     #                   bridge output). This is the arm that isolates
     #                   "Q-Former vs MLP" from "8 tokens vs 1" — the cross-paper
     #                   CoLLM comparison cannot separate those two.
+    #   B3-attnmlp-ucq  B3 with the Q-Former swapped for the attention-MLP bridge
+    #                   -> model.qformer_config.bridge: attn_mlp, bridge_tag: _attnmlp
+    #                   (needs its own Stage-2; skips Stage-1; same Step-1 LoRA).
     arm: "B3-qformer-ucq"
-    output_dir: "/content/CoQLLM/ckpt/qformer_stage3_step2_${run.qformer_stage3_step2.arm}_vicuna/"
+    output_dir: "/content/CoQLLM/ckpt/qformer_stage3_step2_${run.qformer_stage3_step2.arm}${model.qformer_config.bridge_tag}_vicuna/"
     ckpt: "${run.qformer_stage3_step1.output_dir}${run.qformer_stage3_step1.best_ckpt_name}"
     init_lr: 3e-5
     # Must stay below init_lr: the top-level min_lr (8e-5) is ABOVE this stage's

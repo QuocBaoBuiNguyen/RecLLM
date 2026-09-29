@@ -34,7 +34,7 @@ from coqllm.common import EarlyStopping, NotebookLogger
 from coqllm.common.config import Config
 from coqllm.datasets.qformer.qformer_alignment_dataset import QFormerAlignmentDataset
 from coqllm.datasets.qformer.qformer_loader import build_qformer_loader
-from coqllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
+from coqllm.models.q_former.bridges import build_bridge
 from coqllm.models.rec.matrix_factorization import MatrixFactorization
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -83,8 +83,10 @@ def _init_rec_model(cfg, device):
 
 
 def _init_qformer(cfg, device):
+    bridge = str(cfg.get("bridge", "qformer")).lower()
     qformer_output_dim = cfg.get("qformer_output_dim") or cfg.qformer_d_model
-    qformer = HFQFormerAdapter(
+    qformer = build_bridge(
+        bridge,
         d_cf=int(cfg.embedding_size),
         d_model=int(cfg.qformer_d_model),
         num_queries=int(cfg.num_queries),
@@ -95,9 +97,14 @@ def _init_qformer(cfg, device):
         max_instruction_length=int(cfg.max_instruction_length),
         init_from_pretrained_text=False,
     ).to(device)
+    log_step("Stage-2 bridge", bridge)
 
     ckpt_path = cfg.get("qformer_ckpt_in")
-    if ckpt_path and os.path.exists(ckpt_path):
+    if bridge != "qformer":
+        # Stage 1 (ITC/ITM/ITG + ii/ui) exists only for the Q-Former; other bridges
+        # start Stage 2 from their own init.
+        log_step("Skipping Stage-1 checkpoint", f"bridge={bridge} has no Stage-1; training from init")
+    elif ckpt_path and os.path.exists(ckpt_path):
         state_dict = torch.load(ckpt_path, map_location="cpu")
         qformer.load_state_dict(state_dict, strict=True)
         log_step("Loaded Phase 1 Q-Former", ckpt_path)
@@ -418,6 +425,15 @@ def main():
     missing = [k for k in required_keys if k not in stage2_cfg]
     if missing:
         raise KeyError("Missing required keys in 'run.qformer_stage2': " + ", ".join(missing))
+
+    bridge = str(stage2_cfg.get("bridge", "qformer")).lower()
+    if bridge != "qformer" and not stage2_cfg.get("bridge_tag"):
+        # Without a tag the output_dir/filenames equal the Q-Former's, and this run
+        # would overwrite the Q-Former Stage-2 checkpoint used by the main results.
+        raise ValueError(
+            f"bridge='{bridge}' needs model.qformer_config.bridge_tag (e.g. '_attnmlp') "
+            "so its Stage-2 checkpoint gets its own directory."
+        )
 
     first_dataset_key = list(cfg.datasets_cfg.keys())[0]
     stage2_cfg.data_dir = cfg.datasets_cfg[first_dataset_key].path

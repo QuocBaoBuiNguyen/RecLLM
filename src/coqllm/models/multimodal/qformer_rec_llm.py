@@ -12,7 +12,7 @@ import os
 from coqllm.common.logging_utils import NotebookLogger
 from coqllm.common.registry import registry
 from coqllm.models.multimodal.base.rec_base_model import Rec2Base
-from coqllm.models.q_former.hf_qformer_adapter import HFQFormerAdapter
+from coqllm.models.q_former.bridges import build_bridge
 
 LOGGER = NotebookLogger.rich_logger("coqllm.rec_base_model")
 
@@ -95,6 +95,7 @@ class QRecLLM(Rec2Base):
         ranking_loss_tau=1.0,
         align_rank_loss_weight=0.0,
         align_rank_loss_tau=1.0,
+        bridge="qformer",
     ):
         super().__init__()
 
@@ -168,6 +169,7 @@ class QRecLLM(Rec2Base):
             max_instruction_length=max_instruction_length,
             user_conditioned=self.user_conditioned,
             d_user=rec_config.embedding_size,
+            bridge=bridge,
         )
         self._init_projection(proj_token_num, freeze_proj, pretrained_llm_proj)
         self._init_prompts(prompt_path, prompt_template, max_txt_len, end_sym)
@@ -361,25 +363,30 @@ class QRecLLM(Rec2Base):
         max_instruction_length: int,
         user_conditioned: bool = False,
         d_user: int = None,
+        bridge: str = "qformer",
     ):
-        log_step("Loading QFormer")
+        # `self.qformer` holds whichever CF -> soft-token bridge is configured
+        # (attribute name kept for checkpoint-key compatibility: `qformer.*`).
+        self.bridge = (bridge or "qformer").lower()
+        log_step("Loading QFormer", f"bridge={self.bridge}")
         log_step(
             "Using Q-Former tokenizer for instructions",
             f"tokenizer={qformer_text_model_name}, hidden_size={d_model}",
         )
 
-        self.qformer = HFQFormerAdapter(
+        self.qformer = build_bridge(
+            self.bridge,
             d_cf=d_cf,
             d_model=d_model,
             num_queries=num_queries,
             num_heads=num_heads,
             num_layers=num_layers,
             output_dim=qformer_output_dim or d_model,
+            user_conditioned=user_conditioned,
+            d_user=d_user,
             qformer_text_model_name=qformer_text_model_name,
             max_instruction_length=max_instruction_length,
             init_from_pretrained_text=False,
-            user_conditioned=user_conditioned,
-            d_user=d_user,
         ).to(self.device)
 
         if pretrained_qformer and pretrained_qformer != "not_have":
@@ -387,6 +394,17 @@ class QRecLLM(Rec2Base):
             state_dict = ckpt
             if isinstance(state_dict, dict) and any(k.startswith("qformer.") for k in state_dict.keys()):
                 state_dict = {k.replace("qformer.", "", 1): v for k, v in state_dict.items()}
+            if self.bridge != "qformer":
+                # strict=False below would silently skip a checkpoint that belongs to a
+                # different bridge (e.g. the Q-Former Stage-2 weights) and leave this
+                # bridge at random init. Refuse instead.
+                matched = set(state_dict.keys()) & set(self.qformer.state_dict().keys())
+                if not matched:
+                    raise ValueError(
+                        f"Checkpoint {pretrained_qformer} has no keys for bridge='{self.bridge}'. "
+                        "Point model.qformer_config.qformer_ckpt at this bridge's own Stage-2 "
+                        "output (set model.qformer_config.bridge_tag)."
+                    )
             load_msg = self.qformer.load_state_dict(state_dict, strict=False)
             if load_msg.missing_keys:
                 log_step(
@@ -431,13 +449,15 @@ class QRecLLM(Rec2Base):
 
         if self.qformer is None:
             raise ValueError("qformer is None. Please init/load Q-Former before init projection.")
-        if not hasattr(self.qformer, "q"):
-            raise ValueError("qformer.q (learned query tokens) is required to infer num_queries.")
+        if not hasattr(self.qformer, "num_queries"):
+            raise ValueError("bridge must expose `num_queries` (tokens per item) to size the injection.")
         if self.llm_model is None:
             raise ValueError("llm_model is None. Please init LLM backbone before init projection.")
 
         d_q = self.qformer.output_dim
-        Q = int(self.qformer.q.shape[-2])
+        # Tokens per item. Read from `num_queries` rather than the Q-Former's learned
+        # query table, which the attention-MLP bridge deliberately does not have.
+        Q = int(self.qformer.num_queries)
         H = int(self.llm_model.config.hidden_size)
 
         # luôn sync theo Q-Former để tránh lệch số <unk> khi inject
@@ -1162,6 +1182,7 @@ class QRecLLM(Rec2Base):
         max_instruction_length = qformer_config.get("max_instruction_length", 48)
         pretrained_llm_proj = qformer_config.get("llm_proj_ckpt")
         user_conditioned = bool(qformer_config.get("user_conditioned", False))
+        bridge = qformer_config.get("bridge", "qformer")
         ablate_soft_tokens = cfg.get("ablate_soft_tokens", False)
 
         lora_cfg = cfg.get("lora_config") or {}
@@ -1212,6 +1233,7 @@ class QRecLLM(Rec2Base):
             ranking_loss_tau=ranking_loss_tau,
             align_rank_loss_weight=align_rank_loss_weight,
             align_rank_loss_tau=align_rank_loss_tau,
+            bridge=bridge,
         )
 
         ckpt_path = cfg.get("ckpt", "")
